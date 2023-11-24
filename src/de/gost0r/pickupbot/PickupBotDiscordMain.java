@@ -34,7 +34,7 @@ public class PickupBotDiscordMain {
 				env = "dev";
 			}
 
-			setupLogger();
+			setupLogger(dotenv.get("LOG_LEVEL", "WARNING"));
 			
 			Country.initCountryCodes();
 
@@ -55,20 +55,21 @@ public class PickupBotDiscordMain {
 		}
 	}
 	
-	public static void setupLogger() throws SecurityException, IOException {
+	public static void setupLogger(String levelName) throws SecurityException, IOException {
+		Level logLevel = Level.parse(levelName);
 
 		System.setProperty("java.util.logging.SimpleFormatter.format", "%1$tF %1$tT %4$s - %2$s(): %5$s%6$s%n");
 		Logger logger = Logger.getLogger(Logger.GLOBAL_LOGGER_NAME);
-		logger.setLevel(Level.WARNING);
+		logger.setLevel(logLevel);
 
 		logger.setUseParentHandlers(false);
 		ConsoleHandler handler = new ConsoleHandler();
-		handler.setLevel(Level.WARNING);
+		handler.setLevel(logLevel);
 		logger.addHandler(handler);
 
 		FileHandler logfile = new FileHandler("bot.log");
 		logfile.setFormatter(new SimpleFormatter());
-		logfile.setLevel(Level.WARNING);
+		logfile.setLevel(logLevel);
 		logger.addHandler(logfile);
 
 		Sentry.init(dotenv.get("SENTRY_DSN") + "?environment=" + env);
