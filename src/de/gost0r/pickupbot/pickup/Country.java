@@ -1,13 +1,12 @@
 package de.gost0r.pickupbot.pickup;
 
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
 
-import org.apache.commons.io.IOUtils;
 import org.json.JSONArray;
 
 public class Country {
@@ -15,9 +14,8 @@ public class Country {
 	private static HashMap<String, String> CountryToContinentMap = new HashMap<String, String>();
 	
 	public static void initCountryCodes() throws IOException {
-		String fileName = Paths.get("country-and-continent-codes-list.json").toString();
-		InputStream is = new FileInputStream(fileName);
-		String jsonTxt = IOUtils.toString(is, "UTF-8");
+		Path filePath = Paths.get("country-and-continent-codes-list.json");
+		String jsonTxt = Files.readString(filePath, StandardCharsets.UTF_8);
 
 		JSONArray arr = new JSONArray(jsonTxt);
 		

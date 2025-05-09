@@ -19,7 +19,6 @@ sourceSets {
 
 dependencies {
     implementation 'io.sentry:sentry:1.7.23'
-    implementation 'commons-io:commons-io:2.6'
     implementation 'org.apache.commons:commons-lang3:3.10'
     implementation 'javax.websocket:javax.websocket-api:1.1'
     implementation 'org.json:json:20190722'
