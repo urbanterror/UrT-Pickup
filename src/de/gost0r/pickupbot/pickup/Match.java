@@ -323,17 +323,21 @@ public class Match implements Runnable {
 
 	public void end() {
 		state = MatchState.Done;
-		if (server.getServerMonitor().noMercyIssued){
+		if (server != null && server.getServerMonitor() != null && server.getServerMonitor().noMercyIssued){
 			state = MatchState.Mercy;
 			payWin = 75;
 		}
-		cleanUp();
 
 		logic.db.saveMatch(this);
-		// Update player stats
+		sendAftermath();
+
+		cleanUp();
+
 		for (Player p : playerStats.keySet()){
-			p.stats = logic.db.getPlayerStats(p, logic.currentSeason);
-			p.setRank(logic.db.getRankForPlayer(p));
+			if (p != null && p.stats != null && logic != null && logic.db != null) {
+				p.stats = logic.db.getPlayerStats(p, logic.currentSeason);
+				p.setRank(logic.db.getRankForPlayer(p));
+			}
 		}
 
 //		for (DiscordChannel threadChannel : threadChannels){
@@ -345,7 +349,6 @@ public class Match implements Runnable {
 			gtvServer.sendRcon("gtv_disconnect 1");
 		}
 
-		sendAftermath();
 		logic.matchRemove(this);
 		if (gametype.getTeamSize() > 0){
 			payPlayers();
