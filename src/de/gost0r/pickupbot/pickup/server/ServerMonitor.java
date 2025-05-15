@@ -109,11 +109,11 @@ public class ServerMonitor implements Runnable {
 	private void checkNoMercy(RconPlayersParsed rpp) {
 		if (Math.abs(rpp.scores[0] - rpp.scores[1]) >= 10 && !noMercyIssued && match.getGametype().getTeamSize() > 2){
 			server.sendRcon("timelimit 1");
-			server.sendRcon("bigtext \"Mercy rule! Ending game in 1min\"");
-			server.sendRcon("say \"^1[MERCY RULE] ^3Ending game in 1min\"");
+			server.sendRcon("bigtext \"^1THIS IS A MASSACRE!!\"");
+			server.sendRcon("say \"^1[MERCY RULE] ^3Game Over\"");
 			noMercyIssued = true;
-			LOGGER.info("Mercy rule, game will end in 1min");
-			sendDiscordMsg("**[MERCY RULE]** The match #" + String.valueOf(match.getID()) + " is a massacre and will end in 1min.");
+			LOGGER.info("Mercy rule, game over");
+			sendDiscordMsg("**[MERCY RULE]** Let's stop the massacre. The match #" + String.valueOf(match.getID()) + " is over.");
 		}	
 	}
 
