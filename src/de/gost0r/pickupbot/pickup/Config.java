@@ -107,14 +107,16 @@ public class Config {
 	+ " " + CMD_MAPS + " " + CMD_MAP + " " + CMD_MATCH + " " + CMD_LAST + " " + CMD_LIVE + " " + CMD_STATUS + " " + CMD_HELP 
 	+ " " + CMD_GETELO + " " + CMD_GETSTATS + " " + CMD_TOP_PLAYERS + " " + CMD_TOP_COUNTRIES + " " + CMD_TOP_KDR + " " + CMD_TOP_WDL 
 	+ " " + CMD_SURRENDER + " " + CMD_BANINFO + " " + CMD_VOTES + " " + CMD_LAST + " " + CMD_TEAM + " " + CMD_LEAVETEAM + " " + CMD_SCRIM 
-	+ " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH;
+	+ " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH 
+	+ " " + CMD_CREATE_PRIVATE + " " + CMD_PRIVATE + " " + CMD_ADD_PLAYER_PRIVATE + " " + CMD_REMOVE_PLAYER_PRIVATE + " " + CMD_LEAVE_PRIVATE 
+	+ " " + CMD_SHOW_PRIVATE;
 	
 	public static final String ADMIN_LIST = CMD_LOCK + " " + CMD_UNLOCK + " " + CMD_RESET + " " + CMD_GETDATA + " " + CMD_ENABLEMAP
 	+ " " + CMD_DISABLEMAP + " " + CMD_RCON + " " + CMD_SHOWMATCHES + " " + CMD_SHOWSERVERS + " " + CMD_ENABLEGAMETYPE + " " + CMD_DISABLEGAMETYPE 
 	+ " " + CMD_ADDSERVER + " " + CMD_ENABLESERVER + " " + CMD_DISABLESERVER + " " + CMD_UPDATESERVER + " " + CMD_ADDBAN + " " + CMD_REMOVEBAN 
 	+ " " + CMD_SHOWMATCHES + " " + CMD_UNREGISTER + " " + CMD_SHOWKNOWNROLES + " " + CMD_SHOWKNOWNCHANNELS + " " + CMD_ADDROLE 
 	+ " " + CMD_REMOVEROLE + " " + CMD_ADDCHANNEL + " " + CMD_REMOVECHANNEL + " " + CMD_FORCEADD + " " + CMD_REBOOT + " " + CMD_SETPROCTF 
-	+ " " + CMD_ENFORCEAC + " " + CMD_RESETELO;
+	+ " " + CMD_ENFORCEAC + " " + CMD_RESETELO + " " + CMD_ENABLEDYNSERVER + " " + CMD_DISABLEDYNSERVER;
 
 //------------------------------------------------------------------------------------//
 
