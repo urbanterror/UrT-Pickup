@@ -372,17 +372,40 @@ public class Player {
 	}
 
 	public long getCoins() {return coins;}
-	public void setCoins(long coins) {this.coins = coins ;}
+	
+	public void setCoins(long coins) {
+		this.coins = coins;
+	}
+	
+	public void saveWallet() {
+		// Save wallet balance to database
+		db.updatePlayerCoins(this);
+		
+		// Save wallet history for current season
+		Season currentSeason = db.getCurrentSeason();
+		if (currentSeason != null) {
+			db.saveWalletHistory(this, currentSeason.number, this.coins);
+		}
+	}
+	
+	public List<WalletHistoryEntry> getWalletHistory() {
+		return db.getWalletHistory(this);
+	}
+	
+	public void resetWalletForNewSeason() {
+		setCoins(1000); // Reset to default amount
+		saveWallet();
+	}
 
 	public void addCoins(long amount) {
-		coins += amount ;
+		coins += amount;
+		saveWallet();
 	}
 	public void spendCoins(long amount) {
-		coins -= amount ;
+		coins -= amount;
+		saveWallet();
 	}
-	public void saveWallet(){
-		db.updatePlayerCoins(this);
-	}
+	// Methods moved to avoid duplication
 
 	public long getEloBoost() {return eloBoost;}
 	public void setEloBoost(long eloBoost) {

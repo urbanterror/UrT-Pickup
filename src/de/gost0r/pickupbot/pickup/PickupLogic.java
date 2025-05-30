@@ -2626,6 +2626,72 @@ public class PickupLogic {
 		msg = msg.replace(".emojiid.", coinEmoji.getString("id"));
 		bot.sendMsg(bot.getLatestMessageChannel(), msg);
 	}
+	
+	public void cmdWalletHistory(Player p) {
+		List<WalletHistoryEntry> history = p.getWalletHistory();
+		
+		if (history.isEmpty()) {
+			bot.sendMsg(bot.getLatestMessageChannel(), "No wallet history found for " + p.getDiscordUser().username);
+			return;
+		}
+		
+		StringBuilder msg = new StringBuilder("**Wallet History for " + p.getDiscordUser().username + "**\n\n");
+		
+		for (WalletHistoryEntry entry : history) {
+			Season season = db.getSeason(entry.getSeasonNumber());
+			String seasonDates = "";
+			
+			if (season != null) {
+				String startDate = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date(season.startdate));
+				String endDate = (season.enddate > 0) 
+					? new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date(season.enddate))
+					: "Present";
+				seasonDates = " (" + startDate + " to " + endDate + ")";
+			}
+			
+			JSONObject coinEmoji = Bet.getCoinEmoji(entry.getBalance());
+			msg.append("Season ").append(entry.getSeasonNumber())
+			   .append(seasonDates).append(": ")
+			   .append(String.format("%,d", entry.getBalance()))
+			   .append(" <:").append(coinEmoji.getString("name")).append(":")
+			   .append(coinEmoji.getString("id")).append(">\n");
+		}
+		
+		bot.sendMsg(bot.getLatestMessageChannel(), msg.toString());
+	}
+	
+	/**
+	 * Checks if a player has admin privileges
+	 * @param p The player to check
+	 * @return true if the player is an admin, false otherwise
+	 */
+	private boolean isAdmin(Player p) {
+		return p.getDiscordUser().hasAdminRights();
+	}
+	
+	public void cmdNewSeason(Player p) {
+		// Check if player is admin
+		if (!isAdmin(p)) {
+			bot.sendMsg(bot.getLatestMessageChannel(), Config.player_not_admin);
+			return;
+		}
+		
+		// Create a new season
+		Season newSeason = db.createNewSeason();
+		
+		if (newSeason != null) {
+			// Format the announcement message
+			String startDate = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new java.util.Date(newSeason.startdate));
+			String msg = "**:tada: Season " + newSeason.number + " has started! :tada:**\n\n" +
+						 "All player wallets have been reset to the default amount.\n" +
+						 "Start date: " + startDate + "\n" +
+						 "Use `!wallethistory` to view your wallet balance from previous seasons.";
+			
+			bot.sendMsg(bot.getLatestMessageChannel(), msg);
+		} else {
+			bot.sendMsg(bot.getLatestMessageChannel(), "Failed to create a new season. Please check the logs.");
+		}
+	}
 
 	public void cmdDonate(Player p, Player destP, int amount) {
 		if (amount <= 0){

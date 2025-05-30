@@ -82,6 +82,13 @@ public class Database {
 													+ "PRIMARY KEY (userid, urtauth) )";
 			stmt.executeUpdate(sql);
 			
+			sql = "CREATE TABLE IF NOT EXISTS wallet_history ( id INTEGER PRIMARY KEY AUTOINCREMENT,"
+															+ "player_userid TEXT,"
+															+ "player_urtauth TEXT,"
+															+ "season_number INTEGER,"
+															+ "balance INTEGER,"
+															+ "FOREIGN KEY (player_userid, player_urtauth) REFERENCES player(userid, urtauth) )";
+			stmt.executeUpdate(sql);
 			sql = "CREATE TABLE IF NOT EXISTS gametype ( gametype TEXT PRIMARY KEY,"
 													+ "teamsize INTEGER, "
 													+ "active TEXT )";
@@ -186,6 +193,15 @@ public class Database {
 					+ "startdate INTEGER,"
 					+ "enddate INTEGER,"
 					+ "PRIMARY KEY (number) )";
+			stmt.executeUpdate(sql);
+
+			sql = "CREATE TABLE IF NOT EXISTS wallet_history (ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+					+ "player_userid TEXT,"
+					+ "player_urtauth TEXT,"
+					+ "season_number INTEGER,"
+					+ "balance INTEGER,"
+					+ "FOREIGN KEY (player_userid, player_urtauth) REFERENCES player(userid, urtauth), "
+					+ "FOREIGN KEY (season_number) REFERENCES season(number) )";
 			stmt.executeUpdate(sql);
 
 			sql = "CREATE TABLE IF NOT EXISTS bets (ID INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -1413,6 +1429,28 @@ public class Database {
 		}
 		return null;
 	}
+	
+	public Season createNewSeason() {
+		// Get the current season to determine the new season number
+		Season currentSeason = getCurrentSeason();
+		int newSeasonNumber = (currentSeason != null) ? currentSeason.number + 1 : 1;
+		
+		// Call the version with seasonNumber parameter
+		createNewSeason(newSeasonNumber);
+		
+		// Return the newly created season
+		long startDate = System.currentTimeMillis();
+		return new Season(newSeasonNumber, startDate, 0);
+	}
+	
+	public void resetAllPlayerWalletsForNewSeason() {
+		// Get current season number
+		Season currentSeason = getCurrentSeason();
+		int seasonNumber = (currentSeason != null) ? currentSeason.number : 1;
+		
+		// Call the version with seasonNumber parameter
+		resetAllPlayerWalletsForNewSeason(seasonNumber);
+	}
 
 	public void updatePlayerCoins(Player player){
 		try{
@@ -1427,6 +1465,47 @@ public class Database {
 			LOGGER.log(Level.WARNING, "Exception: ", e);
 		}
 	}
+	
+	public void saveWalletHistory(Player player, int seasonNumber, long balance) {
+		try {
+			// Check if there's already an entry for this player and season
+			String checkSql = "SELECT ID FROM wallet_history WHERE player_userid=? AND player_urtauth=? AND season_number=?";
+			PreparedStatement checkStmt = c.prepareStatement(checkSql);
+			checkStmt.setString(1, player.getDiscordUser().id);
+			checkStmt.setString(2, player.getUrtauth());
+			checkStmt.setInt(3, seasonNumber);
+			ResultSet rs = checkStmt.executeQuery();
+			
+			if (rs.next()) {
+				// Update existing entry
+				String updateSql = "UPDATE wallet_history SET balance=? WHERE player_userid=? AND player_urtauth=? AND season_number=?";
+				PreparedStatement updateStmt = c.prepareStatement(updateSql);
+				updateStmt.setLong(1, balance);
+				updateStmt.setString(2, player.getDiscordUser().id);
+				updateStmt.setString(3, player.getUrtauth());
+				updateStmt.setInt(4, seasonNumber);
+				updateStmt.executeUpdate();
+				updateStmt.close();
+			} else {
+				// Create new entry
+				String insertSql = "INSERT INTO wallet_history (player_userid, player_urtauth, season_number, balance) VALUES (?, ?, ?, ?)";
+				PreparedStatement insertStmt = c.prepareStatement(insertSql);
+				insertStmt.setString(1, player.getDiscordUser().id);
+				insertStmt.setString(2, player.getUrtauth());
+				insertStmt.setInt(3, seasonNumber);
+				insertStmt.setLong(4, balance);
+				insertStmt.executeUpdate();
+				insertStmt.close();
+			}
+			
+			rs.close();
+			checkStmt.close();
+		} catch (SQLException e) {
+			LOGGER.log(Level.WARNING, "Exception: ", e);
+		}
+	}
+	
+	// Method removed to avoid duplication with getWalletHistory(Player p) below
 
 	public void updatePlayerBoost(Player player){
 		try{
@@ -1519,4 +1598,83 @@ public class Database {
 		}
 		return betList;
 	}
+	
+	// Method removed to avoid duplication with saveWalletHistory(Player, int, long)
+	
+	public List<WalletHistoryEntry> getWalletHistory(Player p) {
+		List<WalletHistoryEntry> history = new ArrayList<>();
+		try {
+			PreparedStatement pstmt = getPreparedStatement("SELECT * FROM wallet_history WHERE player_userid = ? AND player_urtauth = ? ORDER BY season_number DESC");
+			pstmt.setString(1, p.getDiscordUser().id);
+			pstmt.setString(2, p.getUrtauth());
+			ResultSet rs = pstmt.executeQuery();
+			
+			while (rs.next()) {
+				int seasonNumber = rs.getInt("season_number");
+				long balance = rs.getLong("balance");
+				history.add(new WalletHistoryEntry(seasonNumber, balance));
+			}
+			rs.close();
+			pstmt.close();
+		} catch (SQLException e) {
+			LOGGER.log(Level.WARNING, "Exception: ", e);
+			Sentry.capture(e);
+		}
+		return history;
+	}
+	
+	public void resetAllPlayerWalletsForNewSeason(int seasonNumber) {
+		try {
+			// First, save all current wallet balances to history
+			PreparedStatement pstmt = getPreparedStatement("SELECT userid, urtauth, coins FROM player");
+			ResultSet rs = pstmt.executeQuery();
+			
+			while (rs.next()) {
+				String userid = rs.getString("userid");
+				String urtauth = rs.getString("urtauth");
+				long coins = rs.getLong("coins");
+				
+				PreparedStatement historyStmt = getPreparedStatement("INSERT INTO wallet_history (player_userid, player_urtauth, season_number, balance) VALUES (?, ?, ?, ?)");
+				historyStmt.setString(1, userid);
+				historyStmt.setString(2, urtauth);
+				historyStmt.setInt(3, seasonNumber - 1); // Previous season
+				historyStmt.setLong(4, coins);
+				historyStmt.executeUpdate();
+			}
+			rs.close();
+			pstmt.close();
+			
+			// Now reset all wallets to default value
+			PreparedStatement resetStmt = getPreparedStatement("UPDATE player SET coins = 1000");
+			resetStmt.executeUpdate();
+			resetStmt.close();
+		} catch (SQLException e) {
+			LOGGER.log(Level.WARNING, "Exception: ", e);
+			Sentry.capture(e);
+		}
+	}
+	
+	public void createNewSeason(int seasonNumber) {
+		try {
+			// End the current season
+			PreparedStatement pstmt = getPreparedStatement("UPDATE season SET enddate = ? WHERE enddate = 0");
+			pstmt.setLong(1, System.currentTimeMillis());
+			pstmt.executeUpdate();
+			pstmt.close();
+			
+			// Create a new season
+			pstmt = getPreparedStatement("INSERT INTO season (number, startdate, enddate) VALUES (?, ?, 0)");
+			pstmt.setInt(1, seasonNumber);
+			pstmt.setLong(2, System.currentTimeMillis());
+			pstmt.executeUpdate();
+			pstmt.close();
+			
+			// Reset all player wallets
+			resetAllPlayerWalletsForNewSeason(seasonNumber);
+		} catch (SQLException e) {
+			LOGGER.log(Level.WARNING, "Exception: ", e);
+			Sentry.capture(e);
+		}
+	}
 }
+
