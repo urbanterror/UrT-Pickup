@@ -262,9 +262,24 @@ public class Database {
 	
 	public void forgiveBan(Player player) {
 		try {
-			String sql = "UPDATE banlist SET forgiven = 1 WHERE player_urtauth = ?";
+			String sql = "UPDATE banlist SET forgiven = 1 WHERE player_urtauth = ? AND end > ?";
 			PreparedStatement pstmt = c.prepareStatement(sql);
 			pstmt.setString(1, player.getUrtauth());
+			pstmt.setLong(2, System.currentTimeMillis());
+			pstmt.executeUpdate();
+			pstmt.close();
+		} catch (SQLException e) {
+			LOGGER.log(Level.WARNING, "Exception: ", e);
+			Sentry.capture(e);
+		}
+	}
+
+	public void forgiveBotBan(Player player) {
+		try {
+			String sql = "UPDATE banlist SET forgiven = 1 WHERE player_urtauth = ? AND end > ? AND (reason = 'RAGEQUIT' OR reason = 'NOSHOW')";
+			PreparedStatement pstmt = c.prepareStatement(sql);
+			pstmt.setString(1, player.getUrtauth());
+			pstmt.setLong(2, System.currentTimeMillis());
 			pstmt.executeUpdate();
 			pstmt.close();
 		} catch (SQLException e) {
@@ -502,7 +517,7 @@ public class Database {
 			String sql = "SELECT gametype, teamsize, active FROM gametype";
 			ResultSet rs = stmt.executeQuery(sql);
 			while (rs.next()) {
-				Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")));
+				Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")), false);
 				LOGGER.config(gametype.getName() + " active=" + gametype.getActive());
 				gametypeList.add(gametype);
 			}
@@ -1182,8 +1197,8 @@ public class Database {
 		return rank;
 	}
 		
-	public Map<Player, Float> getTopWDL(int number, Gametype gt, Season season) {
-		Map<Player, Float> topwdl = new LinkedHashMap<Player, Float>();
+	public Map<Player, String> getTopWDL(int number, Gametype gt, Season season) {
+		Map<Player, String> topwdl = new LinkedHashMap<Player, String>();
 		try {
 			int limit = 20;
 			if (season.number == 0){
@@ -1202,7 +1217,8 @@ public class Database {
 			ResultSet rs = pstmt.executeQuery();
 			while (rs.next()) {
 				Player p = Player.get(rs.getString("urtauth"));
-				topwdl.put(p, rs.getFloat("winrate"));
+				String entry = Long.toString(Math.round(rs.getFloat("winrate") * 100d)) + "%  (*" + Integer.toString(rs.getInt("win") + rs.getInt("loss")) + "*)";
+				topwdl.put(p, entry);
 			}
 			rs.close();
 		} catch (SQLException e) {

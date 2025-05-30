@@ -19,15 +19,18 @@ public class Gametype {
 	
 	private String name;
 	private boolean active;
+
+	private boolean pv; // Private gametype
 	
 	private int teamSize;
 
 	private List<String> config;
 	
-	public Gametype(String name, int teamSize, boolean active) {
+	public Gametype(String name, int teamSize, boolean active, boolean pv) {
 		this.setName(name);
 		this.setActive(active);
 		this.setTeamSize(teamSize);
+		this.setPrivate(pv);
 		
 		config = new ArrayList<String>();
 		this.loadGameConfig();
@@ -45,6 +48,8 @@ public class Gametype {
 		return active;
 	}
 
+	public boolean getPrivate() { return pv; }
+
 	public void setTeamSize(int teamSize) {
 		this.teamSize = teamSize;
 	}
@@ -56,6 +61,8 @@ public class Gametype {
 	public void setActive(boolean active) {
 		this.active = active;
 	}
+
+	public void setPrivate(boolean pv) {this.pv = pv; }
 
 	public List<String> getConfig() {
 		return config;
@@ -90,6 +97,8 @@ public class Gametype {
 				String configName = this.getName();
 				if (configName.startsWith("SCRIM")){
 					configName = configName.split(" ")[1];
+				} else if (pv) {
+					configName = configName.split(" ")[0];
 				}
 				if ( f.getName().contentEquals(configName + ".cfg") ) {
 					

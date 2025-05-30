@@ -65,6 +65,13 @@ public class Config {
 	public static final String CMD_MATCH				= "!match";
 	public static final String CMD_LAST					= "!last";
 
+	public static final String CMD_CREATE_PRIVATE 		= "!createprivate";
+	public static final String CMD_PRIVATE 				= "!private";
+	public static final String CMD_ADD_PLAYER_PRIVATE	= "!addprivate";
+	public static final String CMD_REMOVE_PLAYER_PRIVATE = "!removeprivate";
+	public static final String CMD_LEAVE_PRIVATE		= "!leaveprivate";
+	public static final String CMD_SHOW_PRIVATE			= "!showprivate";
+
 	//public static final String CMD_REPORT				= "!report";
 	//public static final String CMD_EXCUSE				= "!excuse";
 	//public static final String CMD_REPORTLIST			= "!reportlist";
@@ -100,14 +107,16 @@ public class Config {
 	+ " " + CMD_MAPS + " " + CMD_MAP + " " + CMD_MATCH + " " + CMD_LAST + " " + CMD_LIVE + " " + CMD_STATUS + " " + CMD_HELP 
 	+ " " + CMD_GETELO + " " + CMD_GETSTATS + " " + CMD_TOP_PLAYERS + " " + CMD_TOP_COUNTRIES + " " + CMD_TOP_KDR + " " + CMD_TOP_WDL 
 	+ " " + CMD_SURRENDER + " " + CMD_BANINFO + " " + CMD_VOTES + " " + CMD_LAST + " " + CMD_TEAM + " " + CMD_LEAVETEAM + " " + CMD_SCRIM 
-	+ " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH;
+	+ " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH 
+	+ " " + CMD_CREATE_PRIVATE + " " + CMD_PRIVATE + " " + CMD_ADD_PLAYER_PRIVATE + " " + CMD_REMOVE_PLAYER_PRIVATE + " " + CMD_LEAVE_PRIVATE 
+	+ " " + CMD_SHOW_PRIVATE;
 	
 	public static final String ADMIN_LIST = CMD_LOCK + " " + CMD_UNLOCK + " " + CMD_RESET + " " + CMD_GETDATA + " " + CMD_ENABLEMAP
 	+ " " + CMD_DISABLEMAP + " " + CMD_RCON + " " + CMD_SHOWMATCHES + " " + CMD_SHOWSERVERS + " " + CMD_ENABLEGAMETYPE + " " + CMD_DISABLEGAMETYPE 
 	+ " " + CMD_ADDSERVER + " " + CMD_ENABLESERVER + " " + CMD_DISABLESERVER + " " + CMD_UPDATESERVER + " " + CMD_ADDBAN + " " + CMD_REMOVEBAN 
 	+ " " + CMD_SHOWMATCHES + " " + CMD_UNREGISTER + " " + CMD_SHOWKNOWNROLES + " " + CMD_SHOWKNOWNCHANNELS + " " + CMD_ADDROLE 
 	+ " " + CMD_REMOVEROLE + " " + CMD_ADDCHANNEL + " " + CMD_REMOVECHANNEL + " " + CMD_FORCEADD + " " + CMD_REBOOT + " " + CMD_SETPROCTF 
-	+ " " + CMD_ENFORCEAC + " " + CMD_RESETELO;
+	+ " " + CMD_ENFORCEAC + " " + CMD_RESETELO + " " + CMD_ENABLEDYNSERVER + " " + CMD_DISABLEDYNSERVER;
 
 //------------------------------------------------------------------------------------//
 
@@ -193,6 +202,10 @@ public class Config {
 
 	public static final String USE_CMD_DONATE			= "!donate <player> <amount>";
 
+	public static final String USE_CMD_CREATE_PRIVATE	= "!createprivate <gamemode> <players (optional)>";
+	public static final String USE_CMD_ADD_PLAYER_PRIVATE = "!addprivate <players>";
+	public static final String USE_CMD_REMOVE_PLAYER_PRIVATE = "!removeprivate <players>";
+
 	//------------------------------------------------------------------------------------//
 	
 	public static final String INT_PICK					= "pick";
@@ -216,6 +229,7 @@ public class Config {
 
 	public static final String APP_BET = "bet";
 	public static final String APP_BUY = "buy";
+	public static final String APP_PARDON = "pardon";
 	
 	//------------------------------------------------------------------------------------//
 
@@ -284,6 +298,8 @@ public class Config {
 
 	public static final String is_banned				= ".user. (.urtauth.) is suspended .time. for .reason.";
 	public static final String is_unbanned				= ".user. (.urtauth.) is unbanned.";
+	public static final String is_pardonned				= ".user. (.urtauth.) is pardonned.";
+	public static final String is_pardonned_admin		= ".user. (.urtauth.) has been pardonned by .userAdmin.. Reason: ``.reason.``";
 	public static final String is_notbanned				= ".urtauth. is not banned (yet).";
 	public static final String not_banned				= "No active bans found for .urtauth.";
 	public static final String ban_history				= "**__Ban history:__** (Past 2 months)";
@@ -321,7 +337,7 @@ public class Config {
 	public static final String player_not_in_match		= "You are not added to any queue.";
 	public static final String player_already_match		= "You are already in a match.";
 	public static final String player_not_admin			= "You must be an admin to use this command.";
-	public static final String player_notdiv1			= "Hi, you need to be in either the Top ``.minrank.``  **ELO** (#``.rank.``) *OR* have a minimum ``.minkdr.``  **KDR** (``.kdr.``) *OR* have a minimum ``.minwin.%``  **Win Rate** (``.win.%``) to add to the **div1** queue.";
+	public static final String player_notdiv1			= "Hi, you need to have a minimum ``.minkdr.`` **KDR** (``.kdr.``) this season to add to the **div1** queue.";
 	public static final String player_not_proctf 		= "You can't join this queue, contact an admin if you think this is an error.";
 	public static final String player_not_captain		= "You can't pick a player. You are not captain or it is not your turn to pick.";
 
@@ -429,4 +445,14 @@ public class Config {
 	public static final String donate_incorrect_amount	= "Incorrect amount of coin to donate.";
 	public static final String donate_processed			= ".player. donated <:.emojiname.:.emojiid.> ``.amount.`` to .otherplayer.";
 	public static final String donate_above_limit		= "You can't donate more than ``10,000`` coins.";
+	public static final String player_already_group		= "**.player.** is already in a private group.";
+	public static final String player_create_group 		= "You created a new private group! Do ``!addprivate <players>`` to add players to your group. Join the private queue with ``!private``.";
+	public static final String player_no_owned_group 	= "You don't own any private group. Do ``!createprivate`` to create one.";
+	public static final String player_no_group 			= "You are not part of any private group currently.";
+	public static final String player_added_group 		= "Successfully added players to group.";
+	public static final String player_removed_group 	= "Successfully removed players from group.";
+	public static final String private_dissolved		= "**.player.**'s private group was dissolved.";
+	public static final String private_left				= "You successfully left **.player.**'s private group.";
+	public static final String private_none				= "There are currently no private groups. Do ``!createprivate`` to create one.";
+	public static final String div1_stats_blocked		= "Div 1 stats are currently hidden";
 }

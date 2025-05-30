@@ -28,7 +28,6 @@ public class FtwglAPI {
 
     private static String api_url;
     private static String api_key;
-    private static final int port = 27960;
 
     public static void setupCredentials(String url, String key){
         FtwglAPI.api_url = url;
@@ -104,7 +103,7 @@ public class FtwglAPI {
             }
         }
 
-        Server server = new Server(obj.getJSONObject("server").getInt("id"), null, port, serverObj.getString("rcon"), serverObj.getString("password"), true, region);
+        Server server = new Server(obj.getJSONObject("server").getInt("id"), null, serverObj.getInt("port"), serverObj.getString("rcon"), serverObj.getString("password"), true, region);
         server.country = country;
         server.city = serverLocationObj.getString("city");
         server.playerPing = playerPing;
