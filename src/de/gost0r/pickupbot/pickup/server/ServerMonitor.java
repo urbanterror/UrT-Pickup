@@ -66,7 +66,7 @@ public class ServerMonitor implements Runnable {
 		noMercyIssued = false;
 		
 		players = new ArrayList<ServerPlayer>();
-		backupStats = new HashMap<String, CTF_Stats>();
+		// backupStats = new HashMap<String, CTF_Stats>();
 		leavers = new ArrayList<ServerPlayer>();
 	}
 
@@ -109,11 +109,11 @@ public class ServerMonitor implements Runnable {
 	private void checkNoMercy(RconPlayersParsed rpp) {
 		if (Math.abs(rpp.scores[0] - rpp.scores[1]) >= 10 && !noMercyIssued && match.getGametype().getTeamSize() > 2){
 			server.sendRcon("timelimit 1");
-			server.sendRcon("bigtext \"Mercy rule! Ending game in 1min\"");
-			server.sendRcon("say \"^1[MERCY RULE] ^3Ending game in 1min\"");
+			server.sendRcon("bigtext \"^1THIS IS A MASSACRE!!\"");
+			server.sendRcon("say \"^1[MERCY RULE] ^3Game Over\"");
 			noMercyIssued = true;
-			LOGGER.info("Mercy rule, game will end in 1min");
-			sendDiscordMsg("**[MERCY RULE]** The match #" + String.valueOf(match.getID()) + " is a massacre and will end in 1min.");
+			LOGGER.info("Mercy rule, game over");
+			sendDiscordMsg("**[MERCY RULE]** Let's stop the massacre. The match #" + String.valueOf(match.getID()) + " is over.");
 		}	
 	}
 
@@ -141,7 +141,7 @@ public class ServerMonitor implements Runnable {
 				sendDiscordMsg(sendDiscordString);
 				if (state == ServerState.WARMUP || state == ServerState.LIVE) {
 					server.sendRcon("restart"); // restart map
-					server.sendRcon("startserverdemo all");
+					// server.sendRcon("startserverdemo all");
 				}
 			} else if (timeleft < -180000L) { // if noshow timer ran out twice
 				// we're way over time to accurately log a noshow, therefore simply abandon
@@ -187,7 +187,7 @@ public class ServerMonitor implements Runnable {
 			} else if (state == ServerState.WARMUP) {
 				timeleft = (earliestLeaver + 180000L) - System.currentTimeMillis(); // 3min
 				server.sendRcon("restart"); // restart map
-				server.sendRcon("startserverdemo all");
+				// server.sendRcon("startserverdemo all");
 			} else if (state == ServerState.LIVE) {
 				if (getRemainingSeconds() < 90 && isLastHalf()) {
 					LOGGER.warning(getRemainingSeconds() + "s remaining, don't report.");
@@ -214,7 +214,7 @@ public class ServerMonitor implements Runnable {
 				if (!hasPaused && shouldPause) {
 					if (!isPauseDetected) {
 						server.sendRcon("pause");
-						server.sendRcon("startserverdemo all");
+						// server.sendRcon("startserverdemo all");
 					}
 					hasPaused = true;
 				}
@@ -236,7 +236,7 @@ public class ServerMonitor implements Runnable {
 			if (hasPaused && isPauseDetected) {
 				if (state == ServerState.LIVE) {
 					server.sendRcon("pause");
-					server.sendRcon("startserverdemo all");
+					// server.sendRcon("startserverdemo all");
 				}
 				hasPaused = false;
 			}
@@ -285,15 +285,15 @@ public class ServerMonitor implements Runnable {
 			try {
 				if (player.player != null && match.isInMatch(player.player) && rpp.players.contains(player)) {
 					// player.ctfstats.add(backupStats.get(player.auth));
-					CTF_Stats backupstats = backupStats.get(player.auth);
-					match.getStats(player.player).score[half].score = player.ctfstats.score + backupstats.score;
-					match.getStats(player.player).score[half].deaths = player.ctfstats.deaths + backupstats.deaths;
-					match.getStats(player.player).score[half].assists = player.ctfstats.assists + backupstats.assists;
-					match.getStats(player.player).score[half].caps = player.ctfstats.caps + backupstats.caps;
-					match.getStats(player.player).score[half].returns = player.ctfstats.returns + backupstats.returns;
-					match.getStats(player.player).score[half].fc_kills = player.ctfstats.fc_kills + backupstats.fc_kills;
-					match.getStats(player.player).score[half].stop_caps = player.ctfstats.stop_caps + backupstats.stop_caps;
-					match.getStats(player.player).score[half].protect_flag = player.ctfstats.protect_flag + backupstats.protect_flag;
+					// CTF_Stats backupstats = backupStats.get(player.auth);
+					match.getStats(player.player).score[half].score = player.ctfstats.score;
+					match.getStats(player.player).score[half].deaths = player.ctfstats.deaths;
+					match.getStats(player.player).score[half].assists = player.ctfstats.assists;
+					match.getStats(player.player).score[half].caps = player.ctfstats.caps;
+					match.getStats(player.player).score[half].returns = player.ctfstats.returns;
+					match.getStats(player.player).score[half].fc_kills = player.ctfstats.fc_kills;
+					match.getStats(player.player).score[half].stop_caps = player.ctfstats.stop_caps;
+					match.getStats(player.player).score[half].protect_flag = player.ctfstats.protect_flag;
 				}
 			} catch (NumberFormatException e) {
 				LOGGER.log(Level.WARNING, "Exception: ", e);
@@ -379,10 +379,10 @@ public class ServerMonitor implements Runnable {
 				if (match.getGametype().getTeamSize() > 2){
 					match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
 				}
-				backupStats.clear();
-				for (ServerPlayer p : players){
-					backupStats.put(p.auth, new CTF_Stats());
-				}
+//				backupStats.clear();
+//				for (ServerPlayer p : players){
+//					backupStats.put(p.auth, new CTF_Stats());
+//				}
 				LOGGER.info("SWITCHED WARMUP -> LIVE");
 			}
 			else if (!rpp.matchready[0] || !rpp.matchready[1])
@@ -860,23 +860,23 @@ public class ServerMonitor implements Runnable {
 		return state;
 	}
 
-	private void backUpScores(RconPlayersParsed rpp){
-		for (ServerPlayer p : rpp.players){
-			ServerPlayer oldP = null;
-			for (ServerPlayer prevP : prevRPP.players){
-				if (p.auth.equals(prevP.auth)){
-					oldP = prevP;
-					break;
-				}
-			}
-			if (oldP != null){
-				// + 4 in case of tks in between ticks
-				if (p.ctfstats.score + 4 < oldP.ctfstats.score || p.ctfstats.assists < oldP.ctfstats.assists || p.ctfstats.deaths < oldP.ctfstats.deaths){
-					CTF_Stats newStats = backupStats.get(p.auth);
-					newStats.add(oldP.ctfstats);
-					backupStats.put(oldP.auth, newStats);
-				}
-			}
-		}
-	}
+//	private void backUpScores(RconPlayersParsed rpp){
+//		for (ServerPlayer p : rpp.players){
+//			ServerPlayer oldP = null;
+//			for (ServerPlayer prevP : prevRPP.players){
+//				if (p.auth.equals(prevP.auth)){
+//					oldP = prevP;
+//					break;
+//				}
+//			}
+//			if (oldP != null){
+//				// + 4 in case of tks in between ticks
+//				if (p.ctfstats.score + 4 < oldP.ctfstats.score || p.ctfstats.assists < oldP.ctfstats.assists || p.ctfstats.deaths < oldP.ctfstats.deaths){
+//					CTF_Stats newStats = backupStats.get(p.auth);
+//					newStats.add(oldP.ctfstats);
+//					backupStats.put(oldP.auth, newStats);
+//				}
+//			}
+//		}
+//	}
 }

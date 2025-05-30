@@ -160,10 +160,20 @@ public class Player {
 
 	public void forgiveBan() {
 		for (PlayerBan ban : bans) {
-			ban.forgiven = true;
+			if (ban.endTime > System.currentTimeMillis()) {
+				ban.forgiven = true;
+			}
 		}
-		
 		db.forgiveBan(this);
+	}
+
+	public void forgiveBotBan() {
+		for (PlayerBan ban : bans) {
+			if (ban.endTime > System.currentTimeMillis() && ( ban.reason == PlayerBan.BanReason.NOSHOW || ban.reason == PlayerBan.BanReason.RAGEQUIT)) {
+				ban.forgiven = true;
+			}
+		}
+		db.forgiveBotBan(this);
 	}
 
 	public PlayerBan getLatestBan() {
@@ -183,7 +193,7 @@ public class Player {
 	public int getPlayerBanCountSince(long time) {
 		int i = 0;
 		for (PlayerBan ban : bans) {
-			if (ban.startTime >= time) {
+			if (ban.startTime >= time && !ban.forgiven) {
 				++i;
 			}
 		}
@@ -203,6 +213,15 @@ public class Player {
 	public boolean isBanned() {
 		for (PlayerBan ban : bans) {
 			if (!ban.forgiven && ban.endTime > System.currentTimeMillis()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public boolean isBannedByBot() {
+		for (PlayerBan ban : bans) {
+			if (!ban.forgiven && ban.endTime > System.currentTimeMillis()  && ( ban.reason == PlayerBan.BanReason.NOSHOW || ban.reason == PlayerBan.BanReason.RAGEQUIT)) {
 				return true;
 			}
 		}

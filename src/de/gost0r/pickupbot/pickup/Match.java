@@ -252,7 +252,9 @@ public class Match implements Runnable {
 			if (surrender[i] <= 0) {
 				state = MatchState.Surrender;
 				try {
-					server.getServerMonitor().surrender(i);
+					if (server != null && server.getServerMonitor() != null) {
+						server.getServerMonitor().surrender(i);
+					}
 				} catch (Exception e) {
 					LOGGER.log(Level.WARNING, "Exception: ", e);
 					Sentry.capture(e);
@@ -1072,7 +1074,11 @@ public class Match implements Runnable {
 
 		String msg = Config.pkup_match_print_info;
 		msg = msg.replace(".gamenumber.", id == 0 ? String.valueOf(logic.db.getLastMatchID() + 1) : String.valueOf(id));
-		msg = msg.replace(".gametype.", gametype.getName());
+		if (gametype.getPrivate()) {
+			msg = msg.replace(".gametype.", ":lock:" + gametype.getName().toUpperCase());
+		} else {
+			msg = msg.replace(".gametype.", gametype.getName().toUpperCase());
+		}
 		msg = msg.replace(".map.", map != null ? map.name : "ut4_?");
 		msg = msg.replace(".redteam.", redplayers.toString());
 		msg = msg.replace(".blueteam.", blueplayers.toString());
@@ -1083,7 +1089,7 @@ public class Match implements Runnable {
 	
 	public DiscordEmbed getMatchEmbed(boolean forceNoDynamic) {
 		ServerState serverState = null;
-		if (server != null && server.isTaken()) {
+		if (server != null && server.getServerMonitor() != null && server.isTaken() ) {
 			serverState = server.getServerMonitor().getState();
 		}
 		
@@ -1102,7 +1108,12 @@ public class Match implements Runnable {
 		}
 		
 		embed.color = 7056881;
-		embed.description = map != null ? "**" + gametype.getName() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null";
+		if (gametype.getPrivate()) {
+			embed.description = map != null ? ":lock: **" + gametype.getName().toUpperCase() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null";
+		} else {
+			embed.description = map != null ? "**" + gametype.getName() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null";
+		}
+
 		
 		StringBuilder red_team_player_embed = new StringBuilder();
 		StringBuilder red_team_score_embed = new StringBuilder();
@@ -1192,13 +1203,13 @@ public class Match implements Runnable {
 		}
 		float regionScore = euPlayers - gametype.getTeamSize() * ocPlayers;
 
-		if (ocPlayers > gametype.getTeamSize() * 2 * 0.7){
+		if (ocPlayers > gametype.getTeamSize() * 2 * 0.6){
 			return Region.OC;
 		}
-		else if (saPlayers > gametype.getTeamSize() * 2 * 0.7){
+		else if (saPlayers > gametype.getTeamSize() * 2 * 0.6){
 			return Region.SA;
 		}
-		else if (euPlayers > gametype.getTeamSize() * 2 * 0.7 || (euPlayers > gametype.getTeamSize() * 2 * 0.6 && (saPlayers + ocPlayers) < 2)){
+		else if (ocPlayers == 0 && ((euPlayers > gametype.getTeamSize() * 2 * 0.7) || (euPlayers > gametype.getTeamSize() * 2 * 0.6 && (saPlayers + ocPlayers) < 2))){
 			return Region.EU;
 		}
 		else if (regionScore < 0){

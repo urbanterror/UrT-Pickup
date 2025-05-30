@@ -36,6 +36,7 @@ public class PickupBot extends DiscordBot {
 
 		if (logic != null) {
 			logic.afkCheck();
+			logic.checkPrivateGroups();
 		}
 	}
 
@@ -849,6 +850,166 @@ public class PickupBot extends DiscordBot {
 					}
 					else sendNotice(msg.user, Config.user_not_registered);
 					break;
+				case Config.CMD_CREATE_PRIVATE:
+					if (p != null){
+						if (data.length >= 2)
+						{
+							Gametype gt = logic.getGametypeByString(data[1]);
+							if (gt == null) {
+								sendNotice(msg.user, Config.no_gt_found);
+							} else {
+								PrivateGroup pvGroup = logic.createPrivateGroup(p, gt);
+
+								if (pvGroup != null) {
+									if (data.length >= 3) {
+										String[] players = Arrays.copyOfRange(data, 2, data.length);
+										for (String newP : players) {
+											Player pOther;
+											DiscordUser u = DiscordUser.getUser(newP.replaceAll("[^\\d.]", ""));
+											if (u != null)
+											{
+												pOther = Player.get(u);
+											}
+											else
+											{
+												pOther = Player.get(newP.toLowerCase());
+											}
+
+											if (pOther != null)
+											{
+												pvGroup.addPlayer(pOther);
+											}
+											else sendNotice(msg.user, Config.player_not_found);
+										}
+									}
+									sendNotice(msg.user, Config.player_create_group, pvGroup.getEmbed());
+								}
+
+							}
+						}
+						else super.sendMsg(msg.channel, Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_CREATE_PRIVATE));
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_ADD_PLAYER_PRIVATE:
+					if (p != null)
+					{
+						PrivateGroup pvGroup = logic.getPrivateGroupOwned(p);
+						if (pvGroup != null) {
+							if (data.length >= 2)
+							{
+								String[] players = Arrays.copyOfRange(data, 1, data.length);
+								boolean changesMade = false;
+								for (String newP : players) {
+									Player pOther;
+									DiscordUser u = DiscordUser.getUser(newP.replaceAll("[^\\d.]", ""));
+									if (u != null)
+									{
+										pOther = Player.get(u);
+									}
+									else
+									{
+										pOther = Player.get(newP.toLowerCase());
+									}
+
+									if (pOther != null)
+									{
+										if (!logic.playerInPrivateGroup(pOther)){
+											pvGroup.addPlayer(pOther);
+											changesMade = true;
+										}
+
+										else {
+											String newMsg = Config.player_already_group;
+											newMsg = newMsg.replace(".player.", pOther.getUrtauth());
+											sendNotice(p.getDiscordUser(), newMsg);
+										}
+
+									}
+									else sendNotice(msg.user, Config.player_not_found);
+								}
+								if (changesMade) {
+									sendNotice(msg.user, Config.player_added_group);
+								}
+							}
+							else sendNotice(msg.user, Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADD_PLAYER_PRIVATE));
+						}
+						else sendNotice(msg.user, Config.player_no_owned_group);
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_REMOVE_PLAYER_PRIVATE:
+					if (p != null)
+					{
+						PrivateGroup pvGroup = logic.getPrivateGroupOwned(p);
+						if (pvGroup != null) {
+							if (data.length >= 2)
+							{
+								String[] players = Arrays.copyOfRange(data, 1, data.length);
+								boolean changesMade = false;
+								for (String newP : players) {
+									Player pOther;
+									DiscordUser u = DiscordUser.getUser(newP.replaceAll("[^\\d.]", ""));
+									if (u != null)
+									{
+										pOther = Player.get(u);
+									}
+									else
+									{
+										pOther = Player.get(newP.toLowerCase());
+									}
+
+									if (pOther != null)
+									{
+										if (pOther.equals(p)) {
+											logic.dissolveGroup(pvGroup);
+										} else {
+											pvGroup.removePlayer(pOther);
+											changesMade = true;
+										}
+									}
+									else sendNotice(msg.user, Config.player_not_found);
+								}
+								if (changesMade) {
+									sendNotice(msg.user, Config.player_removed_group);
+								}
+							}
+							else sendNotice(msg.user, Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_REMOVE_PLAYER_PRIVATE));
+						}
+						else sendNotice(msg.user, Config.player_no_owned_group);
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_LEAVE_PRIVATE:
+					if (p != null){
+						if (logic.playerInPrivateGroup(p)) {
+							logic.cmdLeavePrivate(p);
+						}
+						else sendNotice(msg.user, Config.player_no_group);
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_PRIVATE:
+					if (p != null){
+						if (logic.playerInPrivateGroup(p)) {
+							PrivateGroup pvGroup = logic.getPrivateGroupMember(p);
+							logic.cmdAddPlayer(p, pvGroup.gt, false);
+							pvGroup.updateTimestamp();
+
+							if (data.length > 1) {
+								logic.cmdMapVote(p, pvGroup.gt, data[1], 1);
+							}
+						}
+						else sendNotice(msg.user, Config.player_no_group);
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_SHOW_PRIVATE:
+					if (p != null){
+						logic.cmdShowPrivate();
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
 			}
 		}
 
@@ -1616,6 +1777,15 @@ public class PickupBot extends DiscordBot {
 			logic.bet(interaction, Integer.parseInt(interaction.options.get(0).value), interaction.options.get(1).value, Integer.parseInt(interaction.options.get(2).value), p);
 			break;
 
+		case Config.APP_PARDON:
+			Player pPardon = Player.get(DiscordUser.getUser(interaction.options.get(0).value));
+			if (pPardon == null) {
+				interaction.respond(Config.player_not_found);
+				return;
+			}
+			logic.pardonPlayer(interaction, pPardon, interaction.options.get(1).value, p);
+			break;
+
 //		case Config.APP_BUY:
 //			logic.showBuys(interaction, p);
 //			break;
@@ -1630,6 +1800,10 @@ public class PickupBot extends DiscordBot {
 
 	public void sendNotice(DiscordUser user, String msg) {
 		sendMsg(getLatestMessageChannel(), user.getMentionString() + " " + msg);
+	}
+
+	public void sendNotice(DiscordUser user, String msg, DiscordEmbed embed) {
+		sendMsg(getLatestMessageChannel(), user.getMentionString() + " " + msg, embed);
 	}
 
 	public void sendMsg(List<DiscordChannel> channelList, String msg) {
@@ -1750,5 +1924,12 @@ public class PickupBot extends DiscordBot {
 
 		DiscordApplicationCommand appBuy = new DiscordApplicationCommand("buy", "Buy a perk with your coins.");
 		appBuy.create();
+
+		DiscordApplicationCommand appPardon = new DiscordApplicationCommand("pardon", "Unbans a player banned by the bot. Does not work on manual bans.");
+		DiscordCommandOption pardonOption1 = new DiscordCommandOption(DiscordCommandOptionType.USER, "player", "Player to unban.");
+		appPardon.addOption(pardonOption1);
+		DiscordCommandOption pardonOption2 = new DiscordCommandOption(DiscordCommandOptionType.STRING, "reason", "Reason for the unban.");
+		appPardon.addOption(pardonOption2);
+		appPardon.create();
 	}
 }

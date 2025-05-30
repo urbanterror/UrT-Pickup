@@ -12,6 +12,11 @@ jobs:
           distribution: 'adopt'
       - name: Build with Gradle
         run: ./gradlew build
+      - name: Upload JAR as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PickupBot
+          path: build/libs/PickupBot.jar
       - name: Deploy jar to server
         uses: garygrossgarten/github-action-scp@release
         with:
