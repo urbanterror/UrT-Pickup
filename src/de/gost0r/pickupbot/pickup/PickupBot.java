@@ -788,6 +788,42 @@ public class PickupBot extends DiscordBot {
 					}
 					else sendNotice(msg.user, Config.user_not_registered);
 					break;
+				case Config.CMD_WALLETHISTORY:
+					if (p != null){
+						if (data.length == 1){
+							logic.cmdWalletHistory(p);
+						}
+						else if (data.length == 2)
+						{
+							Player pOther;
+							DiscordUser u = DiscordUser.getUser(data[1].replaceAll("[^\\d.]", ""));
+							if (u != null)
+							{
+								pOther = Player.get(u);
+							}
+							else
+							{
+								pOther = Player.get(data[1].toLowerCase());
+							}
+
+							if (pOther != null)
+							{
+								logic.cmdWalletHistory(pOther);
+							}
+							else sendNotice(msg.user, Config.player_not_found);
+						}
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
+				case Config.CMD_NEW_SEASON:
+					if (p != null){
+						if (data.length == 1){
+							logic.cmdNewSeason(p);
+						}
+						else sendNotice(msg.user, Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_NEW_SEASON));
+					}
+					else sendNotice(msg.user, Config.user_not_registered);
+					break;
 				case Config.CMD_DONATE:
 					if (p != null){
 						if (data.length == 3){
