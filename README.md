@@ -3,6 +3,7 @@
 # UrT-Pickup
 [![Discord](https://img.shields.io/discord/117622053061787657)](https://discord.gg/An8hxdM)
 
+This repo has been archived. To contribute to further development, please check out [urbanterror/UrT-Pickup](https://github.com/urbanterror/UrT-Pickup)
 
 ## About
 This is a network of Urban Terror servers associating players through [Discord](https://discord.gg/An8hxdM) thanks to a simple java bot.

@@ -1,46 +1,60 @@
 plugins {
     id 'java'
+    id 'org.springframework.boot' version '3.5.3'
+    id 'io.spring.dependency-management' version '1.1.7'
 }
 
-group 'org.example'
-version '1.0-SNAPSHOT'
+group = 'de.gost0r.pickupbot'
+version = '1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
 
 repositories {
     mavenCentral()
 }
 
-sourceSets {
-    main {
-        java {
-            srcDirs = ['src']
-        }
-    }
+ext {
+    set('sentryVersion', "8.16.0")
 }
 
 dependencies {
-    implementation 'io.sentry:sentry:1.7.23'
-    implementation 'commons-io:commons-io:2.6'
-    implementation 'org.apache.commons:commons-lang3:3.10'
-    implementation 'javax.websocket:javax.websocket-api:1.1'
-    implementation 'org.json:json:20190722'
-    implementation 'org.xerial:sqlite-jdbc:3.8.11.2'
-    implementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:1.9'
-    implementation 'org.slf4j:slf4j-simple:1.7.9'
-    implementation 'io.github.cdimascio:dotenv-java:2.2.0'
+//    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'io.sentry:sentry-spring-boot-starter-jakarta'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation 'commons-io:commons-io:2.19.0'
+    implementation 'org.apache.commons:commons-lang3:3.17.0'
+    implementation 'jakarta.websocket:jakarta.websocket-api:2.2.0'
+    implementation 'org.json:json:20250517'
+    implementation 'org.xerial:sqlite-jdbc:3.50.2.0'
+    implementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:2.2.0'
 }
 
-jar {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-    manifest {
-        attributes 'Main-Class' : 'de.gost0r.pickupbot.PickupBotDiscordMain'
+dependencyManagement {
+    imports {
+        mavenBom "io.sentry:sentry-bom:${sentryVersion}"
     }
-    destinationDirectory.set(file("$rootDir/"))
-    archiveBaseName = 'PickupBot'
-    archiveVersion = ''
-    archiveClassifier = ''
+}
 
-    from {
-        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
-    }
+bootJar {
+    archiveFileName = 'PickupBot.jar'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
 }
