@@ -208,6 +208,17 @@ public class PickupBot extends DiscordBot {
                     } else sendNotice(msg.user, Config.user_not_registered);
                     break;
 
+                case Config.CMD_PROMOD:
+                    if (p != null) {
+                        Gametype gt = logic.getGametypeByString("PROMOD");
+                        if (gt != null) {
+                            logic.cmdAddPlayer(p, gt, false);
+                        } else {
+                            sendNotice(msg.user, Config.no_gt_found);
+                        }
+                    } else sendNotice(msg.user, Config.user_not_registered);
+                    break;
+
                 case Config.CMD_REMOVE:
                     Player player = p;
                     int startindex = 1;

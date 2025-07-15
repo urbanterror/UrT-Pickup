@@ -11,6 +11,7 @@ public class Config {
     public static final String CMD_PROCTF = "!proctf";
     public static final String CMD_SKEET = "!skeet";
     public static final String CMD_AIM = "!aim";
+    public static final String CMD_PROMOD = "!promod";
     public static final String CMD_REMOVE = "!remove";
     public static final String CMD_MAPS = "!maps";
     public static final String CMD_MAP = "!map";
