@@ -685,7 +685,6 @@ public class Match implements Runnable {
 
     // DONT CALL THIS OUTSIDE OF launch() !!!
     public void run() {
-        startTime = System.currentTimeMillis();
         gtvServer = logic.setupGTV();
         Random rand = new Random();
 
@@ -840,6 +839,9 @@ public class Match implements Runnable {
                 logic.bot.sendMsg(player.getDiscordUser(), msg_t);
             }
         }
+
+        // Start the timer AFTER players have received the server IP
+        startTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
         msg = msg.replace(".gametype.", gametype.getName());
