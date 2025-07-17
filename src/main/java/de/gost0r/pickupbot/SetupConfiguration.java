@@ -1,7 +1,7 @@
 package de.gost0r.pickupbot;
 
 import de.gost0r.pickupbot.discord.DiscordBot;
-import de.gost0r.pickupbot.ftwgl.FtwglAPI;
+import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.PickupBot;
 import io.sentry.Sentry;
@@ -19,22 +19,20 @@ public class SetupConfiguration {
     private final String stage;
     private final String discordToken;
     private final String discordApplicationId;
-    private final String ftwUrl;
-    private final String ftwKey;
     private final String sentryDsn;
+
+    private final FtwglApi ftwglApi;
 
     public SetupConfiguration(@Value("${app.stage}") String stage,
                               @Value("${app.discord.token}") String discordToken,
                               @Value("${app.discord.application-id}") String discordApplicationId,
-                              @Value("${app.ftw.url}") String ftwUrl,
-                              @Value("${app.ftw.key}") String ftwKey,
-                              @Value("${app.sentry.dsn}") String sentryDsn) {
+                              @Value("${app.sentry.dsn}") String sentryDsn,
+                              FtwglApi ftwglApi) {
         this.stage = stage;
         this.discordToken = discordToken;
         this.discordApplicationId = discordApplicationId;
-        this.ftwUrl = ftwUrl;
-        this.ftwKey = ftwKey;
         this.sentryDsn = sentryDsn;
+        this.ftwglApi = ftwglApi;
     }
 
     @PostConstruct
@@ -44,12 +42,10 @@ public class SetupConfiguration {
         DiscordBot.setToken(discordToken);
         DiscordBot.setApplicationId(discordApplicationId);
 
-        FtwglAPI.setupCredentials(ftwUrl, ftwKey);
-
         Country.initCountryCodes();
 
         PickupBot bot = new PickupBot();
-        bot.init(stage);
+        bot.init(stage, ftwglApi);
 
         Sentry.init(sentryDsn + "?environment=" + stage);
 

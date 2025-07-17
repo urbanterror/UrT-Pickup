@@ -1,7 +1,6 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
-import de.gost0r.pickupbot.ftwgl.FtwglAPI;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.server.Server;
 import de.gost0r.pickupbot.pickup.server.ServerMonitor.ServerState;
@@ -813,7 +812,7 @@ public class Match implements Runnable {
         logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), fullmsg.toString(), null, buttons);
 
         if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
-            FtwglAPI.getSpawnedServerIp(server);
+            logic.ftwglApi.queryAndUpdateServerIp(server);
             try {
                 Thread.sleep(5000);
             } catch (InterruptedException e) {
@@ -1402,7 +1401,7 @@ public class Match implements Runnable {
         StringBuilder rating_wdl_string = new StringBuilder();
         StringBuilder ping_string = new StringBuilder();
 
-        Map<Player, Float> playerRatings = FtwglAPI.getPlayerRatings(sortedPlayers);
+        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(sortedPlayers);
 
         for (Player p : sortedPlayers) {
             StringBuilder player_string = new StringBuilder();

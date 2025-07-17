@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,12 +21,11 @@ public class PickupBot extends DiscordBot {
     public static PickupLogic logic;
     public String env;
 
-    @Override
-    public void init(String env) {
-        super.init(env);
+    public void init(String env, FtwglApi ftwglApi) {
+        init(env);
         this.env = env;
 
-        logic = new PickupLogic(this);
+        logic = new PickupLogic(this, ftwglApi);
         createApplicationCommands();
         sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), Config.bot_online);
     }

@@ -3,7 +3,7 @@ package de.gost0r.pickupbot.pickup;
 import de.gost0r.pickupbot.PickupBotApplication;
 import de.gost0r.pickupbot.discord.*;
 import de.gost0r.pickupbot.discord.api.DiscordAPI;
-import de.gost0r.pickupbot.ftwgl.FtwglAPI;
+import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import de.gost0r.pickupbot.pickup.server.Server;
 import io.sentry.Sentry;
@@ -21,6 +21,7 @@ import java.util.*;
 public class PickupLogic {
 
     public PickupBot bot;
+    public final FtwglApi ftwglApi;
     public Database db;
 
     private List<Server> serverList;
@@ -48,8 +49,9 @@ public class PickupLogic {
 
     public Season currentSeason;
 
-    public PickupLogic(PickupBot bot) {
+    public PickupLogic(PickupBot bot, FtwglApi ftwglApi) {
         this.bot = bot;
+        this.ftwglApi = ftwglApi;
 
         db = new Database(this);
         Player.db = db;
@@ -98,11 +100,11 @@ public class PickupLogic {
     }
 
     public void cmdAddPlayer(Player player, Gametype gt, boolean forced) {
-        if ((dynamicServers || gt.getTeamSize() == 0) && !FtwglAPI.checkIfPingStored(player)) {
+        if ((dynamicServers || gt.getTeamSize() == 0) && !ftwglApi.checkIfPingStored(player)) {
             cmdGetPingURL(player);
             return;
         }
-        if (player.getEnforceAC() && !FtwglAPI.hasLauncherOn(player)) {
+        if (player.getEnforceAC() && !ftwglApi.hasLauncherOn(player)) {
             bot.sendNotice(player.getDiscordUser(), Config.pkup_launcheroff);
             return;
         }
@@ -524,7 +526,7 @@ public class PickupLogic {
             msg = msg.replace(".kdr.", String.format("%.02f", p.stats.ctf_rating));
         } else {
             msg = msg.replace(".wdl.", String.format("%.02f", p.stats.ts_wdl.calcWinRatio() * 100d));
-            msg = msg.replace(".kdr.", String.format("%.02f", FtwglAPI.getPlayerRating(p)));
+            msg = msg.replace(".kdr.", String.format("%.02f", ftwglApi.getPlayerRatings(p)));
         }
 
         msg = msg.replace(".position.", String.valueOf(p.getEloRank()));
@@ -637,7 +639,7 @@ public class PickupLogic {
             // } else {
             // 	statsEmbed.addField("KDR", String.format("%.02f", stats.kdr) + " (#" + stats.kdrRank + ")", true);
             // }
-            statsEmbed.addField("Rating", String.format("%.02f", FtwglAPI.getPlayerRating(p)), true);
+            statsEmbed.addField("Rating", String.format("%.02f", ftwglApi.getPlayerRatings(p)), true);
             if (p.stats.wdlRank == -1) {
                 statsEmbed.addField("Win %", Math.round(stats.ts_wdl.calcWinRatio() * 100d) + "%", true);
 
@@ -1466,7 +1468,7 @@ public class PickupLogic {
             if (m != null) {
                 Server bs;
                 if (dynamicServers || m.getGametype().getTeamSize() == 0) {
-                    bs = FtwglAPI.spawnDynamicServer(m.getPlayerList());
+                    bs = ftwglApi.spawnDynamicServer(m.getPlayerList());
                     if (bs != null) {
                         String spawnMsg = Config.pkup_go_pub_servspawn;
                         spawnMsg = spawnMsg.replace(".flag.", Country.getCountryFlag(bs.country));
@@ -2001,7 +2003,7 @@ public class PickupLogic {
             if (match.getID() == matchId) {
                 for (Player playerInMatch : match.getPlayerList()) {
                     if (playerInMatch.equals(player)) {
-                        String response = FtwglAPI.launchAC(player, ip, password);
+                        String response = ftwglApi.launchAC(player, ip, password);
                         interaction.respond(response);
                         return;
                     }
@@ -2012,7 +2014,7 @@ public class PickupLogic {
                         interaction.respond(Config.ftw_servernotready);
                         return;
                     }
-                    String response = FtwglAPI.launchAC(player, ip, password);
+                    String response = ftwglApi.launchAC(player, ip, password);
                     interaction.respond(response);
                     return;
                 }
@@ -2293,7 +2295,7 @@ public class PickupLogic {
 
     public void cmdGetPingURL(Player player) {
         bot.sendNotice(player.getDiscordUser(), Config.ftw_error_noping);
-        bot.sendMsg(player.getDiscordUser(), Config.ftw_dm_noping.replace(".url.", FtwglAPI.requestPingUrl(player)));
+        bot.sendMsg(player.getDiscordUser(), Config.ftw_dm_noping.replace(".url.", ftwglApi.requestPingUrl(player)));
     }
 
     public void showBets(DiscordInteraction interaction, int matchId, String color, Player p) {
