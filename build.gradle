@@ -43,7 +43,6 @@ dependencies {
 
     implementation 'commons-io:commons-io:2.19.0'
     implementation 'org.apache.commons:commons-lang3:3.17.0'
-    implementation 'jakarta.websocket:jakarta.websocket-api:2.2.0'
     implementation 'org.json:json:20250517'
     implementation 'org.xerial:sqlite-jdbc:3.50.2.0'
     implementation 'org.glassfish.tyrus.bundles:tyrus-standalone-client:2.2.0'
