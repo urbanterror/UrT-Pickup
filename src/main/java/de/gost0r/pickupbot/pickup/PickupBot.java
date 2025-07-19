@@ -19,11 +19,9 @@ public class PickupBot extends DiscordBot {
     private DiscordChannel latestMessageChannel;
 
     public static PickupLogic logic;
-    public String env;
 
     public void init(String env, FtwglApi ftwglApi) {
-        init(env);
-        this.env = env;
+        super.init(env);
 
         logic = new PickupLogic(this, ftwglApi);
         createApplicationCommands();
@@ -31,7 +29,7 @@ public class PickupBot extends DiscordBot {
     }
 
     @Override
-    protected void tick() {
+    public void tick() {
         super.tick();
 
         if (logic != null) {
@@ -41,7 +39,7 @@ public class PickupBot extends DiscordBot {
     }
 
     @Override
-    protected void recvMessage(DiscordMessage msg) {
+    public void recvMessage(DiscordMessage msg) {
         log.info("RECV #{} {}: {}", (msg.channel == null || msg.channel.name == null) ? "null" : msg.channel.name, msg.user.username, msg.content);
 
         this.latestMessageChannel = msg.channel;
@@ -1429,8 +1427,8 @@ public class PickupBot extends DiscordBot {
     }
 
     @Override
-    protected void recvInteraction(DiscordInteraction interaction) {
-        log.info("RECV #{} {}: {}", (interaction.message.channel == null || interaction.message.channel.name == null) ? "null" : interaction.message.channel.name, interaction.user.username, interaction.custom_id);
+    public void recvInteraction(DiscordInteraction interaction) {
+        log.info("RECV #{} {}: {}", (interaction.message.channel == null || interaction.message.channel.name == null) ? "null" : interaction.message.channel.name, interaction.user.username, interaction.componentId);
 
         Player p = Player.get(interaction.user);
         if (p == null) {
@@ -1442,7 +1440,7 @@ public class PickupBot extends DiscordBot {
             p.setLastPublicChannel(interaction.message.channel);
         }
 
-        String[] data = interaction.custom_id.split("_");
+        String[] data = interaction.componentId.split("_");
 
         switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
@@ -1505,27 +1503,27 @@ public class PickupBot extends DiscordBot {
     }
 
     @Override
-    protected void recvApplicationCommand(DiscordInteraction interaction) {
-        log.info("RECV #{} {}", interaction.name, interaction.user.username);
+    public void recvApplicationCommand(DiscordSlashCommandInteraction command) {
+        log.info("RECV #{} {}", command.name(), command.user().username);
 
-        Player p = Player.get(interaction.user);
+        Player p = Player.get(command.user());
         if (p == null) {
-            interaction.respond(Config.user_not_registered);
+            command.respond(Config.user_not_registered);
             return;
         }
 
-        switch (interaction.name) {
+        switch (command.name()) {
             case Config.APP_BET:
-                logic.bet(interaction, Integer.parseInt(interaction.options.get(0).value), interaction.options.get(1).value, Integer.parseInt(interaction.options.get(2).value), p);
+                logic.bet(command, command.options().get(0).getAsInt(), command.options().get(1).getAsString(), command.options().get(2).getAsInt(), p);
                 break;
 
             case Config.APP_PARDON:
-                Player pPardon = Player.get(DiscordUser.getUser(interaction.options.get(0).value));
+                Player pPardon = Player.get(DiscordUser.getUser(command.options().get(0).getAsString()));
                 if (pPardon == null) {
-                    interaction.respond(Config.player_not_found);
+                    command.respond(Config.player_not_found);
                     return;
                 }
-                logic.pardonPlayer(interaction, pPardon, interaction.options.get(1).value, p);
+                logic.pardonPlayer(command, pPardon, command.options().get(1).getAsString(), p);
                 break;
 
 //		case Config.APP_BUY:

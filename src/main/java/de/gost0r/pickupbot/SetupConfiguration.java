@@ -8,12 +8,15 @@ import io.sentry.Sentry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.util.Locale;
 
 @Slf4j
 @Configuration
+@EnableScheduling
 public class SetupConfiguration {
 
     private final String stage;
@@ -44,12 +47,17 @@ public class SetupConfiguration {
 
         Country.initCountryCodes();
 
-        PickupBot bot = new PickupBot();
-        bot.init(stage, ftwglApi);
-
         Sentry.init(sentryDsn + "?environment=" + stage);
 
         log.info("Bot started.");
         Sentry.captureMessage("Bot started");
+    }
+
+    @Bean
+    public DiscordBot discordBot() {
+        PickupBot bot = new PickupBot();
+        bot.init(stage, ftwglApi);
+
+        return bot;
     }
 }

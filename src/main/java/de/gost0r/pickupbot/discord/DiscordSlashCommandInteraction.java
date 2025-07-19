@@ -1,26 +1,16 @@
 package de.gost0r.pickupbot.discord;
 
 import de.gost0r.pickupbot.discord.api.DiscordAPI;
+import net.dv8tion.jda.api.interactions.commands.OptionMapping;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class DiscordInteraction implements InteractionRespond {
-    public String id;
-    public String token;
-    public DiscordUser user;
-    public String componentId;
-    public DiscordMessage message;
-    public List<String> values;
-
-    public DiscordInteraction(String id, String token, String componentId, DiscordUser user, DiscordMessage message, List<String> values) {
-        this.id = id;
-        this.token = token;
-        this.user = user;
-        this.componentId = componentId;
-        this.message = message;
-        this.values = values;
-    }
+public record DiscordSlashCommandInteraction(String id,
+                                             String token,
+                                             String name,
+                                             DiscordUser user,
+                                             List<OptionMapping> options) implements InteractionRespond {
 
     public void respond(String content) {
         DiscordAPI.interactionRespond(id, token, content, null, null);
