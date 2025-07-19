@@ -1679,10 +1679,10 @@ public class PickupLogic {
         }
     }
 
-    public void pardonPlayer(DiscordInteraction interaction, Player pPardon, String reason, Player pAdmin) {
+    public void pardonPlayer(DiscordSlashCommandInteraction command, Player pPardon, String reason, Player pAdmin) {
 
         if (pPardon.isBannedByBot()) {
-            interaction.respond(null);
+            command.respond(null);
 
             pPardon.forgiveBotBan();
 
@@ -1700,7 +1700,7 @@ public class PickupLogic {
             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
         } else {
             // Player is not banned
-            interaction.respond(printPlayerNotBannedInfo(pPardon));
+            command.respond(printPlayerNotBannedInfo(pPardon));
         }
     }
 
@@ -2394,7 +2394,7 @@ public class PickupLogic {
         interaction.respond(msg, null, buttons);
     }
 
-    public void bet(DiscordInteraction interaction, int matchId, String color, long amount, Player p) {
+    public void bet(InteractionRespond command, int matchId, String color, long amount, Player p) {
         boolean allIn = false;
         Match match = null;
         for (Match m : ongoingMatches) {
@@ -2403,22 +2403,22 @@ public class PickupLogic {
             }
         }
         if (match == null || !match.acceptBets()) {
-            interaction.respond(Config.bets_notaccepting);
+            command.respond(Config.bets_notaccepting);
             return;
         }
 
         if (amount > p.getCoins()) {
-            interaction.respond(Config.bets_insufficient);
+            command.respond(Config.bets_insufficient);
             return;
         }
 
         if (p.getCoins() <= 0) {
-            interaction.respond(Config.bets_nomoney);
+            command.respond(Config.bets_nomoney);
             return;
         }
 
         if (amount > 1000000) {
-            interaction.respond(Config.bets_above_limit);
+            command.respond(Config.bets_above_limit);
             return;
         }
 
@@ -2430,7 +2430,7 @@ public class PickupLogic {
 
         String otherTeam = color.equals("red") ? "blue" : "red";
         if (match.isInMatch(p) && match.getTeam(p).equals(otherTeam)) {
-            interaction.respond(Config.bets_otherteam);
+            command.respond(Config.bets_otherteam);
             return;
         }
         float odds = color.equals("red") ? match.getOdds(0) : match.getOdds(1);
@@ -2438,7 +2438,7 @@ public class PickupLogic {
         for (Bet matchBet : match.bets) {
             if (matchBet.player.equals(p) && color.equals(matchBet.color)) {
                 if (!allIn && amount + matchBet.amount > 1000000) {
-                    interaction.respond(Config.bets_above_limit);
+                    command.respond(Config.bets_above_limit);
                     return;
                 }
                 matchBet.amount += amount;
@@ -2449,7 +2449,7 @@ public class PickupLogic {
         match.bets.add(bet);
         bet.place(match);
 
-        interaction.respond(null);
+        command.respond(null);
     }
 
     public void showBuys(DiscordInteraction interaction, Player p) {
