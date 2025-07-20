@@ -43,6 +43,7 @@ public class Match implements Runnable {
     private int[] surrender;
 
     private long startTime;
+    private long serverReadyTime;
     private long timeLastPick;
     private boolean pickReminderSent;
     private List<DiscordMessage> pickMessages = new ArrayList<DiscordMessage>();
@@ -88,6 +89,7 @@ public class Match implements Runnable {
         this();
         this.id = id;
         this.startTime = startTime;
+        this.serverReadyTime = startTime;
         this.map = map;
         this.score = score;
         this.elo = elo;
@@ -685,6 +687,7 @@ public class Match implements Runnable {
 
     // DONT CALL THIS OUTSIDE OF launch() !!!
     public void run() {
+        startTime = System.currentTimeMillis();
         gtvServer = logic.setupGTV();
         Random rand = new Random();
 
@@ -840,8 +843,7 @@ public class Match implements Runnable {
             }
         }
 
-        // Start the timer AFTER players have received the server IP
-        startTime = System.currentTimeMillis();
+        serverReadyTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
         msg = msg.replace(".gametype.", gametype.getName());
@@ -956,6 +958,10 @@ public class Match implements Runnable {
 
     public long getStartTime() {
         return startTime;
+    }
+
+    public long getServerReadyTime() {
+        return serverReadyTime;
     }
 
     public GameMap getMap() {

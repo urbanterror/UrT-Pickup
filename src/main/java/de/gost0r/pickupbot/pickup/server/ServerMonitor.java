@@ -132,7 +132,11 @@ public class ServerMonitor implements Runnable {
         }
 
         if (!playerlist.isEmpty()) {
-            long timeleft = (match.getStartTime() + 180000L) - System.currentTimeMillis(); // 3min
+            long timeleft = (match.getServerReadyTime() + 180000L) - System.currentTimeMillis(); // 3min
+            if (match.getServerReadyTime() == 0) {
+                // if the server is not ready yet, ignore no-show timer.
+                return;
+            }
             if (timeleft > 0) {
                 String time = getTimeString(timeleft);
                 String sendString = "(" + time + ") Waiting for: ^1" + playerlist;
