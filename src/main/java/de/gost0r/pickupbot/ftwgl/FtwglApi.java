@@ -204,11 +204,11 @@ public class FtwglApi {
 
     public Map<Player, Float> getTopPlayerRatings(){
         try{
-            PlayerTopRatingsResponse response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.class).getBody();
+            PlayerTopRatingsResponse.PlayerRatingEntry[] response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.PlayerRatingEntry[].class).getBody();
             assert response != null;
             
             Map<Player, Float> playerRatings = new HashMap<>();
-            for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response.getPlayers()) {
+            for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response) {
                 DiscordUser discordUser = DiscordUser.getUser(entry.getDiscord_user_id().toString());
                 if (discordUser != null) {
                     Player player = Player.get(discordUser);
