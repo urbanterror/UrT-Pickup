@@ -207,7 +207,8 @@ public class FtwglApi {
             PlayerTopRatingsResponse.PlayerRatingEntry[] response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.PlayerRatingEntry[].class).getBody();
             assert response != null;
             
-            Map<Player, Float> playerRatings = new HashMap<>();
+            // Create a LinkedHashMap to maintain insertion order (which should be descending by rating from API)
+            Map<Player, Float> playerRatings = new LinkedHashMap<>();
             for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response) {
                 DiscordUser discordUser = DiscordUser.getUser(entry.getDiscord_user_id().toString());
                 if (discordUser != null) {
