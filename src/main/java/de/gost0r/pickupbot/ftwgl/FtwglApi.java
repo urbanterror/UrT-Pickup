@@ -201,6 +201,30 @@ public class FtwglApi {
         return Collections.emptyMap();
     }
 
+    public Map<Player, Float> getTopPlayerRatings(){
+        try{
+            PlayerTopRatingsResponse response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.class).getBody();
+            assert response != null;
+            
+            Map<Player, Float> playerRatings = new HashMap<>();
+            for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response.getPlayers()) {
+                DiscordUser discordUser = DiscordUser.getUser(entry.getDiscord_user_id().toString());
+                if (discordUser != null) {
+                    Player player = Player.get(discordUser);
+                    if (player != null) {
+                        float roundedRating = entry.getRating().floatValue();
+                        playerRatings.put(player, roundedRating);
+                    }
+                }
+            }
+            return playerRatings;
+        } catch (Exception e) {
+            log.warn("Exception: ", e);
+            Sentry.captureException(e);
+            return Collections.emptyMap();
+        }
+    }
+
     @Retryable(retryFor = {RetryableHttpException.class})
     private synchronized <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
         log.trace("Creating POST request to: {}", url);

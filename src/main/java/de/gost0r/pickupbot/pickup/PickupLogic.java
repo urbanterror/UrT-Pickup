@@ -514,6 +514,39 @@ public class PickupLogic {
         }
     }
 
+    public void cmdTopFTWGLRatings() {
+        StringBuilder embed_rank = new StringBuilder();
+        StringBuilder embed_player = new StringBuilder();
+        StringBuilder embed_rating = new StringBuilder();
+        DiscordEmbed embed = new DiscordEmbed();
+        embed.title = "Top 10 player ratings";
+        embed.color = 7056881;
+
+        Map<Player, Float> topRatings = ftwglApi.getTopPlayerRatings();
+        if (topRatings.isEmpty()) {
+            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+        } else {
+            int rank = 1;
+            for (Map.Entry<Player, Float> entry : topRatings.entrySet()) {
+                String country;
+                if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
+                    country = "<:puma:849287183474884628>";
+                } else {
+                    country = ":flag_" + entry.getKey().getCountry().toLowerCase() + ":";
+                }
+                embed_rank.append("**").append(rank).append("**\n");
+                embed_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
+                embed_rating.append(String.format("%.02f", entry.getValue())).append("\n");
+                rank++;
+            }
+            embed.addField("\u200b", embed_rank.toString(), true);
+            embed.addField("Player", embed_player.toString(), true);
+            embed.addField("Rating", embed_rating.toString(), true);
+
+            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+        }
+    }
+
     public String cmdGetElo(Player p, Gametype gt) {
         if (p == null) {
             return "";

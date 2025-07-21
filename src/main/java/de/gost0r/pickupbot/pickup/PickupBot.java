@@ -633,6 +633,11 @@ public class PickupBot extends DiscordBot {
                         logic.cmdTopRich(10);
                     } else sendNotice(msg.user, Config.user_not_registered);
                     break;
+                case Config.CMD_TOP_RATING:
+                    if (p != null) {
+                        logic.cmdTopFTWGLRatings();
+                    } else sendNotice(msg.user, Config.user_not_registered);
+                    break;
                 case Config.CMD_WALLET:
                     if (p != null) {
                         if (data.length == 1) {

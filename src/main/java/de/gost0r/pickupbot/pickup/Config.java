@@ -63,6 +63,7 @@ public class Config {
     public static final String CMD_TOP = "!top";
     public static final String CMD_TOP_RICH = "!toprich";
     public static final String CMD_SPREE = "!topspree";
+    public static final String CMD_TOP_RATING = "!toprating";
 
     public static final String CMD_MATCH = "!match";
     public static final String CMD_LAST = "!last";
