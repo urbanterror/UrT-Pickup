@@ -1,5 +1,6 @@
 package de.gost0r.pickupbot.ftwgl;
 
+import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.models.*;
 import de.gost0r.pickupbot.pickup.Config;
 import de.gost0r.pickupbot.pickup.Country;
