@@ -547,6 +547,40 @@ public class PickupLogic {
         }
     }
 
+    public void cmdTopMatchPlayed(int number) {
+        StringBuilder embed_rank = new StringBuilder();
+        StringBuilder embed_player = new StringBuilder();
+        StringBuilder embed_matchplayed = new StringBuilder();
+        DiscordEmbed embed = new DiscordEmbed();
+        embed.title = "Top 10 grinders";
+        embed.description = "``Season " + currentSeason.number + "``";
+        embed.color = 7056881;
+
+        Map<Player, Integer> topmatchplayed = db.getTopMatchPlayed(number, currentSeason);
+        if (topmatchplayed.isEmpty()) {
+            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+        } else {
+            int rank = 1;
+            for (Map.Entry<Player, Integer> entry : topmatchplayed.entrySet()) {
+                String country;
+                if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
+                    country = "<:puma:849287183474884628>";
+                } else {
+                    country = ":flag_" + entry.getKey().getCountry().toLowerCase() + ":";
+                }
+                embed_rank.append("**").append(rank).append("**\n");
+                embed_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
+                embed_matchplayed.append(entry.getValue()).append("\n");
+                rank++;
+            }
+            embed.addField("\u200b", embed_rank.toString(), true);
+            embed.addField("Player", embed_player.toString(), true);
+            embed.addField("Matches", embed_matchplayed.toString(), true);
+
+            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+        }
+    }
+
     public String cmdGetElo(Player p, Gametype gt) {
         if (p == null) {
             return "";

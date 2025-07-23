@@ -1259,6 +1259,26 @@ public class Database {
         return topkdr;
     }
 
+        public Map<Player, Integer> getTopMatchPlayed(int number, Season season) {
+        Map<Player, Integer> topmatchplayed = new LinkedHashMap<Player, Integer>();
+        try {
+            String sql = "SELECT pim.player_urtauth, COUNT(pim.player_urtauth) as matchplayed from player_in_match pim JOIN match m ON pim.matchid = m.ID WHERE m.state IN ('Done', 'Mercy', 'Surrender') AND m.gametype IN ('TS', 'DIV1', 'PROMOD', 'CTF', 'PROCTF') AND m.starttime > ? AND m.starttime < ? GROUP BY pim.player_urtauth ORDER BY matchplayed DESC LIMIT ?";
+            PreparedStatement pstmt = getPreparedStatement(sql);
+            pstmt.setLong(1, season.startdate);
+            pstmt.setLong(2, season.enddate);
+            pstmt.setInt(3, number);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                Player p = Player.get(rs.getString("player_urtauth"));
+                topmatchplayed.put(p, rs.getInt("matchplayed"));
+            }
+            rs.close();
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return topmatchplayed;
+    }
+
     public int getAvgElo() {
         int elo = -1;
         try {

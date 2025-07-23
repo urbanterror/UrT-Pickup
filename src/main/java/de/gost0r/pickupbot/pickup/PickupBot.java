@@ -470,6 +470,11 @@ public class PickupBot extends DiscordBot {
                             sendNotice(msg.user, Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_TOP_KDR));
                     } else sendNotice(msg.user, Config.user_not_registered);
                     break;
+                case Config.CMD_TOP_MATCH_PLAYED:
+                    if (p != null) {
+                        logic.cmdTopMatchPlayed(10);
+                    } else sendNotice(msg.user, Config.user_not_registered);
+                    break;
 
                 case Config.CMD_SPREE:
                     if (p != null) {
