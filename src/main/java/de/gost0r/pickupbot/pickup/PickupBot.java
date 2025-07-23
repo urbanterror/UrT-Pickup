@@ -1536,6 +1536,15 @@ public class PickupBot extends DiscordBot {
                 logic.pardonPlayer(command, pPardon, command.options().get(1).getAsString(), p);
                 break;
 
+            case Config.APP_REFUND:
+                Player pRefund = Player.get(DiscordUser.getUser(command.options().get(0).getAsString()));
+                if (pRefund == null) {
+                    command.respond(Config.player_not_found);
+                    return;
+                }
+                logic.refundPlayer(command, pRefund, command.options().get(1).getAsInt(), command.options().get(2).getAsString(), p);
+                break;
+
 //		case Config.APP_BUY:
 //			logic.showBuys(interaction, p);
 //			break;
@@ -1680,5 +1689,14 @@ public class PickupBot extends DiscordBot {
         DiscordCommandOption pardonOption2 = new DiscordCommandOption(DiscordCommandOptionType.STRING, "reason", "Reason for the unban.");
         appPardon.addOption(pardonOption2);
         appPardon.create();
+
+        DiscordApplicationCommand appRefund = new DiscordApplicationCommand("refund", "Refund pugcoins to a player following a bot error.");
+        DiscordCommandOption refundOption1 = new DiscordCommandOption(DiscordCommandOptionType.USER, "player", "Player to refund.");
+        appRefund.addOption(refundOption1);
+        DiscordCommandOption refundOption2 = new DiscordCommandOption(DiscordCommandOptionType.INTEGER, "amount", "Amount to refund.");
+        appRefund.addOption(refundOption2);
+        DiscordCommandOption refundOption3 = new DiscordCommandOption(DiscordCommandOptionType.STRING, "reason", "Reason for the refund.");
+        appRefund.addOption(refundOption3);
+        appRefund.create();
     }
 }

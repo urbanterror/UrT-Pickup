@@ -1771,6 +1771,20 @@ public class PickupLogic {
         }
     }
 
+    public void refundPlayer(DiscordSlashCommandInteraction command, Player pRefund, int amount, String reason, Player pAdmin) {
+        command.respond(null);
+        pRefund .addCoins(amount);
+        pRefund.saveWallet();
+
+        String msg = Config.is_refunded;
+        msg = msg.replace(".user.", pRefund.getDiscordUser().getMentionString());
+        msg = msg.replace(".urtauth.", pRefund.getUrtauth());
+        msg = msg.replace(".amount.", String.valueOf(amount));
+        msg = msg.replace(".reason.", reason);
+        msg = msg.replace(".userAdmin.", pAdmin.getUrtauth());
+        bot.sendMsg(getChannelByType(PickupChannelType.ADMIN), msg);
+    }
+
 
     public String printBanInfo(Player player) {
         PlayerBan ban = player.getLatestBan();
