@@ -1,6 +1,6 @@
 package de.gost0r.pickupbot.pickup;
 
-import io.sentry.Sentry;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.IOUtils;
 import org.json.JSONArray;
 
@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.nio.file.Paths;
 import java.util.HashMap;
 
+@Slf4j
 public class Country {
 
     private static HashMap<String, String> CountryToContinentMap = new HashMap<String, String>();
@@ -29,7 +30,7 @@ public class Country {
                 CountryToContinentMap.put(country, continent);
             }
         } catch (IOException e) {
-            Sentry.captureException(e);
+            log.error("Error while loading country codes", e);
         }
     }
 

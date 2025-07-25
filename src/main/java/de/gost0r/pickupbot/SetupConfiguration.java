@@ -4,7 +4,6 @@ import de.gost0r.pickupbot.discord.DiscordBot;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.PickupBot;
-import io.sentry.Sentry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,19 +21,16 @@ public class SetupConfiguration {
     private final String stage;
     private final String discordToken;
     private final String discordApplicationId;
-    private final String sentryDsn;
 
     private final FtwglApi ftwglApi;
 
     public SetupConfiguration(@Value("${app.stage}") String stage,
                               @Value("${app.discord.token}") String discordToken,
                               @Value("${app.discord.application-id}") String discordApplicationId,
-                              @Value("${app.sentry.dsn}") String sentryDsn,
                               FtwglApi ftwglApi) {
         this.stage = stage;
         this.discordToken = discordToken;
         this.discordApplicationId = discordApplicationId;
-        this.sentryDsn = sentryDsn;
         this.ftwglApi = ftwglApi;
     }
 
@@ -47,10 +43,7 @@ public class SetupConfiguration {
 
         Country.initCountryCodes();
 
-        Sentry.init(sentryDsn + "?environment=" + stage);
-
         log.info("Bot started.");
-        Sentry.captureMessage("Bot started");
     }
 
     @Bean

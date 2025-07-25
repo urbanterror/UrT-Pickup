@@ -2,7 +2,6 @@ package de.gost0r.pickupbot.discord;
 
 import de.gost0r.pickupbot.discord.api.DiscordAPI;
 import de.gost0r.pickupbot.pickup.PickupBot;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -43,7 +42,6 @@ public class DiscordUser {
             this.avatar = user.isNull("avatar") ? null : user.getString("avatar");
         } catch (JSONException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
     }
 
@@ -66,7 +64,6 @@ public class DiscordUser {
             roles.put(guild, roleList);
         } catch (JSONException e) {
             log.warn("Exception for {}: ", array, e);
-            Sentry.captureException(e);
         }
     }
 
@@ -89,7 +86,6 @@ public class DiscordUser {
                     list.add(role);
                 } catch (JSONException e) {
                     log.warn("Exception: ", e);
-                    Sentry.captureException(e);
                 }
             }
             roles.put(guild, list);
@@ -110,7 +106,6 @@ public class DiscordUser {
                 }
             } catch (JSONException e) {
                 log.warn("Exception: ", e);
-                Sentry.captureException(e);
             }
         }
         return false;
@@ -126,7 +121,6 @@ public class DiscordUser {
             return channel;
         } catch (JSONException | NullPointerException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return null;
     }
@@ -144,7 +138,6 @@ public class DiscordUser {
             return newUser;
         } catch (JSONException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return null;
     }

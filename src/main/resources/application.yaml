@@ -3,8 +3,6 @@ app:
   discord:
     token: ${DISCORD_TOKEN}
     application-id: ${DISCORD_APPLICATION_ID}
-  sentry:
-    dsn: ${SENTRY_DSN}
   ftw:
     url: ${FTW_URL}
     key: ${FTW_KEY}

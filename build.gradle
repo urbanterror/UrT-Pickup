@@ -23,13 +23,8 @@ repositories {
     mavenCentral()
 }
 
-ext {
-    set('sentryVersion', "1.7.23")
-}
-
 dependencies {
 //    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'io.sentry:sentry-spring-boot-starter-jakarta'
     implementation 'org.springframework.boot:spring-boot-starter-json'
     implementation 'org.springframework.retry:spring-retry'
     implementation 'org.springframework:spring-aspects'
@@ -49,12 +44,6 @@ dependencies {
     implementation("net.dv8tion:JDA:5.6.1") {
         exclude module: 'opus-java'
         exclude module: 'tink'
-    }
-}
-
-dependencyManagement {
-    imports {
-        mavenBom "io.sentry:sentry-bom:${sentryVersion}"
     }
 }
 

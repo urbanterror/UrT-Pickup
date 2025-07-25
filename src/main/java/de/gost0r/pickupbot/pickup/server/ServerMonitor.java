@@ -4,7 +4,6 @@ import de.gost0r.pickupbot.pickup.*;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import de.gost0r.pickupbot.pickup.server.ServerPlayer.ServerPlayerState;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -80,7 +79,6 @@ public class ServerMonitor implements Runnable {
             }
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             match.getLogic().bot.sendMsg(match.getLogic().getChannelByType(PickupChannelType.ADMIN), "ServerMonitor " + e.toString());
         }
         log.info("run() ended");
@@ -270,7 +268,7 @@ public class ServerMonitor implements Runnable {
 
         if (scorex[0] < backupScore[half][0] || scorex[1] < backupScore[half][1]) {
             scorex = backupScore[half];
-            Sentry.captureMessage("Score bug happened");
+            log.warn("Score bug happened");
         }
         score[half] = scorex;
         backupScore = score;
@@ -302,7 +300,6 @@ public class ServerMonitor implements Runnable {
                 }
             } catch (NumberFormatException e) {
                 log.warn("Exception: ", e);
-                Sentry.captureException(e);
             }
         }
 

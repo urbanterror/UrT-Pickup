@@ -1,7 +1,6 @@
 package de.gost0r.pickupbot.discord;
 
 import de.gost0r.pickupbot.discord.api.DiscordAPI;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -31,7 +30,6 @@ public class DiscordChannel {
             this.isThread = !channel.isNull("thread_metadata");
         } catch (JSONException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
     }
 

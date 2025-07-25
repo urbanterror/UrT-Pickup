@@ -4,7 +4,6 @@ import de.gost0r.pickupbot.discord.*;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.server.Server;
 import de.gost0r.pickupbot.pickup.server.ServerMonitor.ServerState;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 
@@ -251,7 +250,6 @@ public class Match implements Runnable {
                     }
                 } catch (Exception e) {
                     log.warn("Exception: ", e);
-                    Sentry.captureException(e);
                 }
                 cleanUp();
                 logic.db.saveMatch(this);
@@ -819,7 +817,6 @@ public class Match implements Runnable {
                 Thread.sleep(5000);
             } catch (InterruptedException e) {
                 log.warn("Exception: ", e);
-                Sentry.captureException(e);
             }
         }
 

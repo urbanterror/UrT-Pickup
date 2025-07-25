@@ -7,7 +7,6 @@ import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.Player;
 import de.gost0r.pickupbot.pickup.Region;
 import de.gost0r.pickupbot.pickup.server.Server;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpRequest;
@@ -22,11 +21,7 @@ import org.springframework.web.client.RestClient;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -69,7 +64,6 @@ public class FtwglApi {
             return response.getStatusCode() == HttpStatus.OK;
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return false;
         }
     }
@@ -80,7 +74,6 @@ public class FtwglApi {
             return sendHeadRequest(url).getStatusCode() == HttpStatus.OK;
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return false;
         }
     }
@@ -99,7 +92,6 @@ public class FtwglApi {
             return response.getUrl();
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return Config.ftw_error;
         }
     }
@@ -140,7 +132,6 @@ public class FtwglApi {
             return server;
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return null;
         }
     }
@@ -164,11 +155,9 @@ public class FtwglApi {
             }
         } catch (InterruptedException e) {
             log.warn("InterruptedException: ", e);
-            Sentry.captureException(e);
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
     }
 
@@ -198,16 +187,15 @@ public class FtwglApi {
             return ratings;
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return Collections.emptyMap();
     }
 
-    public Map<Player, Float> getTopPlayerRatings(){
-        try{
+    public Map<Player, Float> getTopPlayerRatings() {
+        try {
             PlayerTopRatingsResponse.PlayerRatingEntry[] response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.PlayerRatingEntry[].class).getBody();
             assert response != null;
-            
+
             // Create a LinkedHashMap to maintain insertion order (which should be descending by rating from API)
             Map<Player, Float> playerRatings = new LinkedHashMap<>();
             for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response) {
@@ -223,7 +211,6 @@ public class FtwglApi {
             return playerRatings;
         } catch (Exception e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return Collections.emptyMap();
         }
     }

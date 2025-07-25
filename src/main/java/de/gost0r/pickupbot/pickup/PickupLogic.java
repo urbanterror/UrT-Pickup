@@ -6,7 +6,6 @@ import de.gost0r.pickupbot.discord.api.DiscordAPI;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import de.gost0r.pickupbot.pickup.server.Server;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 
@@ -1122,7 +1121,6 @@ public class PickupLogic {
                     }
                 } catch (NumberFormatException e) {
                     log.warn("Exception: ", e);
-                    Sentry.captureException(e);
                 }
             }
         }
@@ -1198,7 +1196,6 @@ public class PickupLogic {
             return true;
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return false;
         }
     }
@@ -1277,7 +1274,6 @@ public class PickupLogic {
             return true;
         } catch (IllegalArgumentException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
             return false;
         }
     }
@@ -1295,7 +1291,6 @@ public class PickupLogic {
             }
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return false;
     }
@@ -1312,7 +1307,6 @@ public class PickupLogic {
             }
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return false;
     }
@@ -1328,7 +1322,6 @@ public class PickupLogic {
             }
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return false;
     }
@@ -1433,7 +1426,6 @@ public class PickupLogic {
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
     }
@@ -1452,7 +1444,6 @@ public class PickupLogic {
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
     }
@@ -1467,7 +1458,6 @@ public class PickupLogic {
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         interaction.respond("Match not found.");
     }
@@ -1773,7 +1763,7 @@ public class PickupLogic {
 
     public void refundPlayer(DiscordSlashCommandInteraction command, Player pRefund, int amount, String reason, Player pAdmin) {
         command.respond(null);
-        pRefund .addCoins(amount);
+        pRefund.addCoins(amount);
         pRefund.saveWallet();
 
         String msg = Config.is_refunded;

@@ -4,7 +4,6 @@ import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.Match;
 import de.gost0r.pickupbot.pickup.Player;
 import de.gost0r.pickupbot.pickup.Region;
-import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -56,7 +55,6 @@ public class Server {
             this.socket.setSoTimeout(1000);
         } catch (SocketException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
     }
 
@@ -106,7 +104,6 @@ public class Server {
             return string;
         } catch (IOException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return null;
     }
@@ -134,7 +131,6 @@ public class Server {
 
         } catch (IOException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return null;
     }
@@ -183,7 +179,6 @@ public class Server {
             return InetAddress.getByName(IP);
         } catch (UnknownHostException e) {
             log.warn("Exception: ", e);
-            Sentry.captureException(e);
         }
         return null;
     }
