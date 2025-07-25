@@ -24,7 +24,7 @@ repositories {
 }
 
 ext {
-    set('sentryVersion', "8.16.0")
+    set('sentryVersion', "1.7.23")
 }
 
 dependencies {
