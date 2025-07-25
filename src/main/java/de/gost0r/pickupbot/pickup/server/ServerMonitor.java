@@ -528,7 +528,7 @@ public class ServerMonitor implements Runnable {
 
         // hax to avoid empty
         if (stripped.length == 1) {
-            log.info("Corrupted RPP (too short), taking prevRPP instead");
+            log.warn("Corrupted RPP (too short), taking prevRPP instead. received: {}", playersString);
             return prevRPP;
         }
 
