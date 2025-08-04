@@ -1064,6 +1064,13 @@ public class Database {
     public WinDrawLoss getWDLForPlayer(Player player, Gametype gt, Season season) {
         WinDrawLoss wdl = new WinDrawLoss();
         try {
+            String gametypeCondition;
+            if (gt.getName().equals("TS")) {
+                gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
+            } else {
+                gametypeCondition = "AND m.gametype=?";
+            }
+            
             String sql = "SELECT SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS win, "
                     + "SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 END) AS draw, "
                     + "SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 END) AS loss "
@@ -1074,14 +1081,18 @@ public class Database {
                     + "FROM 'player_in_match' AS pim "
                     + "JOIN 'match' AS m ON m.id = pim.matchid "
                     + "JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid "
-                    + "WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.gametype=? AND m.starttime > ? AND m.starttime < ?"
+                    + "WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?"
                     + "AND p.urtauth=? AND p.userid=?) AS stat ";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, gt.getName());
-            pstmt.setLong(2, season.startdate);
-            pstmt.setLong(3, season.enddate);
-            pstmt.setString(4, player.getUrtauth());
-            pstmt.setString(5, player.getDiscordUser().id);
+            
+            int paramIndex = 1;
+            if (!gt.getName().equals("TS")) {
+                pstmt.setString(paramIndex++, gt.getName());
+            }
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
+            pstmt.setString(paramIndex++, player.getUrtauth());
+            pstmt.setString(paramIndex, player.getDiscordUser().id);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 wdl.win = rs.getInt("win");
@@ -1106,13 +1117,25 @@ public class Database {
             if (gt.getName().equals("CTF")) {
                 limit = 10;
             }
-            String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? AND m.gametype = ?) AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
+            
+            String gametypeCondition;
+            if (gt.getName().equals("TS")) {
+                gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
+            } else {
+                gametypeCondition = "AND m.gametype=?";
+            }
+            
+            String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setLong(1, season.startdate);
-            pstmt.setLong(2, season.enddate);
-            pstmt.setString(3, gt.getName());
-            pstmt.setInt(4, limit);
-            pstmt.setString(5, player.getUrtauth());
+            
+            int paramIndex = 1;
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
+            if (!gt.getName().equals("TS")) {
+                pstmt.setString(paramIndex++, gt.getName());
+            }
+            pstmt.setInt(paramIndex++, limit);
+            pstmt.setString(paramIndex, player.getUrtauth());
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 rank = rs.getInt("rowIndex");
@@ -1138,13 +1161,26 @@ public class Database {
                 limit = 10;
                 rating_query = "CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50";
             }
-            String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND match.gametype=? AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
+            
+            String gametypeCondition;
+            if (gt.getName().equals("TS")) {
+                gametypeCondition = "AND (match.gametype='TS' OR match.gametype='PROMOD')";
+            } else {
+                gametypeCondition = "AND match.gametype=?";
+            }
+            
+            String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, gt.getName());
-            pstmt.setLong(2, season.startdate);
-            pstmt.setLong(3, season.enddate);
-            pstmt.setInt(4, limit);
-            pstmt.setString(5, player.getUrtauth());
+            
+            int paramIndex = 1;
+            if (!gt.getName().equals("TS")) {
+                pstmt.setString(paramIndex++, gt.getName());
+            }
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
+            pstmt.setInt(paramIndex++, limit);
+            pstmt.setString(paramIndex, player.getUrtauth());
+            
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 rank = rs.getInt("rowIndex");
@@ -1167,13 +1203,24 @@ public class Database {
             if (gt.getName().equals("CTF")) {
                 limit = 10;
             }
-            String sql = "SELECT urtauth, COUNT(urtauth) as matchcount, SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) as win, SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) as draw, SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) loss , (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.gametype = ? AND m.starttime > ? AND m.starttime < ?) AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC LIMIT ?";
+            String gametypeCondition;
+            if (gt.getName().equals("TS")) {
+                gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
+            } else {
+                gametypeCondition = "AND m.gametype=?";
+            }
+            
+            String sql = "SELECT urtauth, COUNT(urtauth) as matchcount, SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) as win, SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) as draw, SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) loss , (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?) AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC LIMIT ?";
             PreparedStatement pstmt = getPreparedStatement(sql);
-            pstmt.setString(1, gt.getName());
-            pstmt.setLong(2, season.startdate);
-            pstmt.setLong(3, season.enddate);
-            pstmt.setLong(4, limit);
-            pstmt.setInt(5, number);
+            
+            int paramIndex = 1;
+            if (!gt.getName().equals("TS")) {
+                pstmt.setString(paramIndex++, gt.getName());
+            }
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
+            pstmt.setLong(paramIndex++, limit);
+            pstmt.setInt(paramIndex, number);
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
                 Player p = Player.get(rs.getString("urtauth"));
@@ -1203,13 +1250,24 @@ public class Database {
                 limit = 0;
                 rating_query = "MAX(kills)";
             }
-            String sql = "SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON match.id = player_in_match.matchid WHERE player.active = \"true\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND match.gametype = ? AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC LIMIT ?";
+            String gametypeCondition;
+            if (gt.getName().equals("TS")) {
+                gametypeCondition = "AND (match.gametype='TS' OR match.gametype='PROMOD')";
+            } else {
+                gametypeCondition = "AND match.gametype=?";
+            }
+            
+            String sql = "SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON match.id = player_in_match.matchid WHERE player.active = \"true\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC LIMIT ?";
             PreparedStatement pstmt = getPreparedStatement(sql);
-            pstmt.setString(1, gt.getName());
-            pstmt.setLong(2, season.startdate);
-            pstmt.setLong(3, season.enddate);
-            pstmt.setLong(4, limit);
-            pstmt.setInt(5, number);
+            
+            int paramIndex = 1;
+            if (!gt.getName().equals("TS")) {
+                pstmt.setString(paramIndex++, gt.getName());
+            }
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
+            pstmt.setLong(paramIndex++, limit);
+            pstmt.setInt(paramIndex, number);
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
                 Player p = Player.get(rs.getString("auth"));
@@ -1298,7 +1356,7 @@ public class Database {
 
         try {
             // TODO: maybe move this somewhere
-            String sql = "SELECT SUM(kills) as sumkills, SUM(deaths) as sumdeaths, SUM(assists) as sumassists FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN match ON match.id = player_in_match.matchid WHERE match.gametype=\"TS\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND player_userid=? AND player_urtauth=? AND match.starttime > ? AND match.starttime < ?;";
+            String sql = "SELECT SUM(kills) as sumkills, SUM(deaths) as sumdeaths, SUM(assists) as sumassists FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN match ON match.id = player_in_match.matchid WHERE (match.gametype=\"TS\" OR match.gametype=\"PROMOD\") AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND player_userid=? AND player_urtauth=? AND match.starttime > ? AND match.starttime < ?;";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, player.getDiscordUser().id);
             pstmt.setString(2, player.getUrtauth());
