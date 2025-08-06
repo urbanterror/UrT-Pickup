@@ -1661,7 +1661,7 @@ public class Database {
     public Map<Player, Integer> getTopSpree(Gametype gametype, int number) {
         Map<Player, Integer> topSpree = new LinkedHashMap<Player, Integer>();
         try {
-            String sql = "SELECT * FROM spree WHERE gametype = ? ORDER BY spree DESC LIMIT ?";
+            String sql = "SELECT * FROM spree WHERE gametype = ? and spree >= 0 ORDER BY spree DESC LIMIT ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, gametype.getName());
             pstmt.setInt(2, number);
@@ -1683,7 +1683,7 @@ public class Database {
     public Map<Player, Integer> getWorstSpree(Gametype gametype, int number) {
         Map<Player, Integer> worstSpree = new LinkedHashMap<Player, Integer>();
         try {
-            String sql = "SELECT * FROM spree WHERE gametype = ? ORDER BY spree ASC LIMIT ?";
+            String sql = "SELECT * FROM spree WHERE gametype = ? and spree =< 0 ORDER BY spree ASC LIMIT ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, gametype.getName());
             pstmt.setInt(2, number);
