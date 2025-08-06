@@ -1269,7 +1269,7 @@ public class Match implements Runnable {
     public void updateSpree() {
         Gametype gt = gametype;
         if (gametype.getName().equals("PROMOD")) {
-            gt = logic.get.get("TS");
+            gt = logic.getGametypeByString("TS");
         }
         String winningTeam = "";
         if (score[0] > score[1]) {
@@ -1296,7 +1296,7 @@ public class Match implements Runnable {
     public void sendSpreeMsg(Player p) {
         Gametype gt = gametype;
         if (gametype.getName().equals("PROMOD")) {
-            gt = logic.get.get("TS");
+            gt = logic.getGametypeByString("TS");
         }
         if (p.spree.containsKey(gt) && p.spree.get(gt) >= 3 && p.spree.get(gt) < 6) {
             logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a winning spree! :fire: " + p.spree.get(gt));
