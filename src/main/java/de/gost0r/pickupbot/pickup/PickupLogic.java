@@ -772,9 +772,13 @@ public class PickupLogic {
             }
             if (p.spree.containsKey(getGametypeByString("TS")) && p.spree.get(getGametypeByString("TS")) >= 3) {
                 statsEmbed.addField("Win Streak", p.spree.get(getGametypeByString("TS")) + " :fire:", true);
+            } else if (p.spree.containsKey(getGametypeByString("TS")) && p.spree.get(getGametypeByString("TS")) <= -3) {
+                statsEmbed.addField("Losing Streak", p.spree.get(getGametypeByString("TS")) + " :cold_face:", true);
             }
             if (p.spree.containsKey(getGametypeByString("DIV1")) && p.spree.get(getGametypeByString("DIV1")) >= 3) {
                 statsEmbed.addField("Div1 Streak", p.spree.get(getGametypeByString("DIV1")) + " :fire:", true);
+            } else if (p.spree.containsKey(getGametypeByString("DIV1")) && p.spree.get(getGametypeByString("DIV1")) <= -3) {
+                statsEmbed.addField("Div1 Losing Streak", p.spree.get(getGametypeByString("DIV1")) + " :cold_face:", true);
             }
         }
 
