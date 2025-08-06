@@ -1267,6 +1267,10 @@ public class Match implements Runnable {
     }
 
     public void updateSpree() {
+        Gametype gt = gametype;
+        if (gametype.getName().equals("PROMOD")) {
+            gt = logic.get.get("TS");
+        }
         String winningTeam = "";
         if (score[0] > score[1]) {
             winningTeam = "red";
@@ -1280,22 +1284,32 @@ public class Match implements Runnable {
         }
 
         for (Player redP : teamList.get("red")) {
-            redP.saveSpree(gametype, winningTeam.equals("red"));
+            redP.saveSpree(gt, winningTeam.equals("red"));
             sendSpreeMsg(redP);
         }
         for (Player blueP : teamList.get("blue")) {
-            blueP.saveSpree(gametype, winningTeam.equals("blue"));
+            blueP.saveSpree(gt, winningTeam.equals("blue"));
             sendSpreeMsg(blueP);
         }
     }
 
     public void sendSpreeMsg(Player p) {
-        if (p.spree.containsKey(gametype) && p.spree.get(gametype) >= 3 && p.spree.get(gametype) < 6) {
-            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a winning spree! :fire: " + p.spree.get(gametype));
-        } else if (p.spree.containsKey(gametype) && p.spree.get(gametype) >= 6 && p.spree.get(gametype) < 10) {
-            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a **rampage**! :fire: " + p.spree.get(gametype));
-        } else if (p.spree.containsKey(gametype) && p.spree.get(gametype) >= 10) {
-            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " IS **GODLIKE**! :fire: " + p.spree.get(gametype));
+        Gametype gt = gametype;
+        if (gametype.getName().equals("PROMOD")) {
+            gt = logic.get.get("TS");
+        }
+        if (p.spree.containsKey(gt) && p.spree.get(gt) >= 3 && p.spree.get(gt) < 6) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a winning spree! :fire: " + p.spree.get(gt));
+        } else if (p.spree.containsKey(gt) && p.spree.get(gt) >= 6 && p.spree.get(gt) < 10) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a **rampage**! :fire: " + p.spree.get(gt));
+        } else if (p.spree.containsKey(gt) && p.spree.get(gt) >= 10) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " IS **GODLIKE**! :fire: " + p.spree.get(gt));
+        } else if (p.spree.containsKey(gt) && p.spree.get(gt) <= -3 && p.spree.get(gt) > -6) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a losing spree! :cold_face: " + p.spree.get(gt));
+        } else if (p.spree.containsKey(gt) && p.spree.get(gt) <= -6 && p.spree.get(gt) > -10) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " is on a bad losing spree! :cold_face: " + p.spree.get(gt));
+        } else if (p.spree.containsKey(gt) && p.spree.get(gt) <= -10) {
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), p.getDiscordUser().getMentionString() + " has been losing quite a bit! Are you ok? :cold_face: " + p.spree.get(gt));
         }
     }
 

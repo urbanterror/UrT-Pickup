@@ -430,7 +430,7 @@ public class PickupLogic {
         StringBuilder embed_spree_current = new StringBuilder();
         StringBuilder embed_current_player = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 winning spree " + gt.getName();
+        embed.title = "Top 10 winning spree :fire: " + gt.getName();
         embed.description = "``Season " + currentSeason.number + "``";
         embed.color = 7056881;
 
@@ -460,6 +460,64 @@ public class PickupLogic {
             Map<Player, Integer> topSpreeCurrent = db.getTopSpree(gt, 3);
             rank = 1;
             for (Map.Entry<Player, Integer> entry : topSpreeCurrent.entrySet()) {
+                String country;
+                if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
+                    country = ":flag_white:";
+                } else {
+                    country = ":flag_" + entry.getKey().getCountry().toLowerCase() + ":";
+                }
+                embed_current_rank.append("**").append(rank).append("**\n");
+                embed_spree_current.append(entry.getValue()).append("\n");
+                embed_current_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
+                rank++;
+            }
+            embed.addField("\u200b", embed_current_rank.toString(), true);
+            embed.addField("Player", embed_current_player.toString(), true);
+            embed.addField("Spree", embed_spree_current.toString(), true);
+
+            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+        }
+    }
+
+    public void cmdWorstSpree(int number, Gametype gt) {
+
+        StringBuilder embed_rank = new StringBuilder();
+        StringBuilder embed_player = new StringBuilder();
+        StringBuilder embed_spree = new StringBuilder();
+        StringBuilder embed_current_rank = new StringBuilder();
+        StringBuilder embed_spree_current = new StringBuilder();
+        StringBuilder embed_current_player = new StringBuilder();
+        DiscordEmbed embed = new DiscordEmbed();
+        embed.title = "Top 10 losing spree :cold_face: " + gt.getName();
+        embed.description = "``Season " + currentSeason.number + "``";
+        embed.color = 7056881;
+
+        Map<Player, Integer> worstSpree = db.getWorstSpreeAllTime(gt, number);
+        if (worstSpree.isEmpty()) {
+            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+        } else {
+            int rank = 1;
+            for (Map.Entry<Player, Integer> entry : worstSpree.entrySet()) {
+                String country;
+                if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
+                    country = ":flag_white:";
+                } else {
+                    country = ":flag_" + entry.getKey().getCountry().toLowerCase() + ":";
+                }
+                embed_rank.append("**").append(rank).append("**\n");
+                embed_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
+                embed_spree.append(entry.getValue()).append("\n");
+                rank++;
+            }
+            embed.addField("\u200b", embed_rank.toString(), true);
+            embed.addField("Player", embed_player.toString(), true);
+            embed.addField("Spree", embed_spree.toString(), true);
+
+            embed.addField("\u200b", "Top 3 current", false);
+
+            Map<Player, Integer> worstSpreeCurrent = db.getWorstSpree(gt, 3);
+            rank = 1;
+            for (Map.Entry<Player, Integer> entry : worstSpreeCurrent.entrySet()) {
                 String country;
                 if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
                     country = ":flag_white:";

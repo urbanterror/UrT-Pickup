@@ -436,10 +436,14 @@ public class Player {
 
     public void saveSpree(Gametype gametype, boolean won) {
         if (this.spree.containsKey(gametype)) {
-            this.spree.put(gametype, won ? this.spree.get(gametype) + 1 : 0);
+            if (won) {
+                this.spree.put(gametype, this.spree.get(gametype) > 0 ? this.spree.get(gametype) + 1 : 1);
+            } else {
+                this.spree.put(gametype, this.spree.get(gametype) < 0 ? this.spree.get(gametype) - 1 : -1);
+            }
             db.updateSpree(this, gametype, this.spree.get(gametype));
         } else {
-            this.spree.put(gametype, won ? 1 : 0);
+            this.spree.put(gametype, won ? 1 : -1);
             db.createSpree(this, gametype, this.spree.get(gametype));
         }
     }
