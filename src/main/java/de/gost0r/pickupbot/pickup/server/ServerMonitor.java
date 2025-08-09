@@ -1,5 +1,6 @@
 package de.gost0r.pickupbot.pickup.server;
 
+import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.*;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
@@ -23,6 +24,7 @@ public class ServerMonitor implements Runnable {
 
     private Server server;
     private Match match;
+    private final PermissionService permissionService;
 
     private boolean stopped;
 
@@ -50,9 +52,10 @@ public class ServerMonitor implements Runnable {
 
     public List<String> streamer_auths = new ArrayList<String>();
 
-    public ServerMonitor(Server server, Match match) {
+    public ServerMonitor(Server server, Match match, PermissionService permissionService) {
         this.server = server;
         this.match = match;
+        this.permissionService = permissionService;
 
         this.stopped = false;
         state = ServerState.WELCOME;
@@ -314,7 +317,7 @@ public class ServerMonitor implements Runnable {
                     sp.player = player;
                     match.getStats(player).updateStatus(MatchStats.Status.PLAYING);
                     match.getStats(player).updateIP(sp.ip);
-                } else if (player != null && player.getDiscordUser().hasAdminRights()) {
+                } else if (player != null && permissionService.hasAdminRights(player.getDiscordUser())) {
                     // PLAYER IS AN ADMIN, DONT FORCE/KICK HIM
                     continue;
                 } else { // if player not authed, auth not registered or not playing in this match -> kick

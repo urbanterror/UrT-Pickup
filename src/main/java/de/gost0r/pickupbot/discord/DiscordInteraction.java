@@ -1,36 +1,17 @@
 package de.gost0r.pickupbot.discord;
 
-import de.gost0r.pickupbot.discord.api.DiscordAPI;
-
-import java.util.ArrayList;
 import java.util.List;
 
-public class DiscordInteraction implements InteractionRespond {
-    public String id;
-    public String token;
-    public DiscordUser user;
-    public String componentId;
-    public DiscordMessage message;
-    public List<String> values;
+public interface DiscordInteraction extends InteractionRespond {
+    String getId();
 
-    public DiscordInteraction(String id, String token, String componentId, DiscordUser user, DiscordMessage message, List<String> values) {
-        this.id = id;
-        this.token = token;
-        this.user = user;
-        this.componentId = componentId;
-        this.message = message;
-        this.values = values;
-    }
+    String getToken();
 
-    public void respond(String content) {
-        DiscordAPI.interactionRespond(id, token, content, null, null);
-    }
+    DiscordUser getUser();
 
-    public void respond(String content, DiscordEmbed embed) {
-        DiscordAPI.interactionRespond(id, token, content, embed, null);
-    }
+    String getComponentId();
 
-    public void respond(String content, DiscordEmbed embed, ArrayList<DiscordComponent> components) {
-        DiscordAPI.interactionRespond(id, token, content, embed, components);
-    }
+    DiscordMessage getMessage();
+
+    List<String> getValues();
 }

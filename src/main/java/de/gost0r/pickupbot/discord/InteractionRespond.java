@@ -4,6 +4,8 @@ import java.util.ArrayList;
 
 public interface InteractionRespond {
 
+    void deferReply();
+
     void respond(String content);
 
     void respond(String content, DiscordEmbed embed);

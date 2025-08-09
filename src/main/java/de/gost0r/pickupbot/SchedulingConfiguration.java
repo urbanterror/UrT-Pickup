@@ -1,6 +1,6 @@
 package de.gost0r.pickupbot;
 
-import de.gost0r.pickupbot.discord.DiscordBot;
+import de.gost0r.pickupbot.pickup.PickupBot;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,9 +9,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 @EnableScheduling
 public class SchedulingConfiguration {
 
-    private final DiscordBot bot;
+    private final PickupBot bot;
 
-    public SchedulingConfiguration(DiscordBot bot) {
+    public SchedulingConfiguration(PickupBot bot) {
         this.bot = bot;
     }
 

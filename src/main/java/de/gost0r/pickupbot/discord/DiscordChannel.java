@@ -1,84 +1,32 @@
 package de.gost0r.pickupbot.discord;
 
-import de.gost0r.pickupbot.discord.api.DiscordAPI;
-import lombok.extern.slf4j.Slf4j;
-import org.json.JSONException;
-import org.json.JSONObject;
+import java.util.List;
 
-import java.util.HashMap;
-import java.util.Map;
+public interface DiscordChannel {
 
-@Slf4j
-public class DiscordChannel {
+    String getId();
 
-    public String id;
-    public DiscordChannelType type;
-    public String name;
-    public String topic;
-    public String parent_id;
-    public String guild_id;
-    public boolean isThread;
+    String getName();
 
-    public DiscordChannel(JSONObject channel) {
-        try {
-            this.id = channel.getString("id");
-            this.type = channel.getInt("type") == 11 ? DiscordChannelType.THREAD_CHANNEL : DiscordChannelType.values()[channel.getInt("type")];
-            this.name = channel.isNull("name") ? null : channel.getString("name");
-            this.topic = channel.isNull("topic") ? null : channel.getString("topic");
-            this.parent_id = channel.isNull("parent_id") ? null : channel.getString("parent_id");
-            this.guild_id = channel.isNull("guild_id") ? null : channel.getString("guild_id");
-            this.isThread = !channel.isNull("thread_metadata");
-        } catch (JSONException e) {
-            log.warn("Exception: ", e);
-        }
-    }
+    String getParentId();
 
+    String getGuildId();
 
-    public String getMentionString() {
-        return "<#" + id + ">";
-    }
+    boolean isThreadChannel();
 
-    public static Map<String, DiscordChannel> channelList = new HashMap<String, DiscordChannel>();
+    boolean isPrivateChannel();
 
-    public static DiscordChannel findChannel(String channelID) {
-        if (channelID.matches("[0-9]+")) {
-            if (channelList.containsKey(channelID)) {
-                return channelList.get(channelID);
-            }
-            JSONObject reply = DiscordAPI.requestChannel(channelID);
-            if (reply != null) {
-                DiscordChannel newChannel = new DiscordChannel(reply);
-                channelList.put(channelID, newChannel);
-                return newChannel;
-            }
-        }
-        log.info("Unable to find channel for: {}", channelID);
-        return null;
-    }
+    void sendMessage(String message);
 
+    void sendMessage(String message, DiscordEmbed embed);
 
-    @Override
-    public boolean equals(Object o) {
-        if (o instanceof DiscordChannel) {
-            DiscordChannel chan = (DiscordChannel) o;
-            return chan.id.equals(this.id);
-        }
-        return false;
-    }
+    DiscordMessage sendMessage(String message, DiscordEmbed embed, List<DiscordComponent> component);
 
+    DiscordChannel createThread(String name);
 
-    @Override
-    public String toString() {
-        return id;
-    }
+    String getMentionString();
 
-    public void archive() {
-        if (isThread) {
-            DiscordAPI.archiveThread(this);
-        }
-    }
+    void archive();
 
-    public void delete() {
-        DiscordAPI.deleteChannel(this);
-    }
+    void delete();
 }

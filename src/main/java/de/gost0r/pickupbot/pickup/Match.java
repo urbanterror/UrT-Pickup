@@ -1,14 +1,12 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.server.Server;
 import de.gost0r.pickupbot.pickup.server.ServerMonitor.ServerState;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
 
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 @Slf4j
@@ -48,6 +46,7 @@ public class Match implements Runnable {
     private List<DiscordMessage> pickMessages = new ArrayList<DiscordMessage>();
 
     private PickupLogic logic;
+    private PermissionService permissionService;
 
     public ArrayList<Bet> bets;
     public int payWin = 50;
@@ -69,10 +68,11 @@ public class Match implements Runnable {
         bets = new ArrayList<Bet>();
     }
 
-    public Match(PickupLogic logic, Gametype gametype, List<GameMap> maplist) {
+    public Match(PickupLogic logic, Gametype gametype, List<GameMap> maplist, PermissionService permissionService) {
         this();
         this.logic = logic;
         this.gametype = gametype;
+        this.permissionService = permissionService;
 
         for (GameMap m : maplist) {
             mapVotes.put(m, 0);
@@ -84,7 +84,7 @@ public class Match implements Runnable {
 
     public Match(int id, long startTime, GameMap map, int[] score, int[] elo,
                  Map<String, List<Player>> teamList, MatchState state, Gametype gametype, Server server,
-                 Map<Player, MatchStats> playerStats, PickupLogic logic) {
+                 Map<Player, MatchStats> playerStats, PickupLogic logic, PermissionService permissionService) {
         this();
         this.id = id;
         this.startTime = startTime;
@@ -98,6 +98,7 @@ public class Match implements Runnable {
         this.server = server;
         this.playerStats = playerStats;
         this.logic = logic;
+        this.permissionService = permissionService;
 
         if (server == null) {
             abort();
@@ -105,7 +106,7 @@ public class Match implements Runnable {
         }
 
         if (!isOver()) {
-            server.startMonitoring(this);
+            server.startMonitoring(this, permissionService);
         }
 
         surrender = new int[]{gametype.getTeamSize() - 1, gametype.getTeamSize() - 1};
@@ -404,7 +405,7 @@ public class Match implements Runnable {
                 String msg = Config.pkup_aftermath_rank;
                 msg = msg.replace(".player.", player.getDiscordUser().getMentionString());
                 msg = msg.replace(".updown.", player.getEloChange() > 0 ? "up" : "down");
-                msg = msg.replace(".rank.", player.getRank().getEmoji());
+                msg = msg.replace(".rank.", player.getRank().getEmoji().getMentionString());
                 fullmsg.append("\n").append(msg);
             }
         }
@@ -467,7 +468,7 @@ public class Match implements Runnable {
             threadTitle = threadTitle.replace(".ID.", String.valueOf(logic.db.getLastMatchID() + 1));
 
             for (DiscordChannel publicChannel : logic.getChannelByType(PickupChannelType.PUBLIC)) {
-                threadChannels.add(logic.bot.createThread(publicChannel, threadTitle));
+                threadChannels.add(publicChannel.createThread(threadTitle));
             }
 
             logic.matchStarted(this);
@@ -530,8 +531,8 @@ public class Match implements Runnable {
             logic.bot.sendMsg(threadChannels, captainAnnouncement, getLobbyEmbed());
 
             String captainDm = Config.pkup_go_captains;
-            logic.bot.sendMsg(captains[0].getDiscordUser(), captainDm);
-            logic.bot.sendMsg(captains[1].getDiscordUser(), captainDm);
+            captains[0].getDiscordUser().sendPrivateMessage(captainDm);
+            captains[1].getDiscordUser().sendPrivateMessage(captainDm);
         }
 
         sortedPlayers.remove(0);
@@ -597,10 +598,10 @@ public class Match implements Runnable {
                 choiceNumber = sortedPlayers.size();
             }
             for (int i = 0; i < choiceNumber; i++) {
-                DiscordButton button = new DiscordButton(DiscordButtonStyle.BLURPLE);
-                button.custom_id = Config.INT_PICK + "_" + i;
-                button.label = sortedPlayers.get(i).getUrtauth() + " (" + sortedPlayers.get(i).getElo() + ")";
-                button.emoji = sortedPlayers.get(i).getRank().getEmojiJSON();
+                DiscordButton button = new DiscordButton(DiscordButtonStyle.PURPLE);
+                button.setCustomId(Config.INT_PICK + "_" + i);
+                button.setLabel(sortedPlayers.get(i).getUrtauth() + " (" + sortedPlayers.get(i).getElo() + ")");
+                button.setEmoji(sortedPlayers.get(i).getRank().getEmoji());
                 buttons.add(button);
             }
 
@@ -610,9 +611,9 @@ public class Match implements Runnable {
                     int matchPlayed = logic.db.getNumberOfGames(sortedPlayers.get(i));
                     if (matchPlayed < 30) {
                         DiscordButton button = new DiscordButton(DiscordButtonStyle.GREY);
-                        button.custom_id = Config.INT_PICK + "_" + i;
-                        button.label = sortedPlayers.get(i).getUrtauth();
-                        button.emoji = new JSONObject().put("name", "\u2753");
+                        button.setCustomId(Config.INT_PICK + "_" + i);
+                        button.setLabel(sortedPlayers.get(i).getUrtauth());
+                        button.setEmoji(new DiscordEmoji(null, "\u2753"));
                         buttons.add(button);
                     }
                 }
@@ -787,23 +788,18 @@ public class Match implements Runnable {
             computeOdds();
 
             buttons = new ArrayList<DiscordComponent>();
-            JSONObject emojiRed = new JSONObject();
-            emojiRed.put("name", "helmet_red");
-            emojiRed.put("id", "900477396237549620");
-
-            JSONObject emojiBlue = new JSONObject();
-            emojiBlue.put("name", "helmet_blue");
-            emojiBlue.put("id", "900477396573110282");
+            DiscordEmoji emojiRed = new DiscordEmoji("900477396237549620", "helmet_red");
+            DiscordEmoji emojiBlue = new DiscordEmoji("900477396573110282", "helmet_blue");
 
             DiscordButton buttonBetRed = new DiscordButton(DiscordButtonStyle.GREY);
-            buttonBetRed.emoji = emojiRed;
-            buttonBetRed.label = "Bet red (" + String.format("%.02f", odds[0]) + ")";
-            buttonBetRed.custom_id = "showbet_red_" + id;
+            buttonBetRed.setEmoji(emojiRed);
+            buttonBetRed.setLabel("Bet red (" + String.format("%.02f", odds[0]) + ")");
+            buttonBetRed.setCustomId("showbet_red_" + id);
 
             DiscordButton buttonBetBlue = new DiscordButton(DiscordButtonStyle.GREY);
-            buttonBetBlue.emoji = emojiBlue;
-            buttonBetBlue.label = "Bet blue (" + String.format("%.02f", odds[1]) + ")";
-            buttonBetBlue.custom_id = "showbet_blue_" + id;
+            buttonBetBlue.setEmoji(emojiBlue);
+            buttonBetBlue.setLabel("Bet blue (" + String.format("%.02f", odds[1]) + ")");
+            buttonBetBlue.setCustomId("showbet_blue_" + id);
 
             buttons.add(buttonBetRed);
             buttons.add(buttonBetBlue);
@@ -822,8 +818,8 @@ public class Match implements Runnable {
 
         buttons = new ArrayList<DiscordComponent>();
         DiscordButton button = new DiscordButton(DiscordButtonStyle.GREEN);
-        button.custom_id = Config.INT_LAUNCHAC + "_" + String.valueOf(id) + "_" + server.getAddress() + "_" + server.password;
-        button.label = Config.BTN_LAUNCHAC;
+        button.setCustomId(Config.INT_LAUNCHAC + "_" + String.valueOf(id) + "_" + server.getAddress() + "_" + server.password);
+        button.setLabel(Config.BTN_LAUNCHAC);
         buttons.add(button);
 
         msg = Config.pkup_go_player;
@@ -832,11 +828,11 @@ public class Match implements Runnable {
         for (String team : teamList.keySet()) {
             for (Player player : teamList.get(team)) {
                 if (player.getEnforceAC()) {
-                    logic.bot.sendMsgToEdit(player.getDiscordUser().getDMChannel(), Config.pkup_go_player_ac, null, buttons);
+                    player.getDiscordUser().sendPrivateMessage(Config.pkup_go_player_ac, null, buttons);
                     continue;
                 }
                 String msg_t = msg.replace(".team.", team.toUpperCase());
-                logic.bot.sendMsg(player.getDiscordUser(), msg_t);
+                player.getDiscordUser().sendPrivateMessage(msg_t);
             }
         }
 
@@ -861,7 +857,7 @@ public class Match implements Runnable {
             gtvServer.sendRcon("gtv_connect " + server.getAddress() + "  " + server.password);
         }
 
-        server.startMonitoring(this);
+        server.startMonitoring(this, permissionService);
 
         liveScoreMsgs = logic.bot.sendMsgToEdit(threadChannels, "", getMatchEmbed(false), null);
     }
@@ -1085,16 +1081,16 @@ public class Match implements Runnable {
         }
 
         if (serverState == ServerState.LIVE && state == MatchState.Live && server != null) {
-            embed.title = region_flag + " Match #" + id + " (" + server.getServerMonitor().getGameTime() + ")";
+            embed.setTitle(region_flag + " Match #" + id + " (" + server.getServerMonitor().getGameTime() + ")");
         } else {
-            embed.title = region_flag + " Match #" + id;
+            embed.setTitle(region_flag + " Match #" + id);
         }
 
-        embed.color = 7056881;
+        embed.setColor(7056881);
         if (gametype.getPrivate()) {
-            embed.description = map != null ? ":lock: **" + gametype.getName().toUpperCase() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null";
+            embed.setDescription(map != null ? ":lock: **" + gametype.getName().toUpperCase() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null");
         } else {
-            embed.description = map != null ? "**" + gametype.getName() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null";
+            embed.setDescription(map != null ? "**" + gametype.getName() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null");
         }
 
 
@@ -1158,10 +1154,8 @@ public class Match implements Runnable {
             embed.addField("Ping (ms)" + "\n \u200b", blue_team_ping_embed.toString(), true);
         }
 
-        Date startDate = new Date(startTime);
-        DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
-        embed.timestamp = df.format(startDate);
-        embed.footer = state.name();
+        embed.setTimestamp(startTime);
+        embed.setFooterText(state.name());
 
         return embed;
     }
@@ -1254,7 +1248,7 @@ public class Match implements Runnable {
             score = server.getServerMonitor().getScoreArray();
         }
         for (DiscordMessage liveScoreMsg : liveScoreMsgs) {
-            liveScoreMsg.edit(null, getMatchEmbed(false));
+            liveScoreMsg.edit(getMatchEmbed(false));
         }
     }
 
@@ -1346,12 +1340,12 @@ public class Match implements Runnable {
             bet.enterResult(bet.color.equals(winningTeam));
             if (bet.won) {
                 int wonAmount = Math.round(bet.amount * bet.odds);
-                JSONObject emoji = Bet.getCoinEmoji(wonAmount);
+                DiscordEmoji emoji = Bet.getCoinEmoji(wonAmount);
                 String msg = Config.bets_won;
                 msg = msg.replace(".player.", bet.player.getDiscordUser().getMentionString());
                 msg = msg.replace(".amount.", String.format("%,d", wonAmount));
-                msg = msg.replace(".emojiname.", emoji.getString("name"));
-                msg = msg.replace(".emojiid.", emoji.getString("id"));
+                msg = msg.replace(".emojiname.", emoji.name());
+                msg = msg.replace(".emojiid.", emoji.id());
                 betMsg = betMsg + msg + '\n';
             }
         }
@@ -1413,8 +1407,8 @@ public class Match implements Runnable {
 
     private DiscordEmbed getLobbyEmbed() {
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Lobby";
-        embed.color = 7056881;
+        embed.setTitle("Lobby");
+        embed.setColor(7056881);
 
         StringBuilder lobby_players_string = new StringBuilder();
         StringBuilder rating_wdl_string = new StringBuilder();
@@ -1424,7 +1418,7 @@ public class Match implements Runnable {
 
         for (Player p : sortedPlayers) {
             StringBuilder player_string = new StringBuilder();
-            player_string.append(p.getRank().getEmoji());
+            player_string.append(p.getRank().getEmoji().getMentionString());
             if (p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
                 player_string.append(" :flag_white: ");
             } else {

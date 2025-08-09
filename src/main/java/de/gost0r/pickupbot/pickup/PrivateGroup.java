@@ -37,11 +37,11 @@ public class PrivateGroup {
 
     public DiscordEmbed getEmbed() {
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Private " + gt.getName().split(" ")[0] + " Group";
-        embed.color = 7056881;
+        embed.setTitle("Private " + gt.getName().split(" ")[0] + " Group");
+        embed.setColor(7056881);
 
         long epochSeconds = timestamp.plus(Duration.ofHours(1)).getEpochSecond();
-        embed.description = "**Captain**: " + captain.getDiscordUser().getMentionString() + "\nThis group will expire in <t:" + Long.toString(epochSeconds) + ":R> if left inactive.";
+        embed.setDescription("**Captain**: " + captain.getDiscordUser().getMentionString() + "\nThis group will expire in <t:" + Long.toString(epochSeconds) + ":R> if left inactive.");
 
         int totalPlayers = playerList.size();
         int columns = (int) Math.ceil(totalPlayers / 10.0); // max 10 players per column

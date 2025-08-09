@@ -2,7 +2,9 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordChannel;
 import de.gost0r.pickupbot.discord.DiscordRole;
+import de.gost0r.pickupbot.discord.DiscordService;
 import de.gost0r.pickupbot.discord.DiscordUser;
+import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import de.gost0r.pickupbot.pickup.server.Server;
 import de.gost0r.pickupbot.pickup.stats.WinDrawLoss;
@@ -14,12 +16,17 @@ import java.util.*;
 @Slf4j
 public class Database {
 
-    private Connection c = null;
     private final PickupLogic logic;
+    private final DiscordService discordService;
+    private final PermissionService permissionService;
+
+    private Connection c = null;
     private Map<String, PreparedStatement> preparedStmtCache;
 
 
-    public Database(PickupLogic logic) {
+    public Database(PickupLogic logic, DiscordService discordService, PermissionService permissionService) {
+        this.discordService = discordService;
+        this.permissionService = permissionService;
         preparedStmtCache = new HashMap<>();
         this.logic = logic;
         initConnection();
@@ -210,13 +217,13 @@ public class Database {
             // check whether user exists
             String sql = "SELECT * FROM player WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, player.getDiscordUser().id);
+            pstmt.setString(1, player.getDiscordUser().getId());
             pstmt.setString(2, player.getUrtauth());
             ResultSet rs = pstmt.executeQuery();
             if (!rs.next()) {
                 sql = "INSERT INTO player (userid, urtauth, elo, elochange, active, country) VALUES (?, ?, ?, ?, ?, ?)";
                 pstmt = c.prepareStatement(sql);
-                pstmt.setString(1, player.getDiscordUser().id);
+                pstmt.setString(1, player.getDiscordUser().getId());
                 pstmt.setString(2, player.getUrtauth());
                 pstmt.setInt(3, player.getElo());
                 pstmt.setInt(4, player.getEloChange());
@@ -227,7 +234,7 @@ public class Database {
                 sql = "UPDATE player SET active=? WHERE userid=? AND urtauth=?";
                 pstmt = c.prepareStatement(sql);
                 pstmt.setString(1, String.valueOf(true));
-                pstmt.setString(2, player.getDiscordUser().id);
+                pstmt.setString(2, player.getDiscordUser().getId());
                 pstmt.setString(3, player.getUrtauth());
                 pstmt.executeUpdate();
             }
@@ -242,7 +249,7 @@ public class Database {
         try {
             String sql = "INSERT INTO banlist (player_userid, player_urtauth, start, end, reason, pardon, forgiven) VALUES (?, ?, ?, ?, ?, 'null', 0)";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, ban.player.getDiscordUser().id);
+            pstmt.setString(1, ban.player.getDiscordUser().getId());
             pstmt.setString(2, ban.player.getUrtauth());
             pstmt.setLong(3, ban.startTime);
             pstmt.setLong(4, ban.endTime);
@@ -350,7 +357,7 @@ public class Database {
                 sql = "INSERT INTO player_in_match (matchid, player_userid, player_urtauth, team) VALUES (?, ?, ?, ?)";
                 pstmt = c.prepareStatement(sql);
                 pstmt.setInt(1, mid);
-                pstmt.setString(2, player.getDiscordUser().id);
+                pstmt.setString(2, player.getDiscordUser().getId());
                 pstmt.setString(3, player.getUrtauth());
                 pstmt.setString(4, match.getTeam(player));
                 pstmt.executeUpdate();
@@ -425,9 +432,9 @@ public class Database {
                 if (!map.containsKey(type)) {
                     map.put(type, new ArrayList<DiscordRole>());
                 }
-                DiscordRole role = DiscordRole.getRole(rs.getString("role"));
+                DiscordRole role = discordService.getRoleById(rs.getString("role"));
                 assert role != null;
-                log.debug("loadRoles(): {} type={}", role.id, type.name());
+                log.debug("loadRoles(): {} type={}", role.getId(), type.name());
                 map.get(type).add(role);
             }
 
@@ -451,10 +458,10 @@ public class Database {
                 if (!map.containsKey(type)) {
                     map.put(type, new ArrayList<DiscordChannel>());
                 }
-                DiscordChannel channel = DiscordChannel.findChannel(rs.getString("channel"));
+                DiscordChannel channel = discordService.getChannelById(rs.getString("channel"));
                 assert channel != null;
                 map.get(type).add(channel);
-                log.debug("loadChannels(): {} name={} type={}", channel.id, channel.name, type.name());
+                log.debug("loadChannels(): {} name={} type={}", channel.getId(), channel.getName(), type.name());
             }
 
             stmt.close();
@@ -631,7 +638,7 @@ public class Database {
                     }
 
                     // assemble stats
-                    Player player = Player.get(DiscordUser.getUser(userid), urtauth);
+                    Player player = Player.get(discordService.getUserById(userid), urtauth);
                     stats.put(player, new MatchStats(scores[0], scores[1], ip, status));
                     teamList.get(team).add(player);
                     rs2.close();
@@ -652,7 +659,8 @@ public class Database {
                         gametype,
                         server,
                         stats,
-                        logic);
+                        logic,
+                        permissionService);
             }
             rs.close();
             pstmt.close();
@@ -711,12 +719,12 @@ public class Database {
         try {
             String sql = "SELECT * FROM player WHERE userid LIKE ? AND urtauth LIKE ? AND active LIKE ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, user == null ? "%" : user.id);
+            pstmt.setString(1, user == null ? "%" : user.getId());
             pstmt.setString(2, urtauth == null ? "%" : urtauth);
             pstmt.setString(3, onlyActive ? String.valueOf(true) : "%");
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                player = new Player(DiscordUser.getUser(rs.getString("userid")), rs.getString("urtauth"));
+                player = new Player(discordService.getUserById(rs.getString("userid")), rs.getString("urtauth"));
                 player.setElo(rs.getInt("elo"));
                 player.setEloChange(rs.getInt("elochange"));
                 player.setActive(Boolean.parseBoolean(rs.getString("active")));
@@ -731,7 +739,7 @@ public class Database {
 
                 sql = "SELECT start, end, reason, pardon, forgiven FROM banlist WHERE player_userid=? AND player_urtauth=?";
                 PreparedStatement banstmt = c.prepareStatement(sql);
-                banstmt.setString(1, player.getDiscordUser().id);
+                banstmt.setString(1, player.getDiscordUser().getId());
                 banstmt.setString(2, player.getUrtauth());
                 ResultSet banSet = banstmt.executeQuery();
                 while (banSet.next()) {
@@ -740,7 +748,7 @@ public class Database {
                     ban.startTime = banSet.getLong("start");
                     ban.endTime = banSet.getLong("end");
                     ban.reason = BanReason.valueOf(banSet.getString("reason"));
-                    ban.pardon = banSet.getString("pardon").matches("^[0-9]*$") ? DiscordUser.getUser(banSet.getString("pardon")) : null;
+                    ban.pardon = banSet.getString("pardon").matches("^[0-9]*$") ? discordService.getUserById(banSet.getString("pardon")) : null;
                     ban.forgiven = banSet.getBoolean("forgiven");
                     player.addBan(ban);
                 }
@@ -762,7 +770,7 @@ public class Database {
             String sql = "UPDATE player SET country=? WHERE userid=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, country);
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.executeUpdate();
             pstmt.close();
         } catch (SQLException e) {
@@ -818,18 +826,18 @@ public class Database {
         try {
             String sql = "SELECT * FROM channels WHERE channel=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, channel.id);
+            pstmt.setString(1, channel.getId());
             ResultSet rs = pstmt.executeQuery();
             if (!rs.next()) {
                 sql = "INSERT INTO channels (channel) VALUES (?)";
                 pstmt = c.prepareStatement(sql);
-                pstmt.setString(1, channel.id);
+                pstmt.setString(1, channel.getId());
                 pstmt.executeUpdate();
             }
             sql = "UPDATE channels SET type=? WHERE channel=?";
             pstmt = c.prepareStatement(sql);
             pstmt.setString(1, type.name());
-            pstmt.setString(2, channel.id);
+            pstmt.setString(2, channel.getId());
             pstmt.executeUpdate();
             pstmt.close();
             rs.close();
@@ -842,18 +850,18 @@ public class Database {
         try {
             String sql = "SELECT * FROM roles WHERE role=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, role.id);
+            pstmt.setString(1, role.getId());
             ResultSet rs = pstmt.executeQuery();
             if (!rs.next()) {
                 sql = "INSERT INTO roles (role) VALUES (?)";
                 pstmt = c.prepareStatement(sql);
-                pstmt.setString(1, role.id);
+                pstmt.setString(1, role.getId());
                 pstmt.executeUpdate();
             }
             sql = "UPDATE roles SET type=? WHERE role=?";
             pstmt = c.prepareStatement(sql);
             pstmt.setString(1, type.name());
-            pstmt.setString(2, role.id);
+            pstmt.setString(2, role.getId());
             pstmt.executeUpdate();
             pstmt.close();
             rs.close();
@@ -881,7 +889,7 @@ public class Database {
                 sql = "SELECT ID FROM player_in_match WHERE matchid=? AND player_userid=? AND player_urtauth=?";
                 pstmt = c.prepareStatement(sql);
                 pstmt.setInt(1, match.getID());
-                pstmt.setString(2, player.getDiscordUser().id);
+                pstmt.setString(2, player.getDiscordUser().getId());
                 pstmt.setString(3, player.getUrtauth());
                 rs = pstmt.executeQuery();
                 rs.next();
@@ -923,7 +931,7 @@ public class Database {
                 pstmt = c.prepareStatement(sql);
                 pstmt.setInt(1, player.getElo());
                 pstmt.setInt(2, player.getEloChange());
-                pstmt.setString(3, player.getDiscordUser().id);
+                pstmt.setString(3, player.getDiscordUser().getId());
                 pstmt.setString(4, player.getUrtauth());
                 pstmt.executeUpdate();
                 pstmt.close();
@@ -965,7 +973,7 @@ public class Database {
             String sql = "UPDATE player SET active=? WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, String.valueOf(false));
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
             pstmt.executeUpdate();
             pstmt.close();
@@ -979,7 +987,7 @@ public class Database {
             String sql = "UPDATE player SET enforce_ac=? WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, String.valueOf(player.getEnforceAC()));
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
             pstmt.executeUpdate();
             pstmt.close();
@@ -993,7 +1001,7 @@ public class Database {
             String sql = "UPDATE player SET proctf=? WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, String.valueOf(player.getProctf()));
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
             pstmt.executeUpdate();
             pstmt.close();
@@ -1048,7 +1056,7 @@ public class Database {
             String sql = "SELECT (SELECT COUNT(*) FROM player b WHERE a.elo < b.elo AND active=?) AS rank FROM player a WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, String.valueOf(true));
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
@@ -1071,7 +1079,7 @@ public class Database {
             } else {
                 gametypeCondition = "AND m.gametype=?";
             }
-            
+
             String sql = "SELECT SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS win, "
                     + "SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 END) AS draw, "
                     + "SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 END) AS loss "
@@ -1085,7 +1093,7 @@ public class Database {
                     + "WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?"
                     + "AND p.urtauth=? AND p.userid=?) AS stat ";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            
+
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1093,7 +1101,7 @@ public class Database {
             pstmt.setLong(paramIndex++, season.startdate);
             pstmt.setLong(paramIndex++, season.enddate);
             pstmt.setString(paramIndex++, player.getUrtauth());
-            pstmt.setString(paramIndex, player.getDiscordUser().id);
+            pstmt.setString(paramIndex, player.getDiscordUser().getId());
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 wdl.win = rs.getInt("win");
@@ -1118,17 +1126,17 @@ public class Database {
             if (gt.getName().equals("CTF")) {
                 limit = 10;
             }
-            
+
             String gametypeCondition;
             if (gt.getName().equals("TS")) {
                 gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
             } else {
                 gametypeCondition = "AND m.gametype=?";
             }
-            
+
             String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            
+
             int paramIndex = 1;
             pstmt.setLong(paramIndex++, season.startdate);
             pstmt.setLong(paramIndex++, season.enddate);
@@ -1162,17 +1170,17 @@ public class Database {
                 limit = 10;
                 rating_query = "CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50";
             }
-            
+
             String gametypeCondition;
             if (gt.getName().equals("TS")) {
                 gametypeCondition = "AND (match.gametype='TS' OR match.gametype='PROMOD')";
             } else {
                 gametypeCondition = "AND match.gametype=?";
             }
-            
+
             String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            
+
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1181,7 +1189,7 @@ public class Database {
             pstmt.setLong(paramIndex++, season.enddate);
             pstmt.setInt(paramIndex++, limit);
             pstmt.setString(paramIndex, player.getUrtauth());
-            
+
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 rank = rs.getInt("rowIndex");
@@ -1210,10 +1218,10 @@ public class Database {
             } else {
                 gametypeCondition = "AND m.gametype=?";
             }
-            
+
             String sql = "SELECT urtauth, COUNT(urtauth) as matchcount, SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) as win, SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) as draw, SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) loss , (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?) AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC LIMIT ?";
             PreparedStatement pstmt = getPreparedStatement(sql);
-            
+
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1257,10 +1265,10 @@ public class Database {
             } else {
                 gametypeCondition = "AND match.gametype=?";
             }
-            
+
             String sql = "SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON match.id = player_in_match.matchid WHERE player.active = \"true\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC LIMIT ?";
             PreparedStatement pstmt = getPreparedStatement(sql);
-            
+
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1359,7 +1367,7 @@ public class Database {
             // TODO: maybe move this somewhere
             String sql = "SELECT SUM(kills) as sumkills, SUM(deaths) as sumdeaths, SUM(assists) as sumassists FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN match ON match.id = player_in_match.matchid WHERE (match.gametype=\"TS\" OR match.gametype=\"PROMOD\") AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND player_userid=? AND player_urtauth=? AND match.starttime > ? AND match.starttime < ?;";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, player.getDiscordUser().id);
+            pstmt.setString(1, player.getDiscordUser().getId());
             pstmt.setString(2, player.getUrtauth());
             pstmt.setLong(3, season.startdate);
             pstmt.setLong(4, season.enddate);
@@ -1458,7 +1466,7 @@ public class Database {
             String sql = "UPDATE player SET coins=? WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setLong(1, player.getCoins());
-            pstmt.setString(2, player.getDiscordUser().id);
+            pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
             pstmt.executeUpdate();
             pstmt.close();
@@ -1474,7 +1482,7 @@ public class Database {
             pstmt.setLong(1, player.getEloBoost());
             pstmt.setInt(2, player.getAdditionalMapVotes());
             pstmt.setInt(3, player.getMapBans());
-            pstmt.setString(4, player.getDiscordUser().id);
+            pstmt.setString(4, player.getDiscordUser().getId());
             pstmt.setString(5, player.getUrtauth());
             pstmt.executeUpdate();
             pstmt.close();
@@ -1487,7 +1495,7 @@ public class Database {
         try {
             String sql = "INSERT INTO bets (player_userid, player_urtauth, matchid, team, won, amount, odds) VALUES (?, ?, ?, ?, ?, ?, ?)";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, bet.player.getDiscordUser().id);
+            pstmt.setString(1, bet.player.getDiscordUser().getId());
             pstmt.setString(2, bet.player.getUrtauth());
             pstmt.setInt(3, bet.matchid);
             pstmt.setInt(4, bet.color.equals("red") ? 0 : 1);
@@ -1562,7 +1570,7 @@ public class Database {
         try {
             String sql = "INSERT INTO spree (player_userid, player_urtauth, gametype, spree, personal_best, personal_worst) VALUES (?, ?, ?, ?, ?, ?)";
             PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, player.getDiscordUser().id);
+            pstmt.setString(1, player.getDiscordUser().getId());
             pstmt.setString(2, player.getUrtauth());
             pstmt.setString(3, gametype.getName());
             pstmt.setInt(4, spree);
