@@ -2,7 +2,7 @@ package de.gost0r.pickupbot.discord;
 
 public enum DiscordButtonStyle {
     NONE,
-    BLURPLE,
+    PURPLE,
     GREY,
     GREEN,
     RED,

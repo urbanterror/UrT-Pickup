@@ -2,12 +2,12 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.PickupBotApplication;
 import de.gost0r.pickupbot.discord.*;
-import de.gost0r.pickupbot.discord.api.DiscordAPI;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.permission.PermissionService;
+import de.gost0r.pickupbot.permission.PickupRoleCache;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import de.gost0r.pickupbot.pickup.server.Server;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
@@ -19,15 +19,17 @@ import java.util.*;
 @Slf4j
 public class PickupLogic {
 
-    public PickupBot bot;
+    private final DiscordService discordService;
+    private final PermissionService permissionService;
+    private final PickupRoleCache pickupRoleCache;
     public final FtwglApi ftwglApi;
+    public PickupBot bot;
     public Database db;
 
     private List<Server> serverList;
     private List<Server> gtvServerList;
     private List<GameMap> mapList;
 
-    private Map<PickupRoleType, List<DiscordRole>> roles;
     private Map<PickupChannelType, List<DiscordChannel>> channels;
 
     private List<Match> ongoingMatches; // ongoing matches (live)
@@ -48,24 +50,33 @@ public class PickupLogic {
 
     public Season currentSeason;
 
-    public PickupLogic(PickupBot bot, FtwglApi ftwglApi) {
+    public PickupLogic(PickupBot bot, FtwglApi ftwglApi, DiscordService discordService, PermissionService permissionService, PickupRoleCache pickupRoleCache) {
         this.bot = bot;
         this.ftwglApi = ftwglApi;
+        this.discordService = discordService;
+        this.permissionService = permissionService;
+        this.pickupRoleCache = pickupRoleCache;
+    }
 
-        db = new Database(this);
+    public void init() {
+        log.info("Initializing PickupLogic");
+        db = new Database(this, discordService, permissionService);
         Player.db = db;
         Player.logic = this;
         Bet.logic = this;
 
         dynamicServers = true;
 
+        log.info("Loading data from database");
         currentSeason = db.getCurrentSeason();
-
         serverList = db.loadServers();
-        roles = db.loadRoles();
         channels = db.loadChannels();
-        privateGroups = new ArrayList<PrivateGroup>();
 
+        db.loadRoles().forEach((key, value) ->
+                pickupRoleCache.addRoleByType(key, value.toArray(new DiscordRole[0]))
+        );
+
+        privateGroups = new ArrayList<PrivateGroup>();
         awaitingServer = new LinkedList<Match>();
         curMatch = new HashMap<Gametype, Match>();
         teamsQueued = new HashMap<Team, Gametype>();
@@ -113,7 +124,7 @@ public class PickupLogic {
             return;
         }
         if (player.isBanned() && !forced) {
-            bot.sendMsg(bot.getLatestMessageChannel(), printBanInfo(player));
+            bot.getLatestMessageChannel().sendMessage(printBanInfo(player));
             return;
         }
         if (playerInActiveMatch(player) != null && playerInActiveMatch(player).getGametype().getTeamSize() > 2) {
@@ -198,7 +209,7 @@ public class PickupLogic {
     public void cmdPick(DiscordInteraction interaction, Player player, int pick) {
         for (Match match : ongoingMatches) {
             if (!match.hasSquads() && match.isCaptainTurn(player)) {
-                interaction.respond(null);
+                interaction.deferReply();
                 match.pick(player, pick);
                 return;
             }
@@ -216,7 +227,7 @@ public class PickupLogic {
         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.lock_disable);
     }
 
-    public void cmdRegisterPlayer(DiscordUser user, String urtauth, String msgid) {
+    public void cmdRegisterPlayer(DiscordUser user, String urtauth, DiscordMessage message) {
         // check whether the user and the urtauth aren't taken
         if (Player.get(user) == null) {
             if (Player.get(urtauth) == null) {
@@ -226,13 +237,13 @@ public class PickupLogic {
                         p.setElo(db.getAvgElo());
                         db.createPlayer(p);
                         bot.sendNotice(user, Config.auth_success);
-                        bot.sendMsg(user.getDMChannel(), Config.ac_enforced);
+                        user.sendPrivateMessage(Config.ac_enforced);
                         String admin_msg = Config.auth_success_admin;
                         admin_msg = admin_msg.replace(".user.", user.getMentionString());
                         admin_msg = admin_msg.replace(".urtauth.", urtauth);
                         bot.sendMsg(getChannelByType(PickupChannelType.ADMIN), admin_msg);
                     } else {
-                        DiscordAPI.deleteMessage(bot.getLatestMessageChannel(), msgid);
+                        message.delete();
                         bot.sendNotice(user, Config.auth_sent_key);
                     }
                 } else {
@@ -268,7 +279,7 @@ public class PickupLogic {
         player.setProctf(!oldProctf);
         db.setProctfPlayer(player);
         if (!oldProctf) {
-            bot.sendMsg(player.getDiscordUser().getDMChannel(), Config.proctf_dm);
+            player.getDiscordUser().sendPrivateMessage(Config.proctf_dm);
         }
         return !oldProctf;
     }
@@ -279,7 +290,7 @@ public class PickupLogic {
         if (Player.get(user) != null) {
             Player p = db.loadPlayer(user);
 
-            if (p.getCountry().equalsIgnoreCase("NOT_DEFINED") || user.hasAdminRights()) {
+            if (p.getCountry().equalsIgnoreCase("NOT_DEFINED") || permissionService.hasAdminRights(user)) {
 
                 if (Country.isValid(str_country)) {
                     db.updatePlayerCountry(p, str_country);
@@ -315,13 +326,13 @@ public class PickupLogic {
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_elo = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 players";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 players");
+        embed.setColor(7056881);
         int rank = 1;
 
         List<Player> players = db.getTopPlayers(number);
         if (players.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             for (Player p : players) {
                 String country;
@@ -332,34 +343,34 @@ public class PickupLogic {
                 }
                 embed_rank.append("**").append(rank).append("**\n");
                 embed_player.append(country).append(" \u200b \u200b  ").append(p.getUrtauth()).append('\n');
-                embed_elo.append(p.getRank().getEmoji()).append(" \u200b \u200b  ").append(p.getElo()).append("\n");
+                embed_elo.append(p.getRank().getEmoji().getMentionString()).append(" \u200b \u200b  ").append(p.getElo()).append("\n");
                 rank++;
             }
             embed.addField("\u200b", embed_rank.toString(), true);
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("Elo", embed_elo.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
     public void cmdTopWDL(int number, Gametype gt) {
         if (gt.getName().equalsIgnoreCase("div1")) {
-            bot.sendMsg(bot.getLatestMessageChannel(), Config.div1_stats_blocked);
+            bot.getLatestMessageChannel().sendMessage(Config.div1_stats_blocked);
             return;
         }
         StringBuilder embed_rank = new StringBuilder();
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_wdl = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 win rate " + gt.getName();
-        embed.description = "``Season " + currentSeason.number + "``";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 win rate " + gt.getName());
+        embed.setDescription("``Season " + currentSeason.number + "``");
+        embed.setColor(7056881);
 
 
         Map<Player, String> topwdl = db.getTopWDL(number, gt, currentSeason);
         if (topwdl.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, String> entry : topwdl.entrySet()) {
@@ -378,13 +389,13 @@ public class PickupLogic {
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("Win %", embed_wdl.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
     public void cmdTopKDR(int number, Gametype gt) {
         if (gt.getName().equalsIgnoreCase("div1")) {
-            bot.sendMsg(bot.getLatestMessageChannel(), Config.div1_stats_blocked);
+            bot.getLatestMessageChannel().sendMessage(Config.div1_stats_blocked);
             return;
         }
 
@@ -392,13 +403,13 @@ public class PickupLogic {
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_wdl = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 kill death ratio " + gt.getName();
-        embed.description = "``Season " + currentSeason.number + "``";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 kill death ratio " + gt.getName());
+        embed.setDescription("``Season " + currentSeason.number + "``");
+        embed.setColor(7056881);
 
         Map<Player, Float> topkdr = db.getTopKDR(number, gt, currentSeason);
         if (topkdr.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, Float> entry : topkdr.entrySet()) {
@@ -417,7 +428,7 @@ public class PickupLogic {
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("KDR", embed_wdl.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -430,13 +441,13 @@ public class PickupLogic {
         StringBuilder embed_spree_current = new StringBuilder();
         StringBuilder embed_current_player = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 winning spree :fire: " + gt.getName();
-        embed.description = "``Season " + currentSeason.number + "``";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 winning spree :fire: " + gt.getName());
+        embed.setDescription("``Season " + currentSeason.number + "``");
+        embed.setColor(7056881);
 
         Map<Player, Integer> topSpree = db.getTopSpreeAllTime(gt, number);
         if (topSpree.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, Integer> entry : topSpree.entrySet()) {
@@ -475,7 +486,7 @@ public class PickupLogic {
             embed.addField("Player", embed_current_player.toString(), true);
             embed.addField("Spree", embed_spree_current.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -488,13 +499,13 @@ public class PickupLogic {
         StringBuilder embed_spree_current = new StringBuilder();
         StringBuilder embed_current_player = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 losing spree :cold_face: " + gt.getName();
-        embed.description = "``Season " + currentSeason.number + "``";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 losing spree :cold_face: " + gt.getName());
+        embed.setDescription("``Season " + currentSeason.number + "``");
+        embed.setColor(7056881);
 
         Map<Player, Integer> worstSpree = db.getWorstSpreeAllTime(gt, number);
         if (worstSpree.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, Integer> entry : worstSpree.entrySet()) {
@@ -533,7 +544,7 @@ public class PickupLogic {
             embed.addField("Player", embed_current_player.toString(), true);
             embed.addField("Spree", embed_spree_current.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -542,12 +553,12 @@ public class PickupLogic {
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_rich = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 richest players";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 richest players");
+        embed.setColor(7056881);
 
         Map<Player, Long> topRich = db.getTopRich(number);
         if (topRich.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, Long> entry : topRich.entrySet()) {
@@ -559,15 +570,15 @@ public class PickupLogic {
                 }
                 embed_rank.append("**").append(rank).append("**\n");
                 embed_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
-                JSONObject emoji = Bet.getCoinEmoji(entry.getValue());
-                embed_rich.append("<:" + emoji.getString("name") + ":" + emoji.getString("id") + "> " + String.format("%,d", entry.getValue())).append("\n");
+                DiscordEmoji emoji = Bet.getCoinEmoji(entry.getValue());
+                embed_rich.append("<:" + emoji.name() + ":" + emoji.id() + "> " + String.format("%,d", entry.getValue())).append("\n");
                 rank++;
             }
             embed.addField("\u200b", embed_rank.toString(), true);
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("Balance", embed_rich.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -576,23 +587,24 @@ public class PickupLogic {
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_rating = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 player ratings";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 player ratings");
+        embed.setColor(7056881);
 
-        Map<Player, Float> topRatings = ftwglApi.getTopPlayerRatings();
+        Map<String, Float> topRatings = ftwglApi.getTopPlayerRatings();
         if (topRatings.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
-            for (Map.Entry<Player, Float> entry : topRatings.entrySet()) {
+            for (Map.Entry<String, Float> entry : topRatings.entrySet()) {
+                Player player = Player.get(discordService.getUserById(entry.getKey()));
                 String country;
-                if (entry.getKey().getCountry().equalsIgnoreCase("NOT_DEFINED")) {
+                if (player.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
                     country = "<:puma:849287183474884628>";
                 } else {
-                    country = ":flag_" + entry.getKey().getCountry().toLowerCase() + ":";
+                    country = ":flag_" + player.getCountry().toLowerCase() + ":";
                 }
                 embed_rank.append("**").append(rank).append("**\n");
-                embed_player.append(country).append(" \u200b \u200b  ").append(entry.getKey().getUrtauth()).append('\n');
+                embed_player.append(country).append(" \u200b \u200b  ").append(player.getUrtauth()).append('\n');
                 embed_rating.append(String.format("%.02f", entry.getValue())).append("\n");
                 rank++;
             }
@@ -600,7 +612,7 @@ public class PickupLogic {
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("Rating", embed_rating.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -609,13 +621,13 @@ public class PickupLogic {
         StringBuilder embed_player = new StringBuilder();
         StringBuilder embed_matchplayed = new StringBuilder();
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Top 10 grinders";
-        embed.description = "``Season " + currentSeason.number + "``";
-        embed.color = 7056881;
+        embed.setTitle("Top 10 grinders");
+        embed.setDescription("``Season " + currentSeason.number + "``");
+        embed.setColor(7056881);
 
         Map<Player, Integer> topmatchplayed = db.getTopMatchPlayed(number, currentSeason);
         if (topmatchplayed.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "None");
+            bot.getLatestMessageChannel().sendMessage("None");
         } else {
             int rank = 1;
             for (Map.Entry<Player, Integer> entry : topmatchplayed.entrySet()) {
@@ -634,7 +646,7 @@ public class PickupLogic {
             embed.addField("Player", embed_player.toString(), true);
             embed.addField("Matches", embed_matchplayed.toString(), true);
 
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            bot.getLatestMessageChannel().sendMessage(null, embed);
         }
     }
 
@@ -654,7 +666,7 @@ public class PickupLogic {
         }
 
         msg = msg.replace(".position.", String.valueOf(p.getEloRank()));
-        msg = msg.replace(".rank.", p.getRank().getEmoji());
+        msg = msg.replace(".rank.", p.getRank().getEmoji().getMentionString());
 
 
         if (p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
@@ -683,19 +695,19 @@ public class PickupLogic {
 
         List<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
         DiscordButton buttonSeason = new DiscordButton(DiscordButtonStyle.GREY);
-        buttonSeason.custom_id = Config.INT_SEASONLIST + "_" + p.getUrtauth();
-        buttonSeason.label = "Select season";
+        buttonSeason.setCustomId(Config.INT_SEASONLIST + "_" + p.getUrtauth());
+        buttonSeason.setLabel("Select season");
         buttons.add(buttonSeason);
-        DiscordButton buttonAlltime = new DiscordButton(DiscordButtonStyle.BLURPLE);
-        buttonAlltime.custom_id = Config.INT_SEASONSTATS + "_" + p.getUrtauth() + "_0";
-        buttonAlltime.label = "All-time stats";
+        DiscordButton buttonAlltime = new DiscordButton(DiscordButtonStyle.PURPLE);
+        buttonAlltime.setCustomId(Config.INT_SEASONSTATS + "_" + p.getUrtauth() + "_0");
+        buttonAlltime.setLabel("All-time stats");
         buttons.add(buttonAlltime);
         DiscordButton buttomLastGame = new DiscordButton(DiscordButtonStyle.GREY);
-        buttomLastGame.custom_id = Config.INT_LASTMATCHPLAYER + "_" + p.getUrtauth();
-        buttomLastGame.label = "Last game";
+        buttomLastGame.setCustomId(Config.INT_LASTMATCHPLAYER + "_" + p.getUrtauth());
+        buttomLastGame.setLabel("Last game");
         buttons.add(buttomLastGame);
 
-        bot.sendMsgToEdit(bot.getLatestMessageChannel(), null, statsEmbed, buttons);
+        bot.getLatestMessageChannel().sendMessage(null, statsEmbed, buttons);
     }
 
     public void showSeasonList(DiscordInteraction interaction, Player p) {
@@ -710,7 +722,7 @@ public class PickupLogic {
 
         ArrayList<DiscordComponent> components = new ArrayList<DiscordComponent>();
         DiscordSelectMenu seasonMenu = new DiscordSelectMenu(options);
-        seasonMenu.custom_id = Config.INT_SEASONSELECTED + "_" + p.getUrtauth();
+        seasonMenu.setCustomId(Config.INT_SEASONSELECTED + "_" + p.getUrtauth());
         components.add(seasonMenu);
         interaction.respond(null, null, components);
     }
@@ -739,18 +751,18 @@ public class PickupLogic {
         }
 
         DiscordEmbed statsEmbed = new DiscordEmbed();
-        statsEmbed.color = 7056881;
-        statsEmbed.title = country + " \u200b \u200b  " + p.getUrtauth();
-        statsEmbed.thumbnail = p.getDiscordUser().getAvatarUrl();
+        statsEmbed.setColor(7056881);
+        statsEmbed.setTitle(country + " \u200b \u200b  " + p.getUrtauth());
+        statsEmbed.setThumbnail(p.getDiscordUser().getAvatarUrl());
 
         String boostActive = "";
         if (p.hasBoostActive()) {
             boostActive = "\n**ELO BOOST** (Expires <t:" + p.getEloBoost() / 1000 + ":R>)";
         }
-        statsEmbed.description = p.getRank().getEmoji() + " \u200b \u200b  **" + p.getElo() + "**  #" + p.getEloRank() + boostActive + "\n\n``Season " + currentSeason.number + "``";
+        statsEmbed.setDescription(p.getRank().getEmoji().getMentionString() + " \u200b \u200b  **" + p.getElo() + "**  #" + p.getEloRank() + boostActive + "\n\n``Season " + currentSeason.number + "``");
 
-        statsEmbed.footer_icon = "https://cdn.discordapp.com/emojis/" + Bet.getCoinEmoji(p.getCoins()).getString("id");
-        statsEmbed.footer = String.valueOf(p.getCoins());
+        statsEmbed.setFooterIcon("https://cdn.discordapp.com/emojis/" + Bet.getCoinEmoji(p.getCoins()).id());
+        statsEmbed.setFooterText(String.valueOf(p.getCoins()));
 
         if (stats.ts_wdl.getTotal() < 5) {
             statsEmbed.addField("\u200b", "**TS**: ``" + stats.ts_wdl.getTotal() + "/5`` placement games", false);
@@ -813,15 +825,15 @@ public class PickupLogic {
         }
 
         DiscordEmbed statsEmbed = new DiscordEmbed();
-        statsEmbed.color = 7056881;
-        statsEmbed.title = country + " \u200b \u200b  " + p.getUrtauth();
-        statsEmbed.thumbnail = p.getDiscordUser().getAvatarUrl();
-        statsEmbed.description = "Season " + season.number + " (from <t:" + season.startdate / 1000 + ":d> to <t:" + season.enddate / 1000 + ":d>)";
+        statsEmbed.setColor(7056881);
+        statsEmbed.setTitle(country + " \u200b \u200b  " + p.getUrtauth());
+        statsEmbed.setThumbnail(p.getDiscordUser().getAvatarUrl());
+        statsEmbed.setDescription("Season " + season.number + " (from <t:" + season.startdate / 1000 + ":d> to <t:" + season.enddate / 1000 + ":d>)");
         if (season.startdate == 0) {
-            statsEmbed.description = "Season " + season.number + " (until <t:" + season.enddate / 1000 + ":d>)";
+            statsEmbed.setDescription("Season " + season.number + " (until <t:" + season.enddate / 1000 + ":d>)");
         }
         if (season.number == 0) {
-            statsEmbed.description = "All time stats";
+            statsEmbed.setDescription("All time stats");
         }
         if (stats.ts_wdl.getTotal() == 0) {
             statsEmbed.addField("\u200b", "*No TS games this season*", false);
@@ -878,7 +890,7 @@ public class PickupLogic {
 
         ArrayList<CountryRank> countries = db.getTopCountries(number);
         if (countries.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), msg + "  None");
+            bot.getLatestMessageChannel().sendMessage(msg + "  None");
         } else {
 
             for (int i = 0; i < countries.size(); i++) {
@@ -891,7 +903,7 @@ public class PickupLogic {
                 msg.append("\n").append(ranking);
             }
 
-            bot.sendMsg(bot.getLatestMessageChannel(), msg.toString());
+            bot.getLatestMessageChannel().sendMessage(msg.toString());
         }
     }
 
@@ -905,7 +917,7 @@ public class PickupLogic {
                 msg = msg.replace(".gametype.", activeMatch.getGametype().getName().toUpperCase());
             }
             msg = msg.replace(".maplist.", activeMatch.getMapVotes(true));
-            bot.sendMsg(bot.getLatestMessageChannel(), msg);
+            bot.getLatestMessageChannel().sendMessage(msg);
             return;
         }
         StringBuilder msg = new StringBuilder();
@@ -949,7 +961,7 @@ public class PickupLogic {
             mapString = mapString.replace(".maplist.", "No votes");
             msg.append(mapString);
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), msg.toString());
+        bot.getLatestMessageChannel().sendMessage(msg.toString());
     }
 
     public void cmdGetMapsGt(Player player, Gametype gt) {
@@ -969,7 +981,7 @@ public class PickupLogic {
             mapString = mapString.replace(".maplist.", curMatch.get(gametype).getMapVotes(false));
             msg.append(mapString);
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), msg.toString());
+        bot.getLatestMessageChannel().sendMessage(msg.toString());
     }
 
     public void cmdMapVote(Player player, Gametype gametype, String mapname, int number) {
@@ -1038,7 +1050,7 @@ public class PickupLogic {
 
     public void cmdStatus() {
         if (curMatch.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), Config.pkup_match_unavi);
+            bot.getLatestMessageChannel().sendMessage(Config.pkup_match_unavi);
             return;
         }
         StringBuilder msg = new StringBuilder("");
@@ -1067,7 +1079,7 @@ public class PickupLogic {
         if (emptyGametype.length() > 0) {
             msg.append("\n" + emptyGametype + " Nobody signed up.");
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), msg.toString());
+        bot.getLatestMessageChannel().sendMessage(msg.toString());
     }
 
     public String cmdStatus(Match match, Player player, boolean shouldSend) {
@@ -1191,14 +1203,14 @@ public class PickupLogic {
     public void cmdGetData(DiscordChannel channel) {
         if (ongoingMatches.isEmpty()) {
             String msg = "No active matches.";
-            bot.sendMsg(channel, msg);
+            channel.sendMessage(msg);
         }
 
         for (Match match : ongoingMatches) {
             String msg = "**" + match.getGametype().getName() + " Match #" + String.valueOf(match.getID()) + "** " + Config.pkup_pw + " RCON: " + match.getServer().rconpassword + " Server #" + match.getServer().id;
             msg = msg.replace(".server.", match.getServer().getAddress());
             msg = msg.replace(".password.", match.getServer().password);
-            bot.sendMsg(channel, msg);
+            channel.sendMessage(msg);
         }
     }
 
@@ -1307,7 +1319,7 @@ public class PickupLogic {
         String msg = Config.pkup_config_list;
         msg = msg.replace(".gametype.", gt.getName());
         msg = msg.replace(".configlist.", configlist.toString());
-        bot.sendMsg(channel, msg);
+        channel.sendMessage(msg);
 
         return true;
     }
@@ -1397,7 +1409,7 @@ public class PickupLogic {
                 msg.append("\n").append(server.toString());
             }
         }
-        bot.sendMsg(channel, msg.toString());
+        channel.sendMessage(msg.toString());
     }
 
     public void cmdMatchList(DiscordChannel channel) {
@@ -1416,7 +1428,7 @@ public class PickupLogic {
                 msg.append("\n").append(match.toString());
             }
         }
-        bot.sendMsg(channel, msg.toString());
+        channel.sendMessage(msg.toString());
     }
 
     public void cmdLive(DiscordChannel channel) {
@@ -1425,30 +1437,30 @@ public class PickupLogic {
         for (Match match : ongoingMatches) {
             msg = match.getMatchInfo();
             if (match.getMatchState() == MatchState.AwaitingServer || match.getServer().getServerMonitor() == null || match.liveScoreMsgs.isEmpty()) {
-                bot.sendMsg(bot.getLatestMessageChannel(), msg);
+                bot.getLatestMessageChannel().sendMessage(msg);
             } else {
                 String scoreBoardLink = "";
                 for (DiscordMessage liveScoreMsg : match.liveScoreMsgs) {
-                    if (liveScoreMsg.channel.parent_id.equals(channel.id)) {
-                        scoreBoardLink = "[Live scoreboard](https://discord.com/channels/" + liveScoreMsg.channel.guild_id + "/" + liveScoreMsg.channel.id + "/" + liveScoreMsg.id + ")";
+                    if (liveScoreMsg.getChannel().getParentId().equals(channel.getId())) {
+                        scoreBoardLink = "[Live scoreboard](https://discord.com/channels/" + liveScoreMsg.getChannel().getGuildId() + "/" + liveScoreMsg.getChannel().getId() + "/" + liveScoreMsg.getId() + ")";
                         break;
                     }
                 }
                 StringBuilder embedDescription = new StringBuilder(scoreBoardLink);
 
-                scoreBoardLinkEmbed.color = 7056881;
+                scoreBoardLinkEmbed.setColor(7056881);
 
                 if (match.getGtvServer() != null) {
                     embedDescription.append("\n").append(Config.pkup_go_pub_calm);
                 }
 
-                scoreBoardLinkEmbed.description = embedDescription.toString();
-                bot.sendMsg(bot.getLatestMessageChannel(), msg, scoreBoardLinkEmbed);
+                scoreBoardLinkEmbed.setDescription(embedDescription.toString());
+                bot.getLatestMessageChannel().sendMessage(msg, scoreBoardLinkEmbed);
             }
         }
 
         if (msg.equals("No live matches found.")) {
-            bot.sendMsg(bot.getLatestMessageChannel(), msg);
+            bot.getLatestMessageChannel().sendMessage(msg);
         }
     }
 
@@ -1457,57 +1469,57 @@ public class PickupLogic {
             int idx = Integer.parseInt(matchid);
             for (Match match : ongoingMatches) {
                 if (match.getID() == idx) {
-                    bot.sendMsg(bot.getLatestMessageChannel(), match.getMatchInfo());
+                    bot.getLatestMessageChannel().sendMessage(match.getMatchInfo());
                     return;
                 }
             }
 
             Match match = db.loadMatch(idx); // TODO: cache?
             if (match != null) {
-                bot.sendMsg(bot.getLatestMessageChannel(), null, match.getMatchEmbed(true));
+                bot.getLatestMessageChannel().sendMessage(null, match.getMatchEmbed(true));
                 return;
             }
 
         } catch (NumberFormatException e) {
-            bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
+            bot.getLatestMessageChannel().sendMessage("Match not found.");
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
+        bot.getLatestMessageChannel().sendMessage("Match not found.");
     }
 
     public void cmdDisplayLastMatch() {
         // if (!ongoingMatches.isEmpty()){
-        // 	bot.sendMsg(bot.getLatestMessageChannel(), "Can't display the match when a game is active.");
+        // 	bot.getLatestMessageChannel().sendMessage("Can't display the match when a game is active.");
         // 	return;
         // }
         try {
             Match match = db.loadLastMatch();
             if (match != null) {
-                bot.sendMsg(bot.getLatestMessageChannel(), null, match.getMatchEmbed(true));
+                bot.getLatestMessageChannel().sendMessage(null, match.getMatchEmbed(true));
                 return;
             }
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
+        bot.getLatestMessageChannel().sendMessage("Match not found.");
     }
 
     public void cmdDisplayLastMatchPlayer(Player p) {
         // if (!ongoingMatches.isEmpty()){
-        // 	bot.sendMsg(bot.getLatestMessageChannel(), "Can't display the match when a game is active.");
+        // 	bot.getLatestMessageChannel().sendMessage("Can't display the match when a game is active.");
         // 	return;
         // }
         try {
             Match match = db.loadLastMatchPlayer(p);
             if (match != null) {
-                bot.sendMsg(bot.getLatestMessageChannel(), null, match.getMatchEmbed(true));
+                bot.getLatestMessageChannel().sendMessage(null, match.getMatchEmbed(true));
                 return;
             }
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
         }
-        bot.sendMsg(bot.getLatestMessageChannel(), "Match not found.");
+        bot.getLatestMessageChannel().sendMessage("Match not found.");
     }
 
     public void showLastMatchPlayer(DiscordInteraction interaction, Player p) {
@@ -1547,7 +1559,7 @@ public class PickupLogic {
                 gametypeMapList.add(map);
             }
         }
-        Match match = new Match(this, gametype, gametypeMapList);
+        Match match = new Match(this, gametype, gametypeMapList, permissionService);
 
         curMatch.put(gametype, match);
     }
@@ -1644,11 +1656,8 @@ public class PickupLogic {
     // ROLES & CHANNEL
 
     public boolean addRole(PickupRoleType type, DiscordRole role) {
-        if (!roles.containsKey(type)) {
-            roles.put(type, new ArrayList<DiscordRole>());
-        }
-        if (!roles.get(type).contains(role)) {
-            roles.get(type).add(role);
+        if (!pickupRoleCache.getRolesByType(type).contains(role)) {
+            pickupRoleCache.addRoleByType(type, role);
             db.updateRole(role, type);
             return true;
         }
@@ -1656,8 +1665,8 @@ public class PickupLogic {
     }
 
     public boolean removeRole(PickupRoleType type, DiscordRole role) {
-        if (roles.containsKey(type)) {
-            roles.get(type).remove(role);
+        if (pickupRoleCache.getRolesByType(type).contains(role)) {
+            pickupRoleCache.removeRoleByType(type, role);
             db.updateRole(role, PickupRoleType.NONE);
             return true;
         }
@@ -1801,7 +1810,7 @@ public class PickupLogic {
     public void pardonPlayer(DiscordSlashCommandInteraction command, Player pPardon, String reason, Player pAdmin) {
 
         if (pPardon.isBannedByBot()) {
-            command.respond(null);
+            command.deferReply();
 
             pPardon.forgiveBotBan();
 
@@ -1824,7 +1833,7 @@ public class PickupLogic {
     }
 
     public void refundPlayer(DiscordSlashCommandInteraction command, Player pRefund, int amount, String reason, Player pAdmin) {
-        command.respond(null);
+        command.deferReply();
         pRefund.addCoins(amount);
         pRefund.saveWallet();
 
@@ -2018,49 +2027,11 @@ public class PickupLogic {
         return null;
     }
 
-    public List<DiscordRole> getStreamerList() {
-        List<DiscordRole> list = new ArrayList<DiscordRole>();
-        if (roles.containsKey(PickupRoleType.STREAMER)) {
-            list.addAll(roles.get(PickupRoleType.STREAMER));
-        }
-        return list;
-    }
-
-    public List<DiscordRole> getAdminList() {
-        List<DiscordRole> list = new ArrayList<DiscordRole>();
-        if (roles.containsKey(PickupRoleType.ADMIN)) {
-            list.addAll(roles.get(PickupRoleType.ADMIN));
-        }
-        if (roles.containsKey(PickupRoleType.SUPERADMIN)) {
-            list.addAll(roles.get(PickupRoleType.SUPERADMIN));
-        }
-        return list;
-    }
-
-    public List<DiscordRole> getSuperAdminList() {
-        List<DiscordRole> list = new ArrayList<DiscordRole>();
-        if (roles.containsKey(PickupRoleType.SUPERADMIN)) {
-            list.addAll(roles.get(PickupRoleType.SUPERADMIN));
-        }
-        return list;
-    }
-
-    public List<DiscordRole> getRoleByType(PickupRoleType type) {
-        if (roles.containsKey(type)) {
-            return roles.get(type);
-        }
-        return new ArrayList<DiscordRole>();
-    }
-
     public List<DiscordChannel> getChannelByType(PickupChannelType type) {
         if (channels.containsKey(type)) {
             return channels.get(type);
         }
         return new ArrayList<DiscordChannel>();
-    }
-
-    public Set<PickupRoleType> getRoleTypes() {
-        return roles.keySet();
     }
 
     public Set<PickupChannelType> getChannelTypes() {
@@ -2141,7 +2112,7 @@ public class PickupLogic {
                         return;
                     }
                 }
-                if (player.getDiscordUser().hasStreamerRights() || player.getDiscordUser().hasAdminRights()) {
+                if (permissionService.hasStreamerRights(player.getDiscordUser()) || permissionService.hasAdminRights(player.getDiscordUser())) {
                     boolean success = match.addStreamerAuth(player.getUrtauth());
                     if (!success) {
                         interaction.respond(Config.ftw_servernotready);
@@ -2171,7 +2142,7 @@ public class PickupLogic {
             }
         }
         if (team == null) {
-            team = new Team(this, captain);
+            team = new Team(captain);
             activeTeams.add(team);
         }
 
@@ -2232,14 +2203,14 @@ public class PickupLogic {
         }
         if (team == null) {
             interaction.respond(Config.team_error_active);
-            interaction.message.delete();
+            interaction.getMessage().delete();
             return;
         }
 
         if (player.equals(captain) && answer == 2) {
             team.cancelInvitation(invitedPlayer);
-            interaction.respond(null);
-            interaction.message.delete();
+            interaction.deferReply();
+            interaction.getMessage().delete();
             return;
         }
         if (!player.equals(invitedPlayer)) {
@@ -2257,8 +2228,8 @@ public class PickupLogic {
         } else {
             team.declineInvitation(invitedPlayer);
         }
-        interaction.respond(null);
-        interaction.message.delete();
+        interaction.deferReply();
+        interaction.getMessage().delete();
     }
 
     public void removeTeamMember(DiscordInteraction interaction, Player player, Player captain, Player playerToRemove) {
@@ -2279,8 +2250,8 @@ public class PickupLogic {
         }
 
         team.removePlayer(playerToRemove);
-        interaction.respond(null);
-        interaction.message.delete();
+        interaction.deferReply();
+        interaction.getMessage().delete();
         cmdRemovePlayer(playerToRemove, null);
     }
 
@@ -2311,7 +2282,7 @@ public class PickupLogic {
 
         for (Player teamPlayer : team.getPlayers()) {
             if (teamPlayer.isBanned()) {
-                bot.sendMsg(bot.getLatestMessageChannel(), printBanInfo(teamPlayer));
+                bot.getLatestMessageChannel().sendMessage(printBanInfo(teamPlayer));
                 return;
             }
             if (playerInActiveMatch(teamPlayer) != null) {
@@ -2407,11 +2378,11 @@ public class PickupLogic {
             msg = msg + "\n" + activeTeam.getTeamStringNoMention();
         }
         if (msg.equals(Config.team_print_all)) {
-            bot.sendMsg(player.getLastPublicChannel(), Config.team_print_noteam);
+            player.getLastPublicChannel().sendMessage(Config.team_print_noteam);
             return;
         }
 
-        bot.sendMsg(player.getLastPublicChannel(), msg);
+        player.getLastPublicChannel().sendMessage(msg);
     }
 
     public void cmdEnableDynamicServer() {
@@ -2428,7 +2399,7 @@ public class PickupLogic {
 
     public void cmdGetPingURL(Player player) {
         bot.sendNotice(player.getDiscordUser(), Config.ftw_error_noping);
-        bot.sendMsg(player.getDiscordUser(), Config.ftw_dm_noping.replace(".url.", ftwglApi.requestPingUrl(player)));
+        player.getDiscordUser().sendPrivateMessage(Config.ftw_dm_noping.replace(".url.", ftwglApi.requestPingUrl(player)));
     }
 
     public void showBets(DiscordInteraction interaction, int matchId, String color, Player p) {
@@ -2457,73 +2428,73 @@ public class PickupLogic {
         ArrayList<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
 
         if (p.getCoins() > 10) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(10);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(10);
             DiscordButton button10 = new DiscordButton(DiscordButtonStyle.GREY);
-            button10.label = "10";
-            button10.custom_id = "bet_" + matchId + "_" + color + "_" + 10;
-            button10.emoji = coinEmoji;
+            button10.setLabel("10");
+            button10.setCustomId("bet_" + matchId + "_" + color + "_" + 10);
+            button10.setEmoji(coinEmoji);
             buttons.add(button10);
         }
 
         if (p.getCoins() > 100) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(100);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(100);
             DiscordButton button100 = new DiscordButton(DiscordButtonStyle.GREY);
-            button100.label = "100";
-            button100.custom_id = "bet_" + matchId + "_" + color + "_" + 100;
-            button100.emoji = coinEmoji;
+            button100.setLabel("100");
+            button100.setCustomId("bet_" + matchId + "_" + color + "_" + 100);
+            button100.setEmoji(coinEmoji);
             buttons.add(button100);
         }
 
 
         if (p.getCoins() > 1000) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(1000);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(1000);
             DiscordButton button1000 = new DiscordButton(DiscordButtonStyle.GREY);
-            button1000.label = String.format("%,d", 1000);
-            button1000.custom_id = "bet_" + matchId + "_" + color + "_" + 1000;
-            button1000.emoji = coinEmoji;
+            button1000.setLabel(String.format("%,d", 1000));
+            button1000.setCustomId("bet_" + matchId + "_" + color + "_" + 1000);
+            button1000.setEmoji(coinEmoji);
             buttons.add(button1000);
         }
 
         if (p.getCoins() > 10000) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(10000);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(10000);
             DiscordButton button10000 = new DiscordButton(DiscordButtonStyle.GREY);
-            button10000.label = String.format("%,d", 10000);
-            button10000.custom_id = "bet_" + matchId + "_" + color + "_" + 10000;
-            button10000.emoji = coinEmoji;
+            button10000.setLabel(String.format("%,d", 10000));
+            button10000.setCustomId("bet_" + matchId + "_" + color + "_" + 10000);
+            button10000.setEmoji(coinEmoji);
             buttons.add(button10000);
         }
 
         if (p.getCoins() > 100000) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(100000);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(100000);
             DiscordButton button100000 = new DiscordButton(DiscordButtonStyle.GREY);
-            button100000.label = String.format("%,d", 100000);
-            button100000.custom_id = "bet_" + matchId + "_" + color + "_" + 100000;
-            button100000.emoji = coinEmoji;
+            button100000.setLabel(String.format("%,d", 100000));
+            button100000.setCustomId("bet_" + matchId + "_" + color + "_" + 100000);
+            button100000.setEmoji(coinEmoji);
             buttons.add(button100000);
         }
 
         if (p.getCoins() > 1000000) {
-            JSONObject coinEmoji = Bet.getCoinEmoji(1000000);
+            DiscordEmoji coinEmoji = Bet.getCoinEmoji(1000000);
             DiscordButton button1000000 = new DiscordButton(DiscordButtonStyle.GREY);
-            button1000000.label = String.format("%,d", 1000000);
-            button1000000.custom_id = "bet_" + matchId + "_" + color + "_" + 1000000;
-            button1000000.emoji = coinEmoji;
+            button1000000.setLabel(String.format("%,d", 1000000));
+            button1000000.setCustomId("bet_" + matchId + "_" + color + "_" + 1000000);
+            button1000000.setEmoji(coinEmoji);
             buttons.add(button1000000);
         }
 
-        JSONObject coinEmoji = Bet.getCoinEmoji(p.getCoins());
+        DiscordEmoji coinEmoji = Bet.getCoinEmoji(p.getCoins());
         DiscordButton buttonallin = new DiscordButton(DiscordButtonStyle.RED);
-        buttonallin.label = String.format("%,d", p.getCoins()) + " (ALL IN)";
-        buttonallin.custom_id = "bet_" + matchId + "_" + color + "_-1";
-        buttonallin.emoji = coinEmoji;
+        buttonallin.setLabel(String.format("%,d", p.getCoins()) + " (ALL IN)");
+        buttonallin.setCustomId("bet_" + matchId + "_" + color + "_-1");
+        buttonallin.setEmoji(coinEmoji);
         buttons.add(buttonallin);
 
         String msg = Config.bets_howmuch;
         msg = msg.replace(".team.", color);
         msg = msg.replace(".balance.", String.valueOf(p.getCoins()));
         msg = msg.replace(".matchid.", String.valueOf(matchId));
-        msg = msg.replace(".emojiname.", coinEmoji.getString("name"));
-        msg = msg.replace(".emojiid.", coinEmoji.getString("id"));
+        msg = msg.replace(".emojiname.", coinEmoji.name());
+        msg = msg.replace(".emojiid.", coinEmoji.id());
         interaction.respond(msg, null, buttons);
     }
 
@@ -2582,57 +2553,57 @@ public class PickupLogic {
         match.bets.add(bet);
         bet.place(match);
 
-        command.respond(null);
+        command.deferReply();
     }
 
     public void showBuys(DiscordInteraction interaction, Player p) {
         ArrayList<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
 
         int price;
-        JSONObject emoji;
+        DiscordEmoji emoji;
         DiscordButton button;
 
         // Elo boost
         price = 1000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " Elo boost (2h)";
-        button.custom_id = "buy_eloboost";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " Elo boost (2h)");
+        button.setCustomId("buy_eloboost");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         // Elo boost
         price = 1000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " Additional map votes";
-        button.custom_id = "buy_showvoteoptions";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " Additional map votes");
+        button.setCustomId("buy_showvoteoptions");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         // Elo boost
         price = 10000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " Ban a map (2h)";
-        button.custom_id = "buy_banmap";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " Ban a map (2h)");
+        button.setCustomId("buy_banmap");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
-        JSONObject coinEmoji = Bet.getCoinEmoji(p.getCoins());
+        DiscordEmoji coinEmoji = Bet.getCoinEmoji(p.getCoins());
         String msg = Config.buy_show;
         msg = msg.replace(".balance.", String.format("%,d", p.getCoins()));
-        msg = msg.replace(".emojiname.", coinEmoji.getString("name"));
-        msg = msg.replace(".emojiid.", coinEmoji.getString("id"));
+        msg = msg.replace(".emojiname.", coinEmoji.name());
+        msg = msg.replace(".emojiid.", coinEmoji.id());
         interaction.respond(msg, null, buttons);
     }
 
     public void buyBoost(DiscordInteraction interaction, Player p) {
         int price = 1000;
-        JSONObject emoji = Bet.getCoinEmoji(price);
+        DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
             interaction.respond(Config.bets_insufficient);
             return;
@@ -2646,13 +2617,13 @@ public class PickupLogic {
         p.setEloBoost((long) (System.currentTimeMillis() + 7.2e6)); // 2h
         p.spendCoins(price);
         p.saveWallet();
-        interaction.respond(null);
+        interaction.deferReply();
 
         String msg = Config.buy_boostactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
         msg = msg.replace(".price.", String.valueOf(price));
-        msg = msg.replace(".emojiname.", emoji.getString("name"));
-        msg = msg.replace(".emojiid.", emoji.getString("id"));
+        msg = msg.replace(".emojiname.", emoji.name());
+        msg = msg.replace(".emojiid.", emoji.id());
         msg = msg.replace(".remaining.", String.valueOf(p.getEloBoost() / 1000));
         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
     }
@@ -2665,56 +2636,55 @@ public class PickupLogic {
         ArrayList<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
 
         int price;
-        JSONObject emoji;
+        DiscordEmoji emoji;
         DiscordButton button;
 
         price = 1000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " 1 vote";
-        button.custom_id = "buy_additionalvote_1";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " 1 vote");
+        button.setCustomId("buy_additionalvote_1");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         price = 2000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " 2 votes";
-        button.custom_id = "buy_additionalvote_2";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " 2 votes");
+        button.setCustomId("buy_additionalvote_2");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         price = 4000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " 3 votes";
-        button.custom_id = "buy_additionalvote_3";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " 3 votes");
+        button.setCustomId("buy_additionalvote_3");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         price = 8000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " 4 votes";
-        button.custom_id = "buy_additionalvote_4";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " 4 votes");
+        button.setCustomId("buy_additionalvote_4");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
         price = 16000;
         emoji = Bet.getCoinEmoji(price);
         button = new DiscordButton(DiscordButtonStyle.GREY);
-        button.label = price + " 5 votes";
-        button.custom_id = "buy_additionalvote_5";
-        button.emoji = emoji;
-        button.disabled = p.getCoins() < price;
+        button.setLabel(price + " 5 votes");
+        button.setCustomId("buy_additionalvote_5");
+        button.setEmoji(emoji);
+        button.setDisabled(p.getCoins() < price);
         buttons.add(button);
 
 
-        JSONObject coinEmoji = Bet.getCoinEmoji(p.getCoins());
         String msg = Config.buy_showvoteoptions;
         interaction.respond(msg, null, buttons);
     }
@@ -2735,7 +2705,7 @@ public class PickupLogic {
             return;
         }
 
-        JSONObject emoji = Bet.getCoinEmoji(price);
+        DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
             interaction.respond(Config.bets_insufficient);
             return;
@@ -2749,8 +2719,8 @@ public class PickupLogic {
         String msg = Config.buy_addvotesactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
         msg = msg.replace(".price.", String.valueOf(price));
-        msg = msg.replace(".emojiname.", emoji.getString("name"));
-        msg = msg.replace(".emojiid.", emoji.getString("id"));
+        msg = msg.replace(".emojiname.", emoji.name());
+        msg = msg.replace(".emojiid.", emoji.id());
         msg = msg.replace(".vote.", String.valueOf(p.getAdditionalMapVotes()));
         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
     }
@@ -2758,7 +2728,7 @@ public class PickupLogic {
     public void buyBanMap(DiscordInteraction interaction, Player p) {
         int price = 10000;
 
-        JSONObject emoji = Bet.getCoinEmoji(price);
+        DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
             interaction.respond(Config.bets_insufficient);
             return;
@@ -2772,8 +2742,8 @@ public class PickupLogic {
         String msg = Config.buy_mapbanactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
         msg = msg.replace(".price.", String.valueOf(price));
-        msg = msg.replace(".emojiname.", emoji.getString("name"));
-        msg = msg.replace(".emojiid.", emoji.getString("id"));
+        msg = msg.replace(".emojiname.", emoji.name());
+        msg = msg.replace(".emojiid.", emoji.id());
         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
     }
 
@@ -2818,13 +2788,13 @@ public class PickupLogic {
     }
 
     public void cmdWallet(Player p) {
-        JSONObject coinEmoji = Bet.getCoinEmoji(p.getCoins());
+        DiscordEmoji coinEmoji = Bet.getCoinEmoji(p.getCoins());
         String msg = Config.buy_show_wallet;
-        msg = msg.replace(".player.", p.getDiscordUser().username);
+        msg = msg.replace(".player.", p.getDiscordUser().getUsername());
         msg = msg.replace(".balance.", String.format("%,d", p.getCoins()));
-        msg = msg.replace(".emojiname.", coinEmoji.getString("name"));
-        msg = msg.replace(".emojiid.", coinEmoji.getString("id"));
-        bot.sendMsg(bot.getLatestMessageChannel(), msg);
+        msg = msg.replace(".emojiname.", coinEmoji.name());
+        msg = msg.replace(".emojiid.", coinEmoji.id());
+        bot.getLatestMessageChannel().sendMessage(msg);
     }
 
     public void cmdDonate(Player p, Player destP, int amount) {
@@ -2844,13 +2814,13 @@ public class PickupLogic {
         destP.addCoins(amount);
         destP.saveWallet();
 
-        JSONObject coinEmoji = Bet.getCoinEmoji(amount);
+        DiscordEmoji coinEmoji = Bet.getCoinEmoji(amount);
         String msg = Config.donate_processed;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
         msg = msg.replace(".otherplayer.", destP.getDiscordUser().getMentionString());
         msg = msg.replace(".amount.", String.format("%,d", amount));
-        msg = msg.replace(".emojiname.", coinEmoji.getString("name"));
-        msg = msg.replace(".emojiid.", coinEmoji.getString("id"));
+        msg = msg.replace(".emojiname.", coinEmoji.name());
+        msg = msg.replace(".emojiid.", coinEmoji.id());
         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
     }
 
@@ -2858,11 +2828,11 @@ public class PickupLogic {
         ArrayList<Bet> betList = db.getBetHistory(p);
 
         DiscordEmbed embed = new DiscordEmbed();
-        embed.title = "Last 10 bets of " + p.getDiscordUser().username;
-        embed.color = 7056881;
+        embed.setTitle("Last 10 bets of " + p.getDiscordUser().getUsername());
+        embed.setColor(7056881);
         if (betList.size() == 0) {
-            embed.description = "No bets yet";
-            bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+            embed.setDescription("No bets yet");
+            bot.getLatestMessageChannel().sendMessage(null, embed);
             return;
         }
 
@@ -2879,12 +2849,12 @@ public class PickupLogic {
             }
             matchIdField += linebreak + bet.matchid;
 
-            JSONObject amountEmoji = Bet.getCoinEmoji(bet.amount);
-            amountField += linebreak + "<:" + amountEmoji.get("name") + ":" + amountEmoji.get("id") + "> " + String.format("%,d", bet.amount);
+            DiscordEmoji amountEmoji = Bet.getCoinEmoji(bet.amount);
+            amountField += linebreak + "<:" + amountEmoji.name() + ":" + amountEmoji.id() + "> " + String.format("%,d", bet.amount);
 
             if (bet.won) {
-                JSONObject wonEmoji = Bet.getCoinEmoji(Math.round(bet.amount * bet.odds));
-                resultField += linebreak + "Won <:" + wonEmoji.get("name") + ":" + wonEmoji.get("id") + "> " + String.format("%,d", Math.round(bet.amount * bet.odds));
+                DiscordEmoji wonEmoji = Bet.getCoinEmoji(Math.round(bet.amount * bet.odds));
+                resultField += linebreak + "Won <:" + wonEmoji.name() + ":" + wonEmoji.id() + "> " + String.format("%,d", Math.round(bet.amount * bet.odds));
             } else {
                 resultField += linebreak + "Lost";
             }
@@ -2893,7 +2863,7 @@ public class PickupLogic {
         embed.addField("Amount", amountField, true);
         embed.addField("Result", resultField, true);
 
-        bot.sendMsg(bot.getLatestMessageChannel(), null, embed);
+        bot.getLatestMessageChannel().sendMessage(null, embed);
     }
 
     public List<Team> getActiveTeams() {
@@ -2909,8 +2879,8 @@ public class PickupLogic {
             return pvGroup;
         } else {
             String msg = Config.player_already_group;
-            msg = msg.replace(".player.", p.getDiscordUser().username);
-            bot.sendMsg(bot.getLatestMessageChannel(), msg);
+            msg = msg.replace(".player.", p.getDiscordUser().getUsername());
+            bot.getLatestMessageChannel().sendMessage(msg);
             return null;
         }
     }
@@ -2969,11 +2939,11 @@ public class PickupLogic {
 
     public void cmdShowPrivate() {
         if (privateGroups.isEmpty()) {
-            bot.sendMsg(bot.getLatestMessageChannel(), Config.private_none);
+            bot.getLatestMessageChannel().sendMessage(Config.private_none);
             return;
         }
         for (PrivateGroup pvGroup : privateGroups) {
-            bot.sendMsg(bot.getLatestMessageChannel(), null, pvGroup.getEmbed());
+            bot.getLatestMessageChannel().sendMessage(null, pvGroup.getEmbed());
         }
     }
 

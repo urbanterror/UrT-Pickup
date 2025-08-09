@@ -1,7 +1,6 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordChannel;
-import de.gost0r.pickupbot.discord.DiscordGuild;
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.pickup.stats.WinDrawLoss;
 
@@ -256,16 +255,16 @@ public class Player {
         // Update roles
         // TODO make it work for different servers
         if (currentRank != previousRank) {
-            logic.bot.removeUserRole(getDiscordUser(), previousRank.getRole());
+            user.removeRoleById(previousRank.getRoleId());
         }
-        if (getDiscordUser().hasRole(new DiscordGuild("117622053061787657"), PlayerRank.LEET.getRole()) && elorank > 5) {
-            logic.bot.removeUserRole(getDiscordUser(), PlayerRank.LEET.getRole());
+        if (user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank > 5) {
+            user.removeRoleById(PlayerRank.LEET.getRoleId());
         }
-        if (!getDiscordUser().hasRole(new DiscordGuild("117622053061787657"), PlayerRank.LEET.getRole()) && elorank <= 5) {
-            logic.bot.addUserRole(getDiscordUser(), PlayerRank.LEET.getRole());
+        if (!user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank <= 5) {
+            user.addRoleById(PlayerRank.LEET.getRoleId());
         }
-        if (!getDiscordUser().hasRole(new DiscordGuild("117622053061787657"), currentRank.getRole())) {
-            logic.bot.addUserRole(getDiscordUser(), currentRank.getRole());
+        if (!user.hasRoleById(currentRank.getRoleId())) {
+            user.addRoleById(currentRank.getRoleId());
         }
 
         return currentRank != previousRank;

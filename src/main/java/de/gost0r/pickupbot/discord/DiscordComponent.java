@@ -1,15 +1,12 @@
 package de.gost0r.pickupbot.discord;
 
-import org.json.JSONObject;
+import lombok.Data;
 
+@Data
 public class DiscordComponent {
-    public int type;
-    public String custom_id;
-    public boolean disabled;
-
-    public JSONObject getJSON() {
-        return null;
-    }
+    private DiscordComponentType type;
+    private String customId;
+    private boolean disabled;
 }
 
 

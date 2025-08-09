@@ -1,5 +1,6 @@
 package de.gost0r.pickupbot.pickup.server;
 
+import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.Match;
 import de.gost0r.pickupbot.pickup.Player;
@@ -136,9 +137,9 @@ public class Server {
     }
 
 
-    public void startMonitoring(Match match) {
+    public void startMonitoring(Match match, PermissionService permissionService) {
         if (this.monitor == null) {
-            this.monitor = new ServerMonitor(this, match);
+            this.monitor = new ServerMonitor(this, match, permissionService);
             monitorThread = new Thread(this.monitor);
             monitorThread.start();
         }

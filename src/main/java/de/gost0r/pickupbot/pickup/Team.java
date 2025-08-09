@@ -9,8 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Team {
-    private PickupLogic logic;
-
     private int id;
     private Player captain;
     private List<Player> players;
@@ -19,15 +17,13 @@ public class Team {
     private DiscordChannel threadChannel;
 
 
-    public Team(PickupLogic logic, Player captain) {
-        this.logic = logic;
-
+    public Team(Player captain) {
         this.captain = captain;
 
         players = new ArrayList<Player>();
         invitedPlayers = new ArrayList<Player>();
 
-        threadChannel = this.logic.bot.createThread(captain.getLastPublicChannel(), captain.getUrtauth() + "'s team");
+        threadChannel = captain.getLastPublicChannel().createThread(captain.getUrtauth() + "'s team");
 
         addPlayer(captain);
     }
@@ -69,7 +65,7 @@ public class Team {
 
     public void removePlayer(Player player) {
         players.remove(player);
-        logic.bot.sendMsg(threadChannel, Config.team_removed.replace(".player.", player.getDiscordUser().getMentionString()));
+        threadChannel.sendMessage(Config.team_removed.replace(".player.", player.getDiscordUser().getMentionString()));
     }
 
     public void invitePlayer(Player player) {
@@ -77,22 +73,22 @@ public class Team {
 
         List<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
         DiscordButton button_accept = new DiscordButton(DiscordButtonStyle.GREEN);
-        button_accept.custom_id = "teaminvite_1_" + captain.getUrtauth() + "_" + player.getUrtauth();
-        button_accept.label = "Accept";
+        button_accept.setCustomId("teaminvite_1_" + captain.getUrtauth() + "_" + player.getUrtauth());
+        button_accept.setLabel("Accept");
         buttons.add(button_accept);
         DiscordButton button_decline = new DiscordButton(DiscordButtonStyle.RED);
-        button_decline.custom_id = "teaminvite_0_" + captain.getUrtauth() + "_" + player.getUrtauth();
-        button_decline.label = "Decline";
+        button_decline.setCustomId("teaminvite_0_" + captain.getUrtauth() + "_" + player.getUrtauth());
+        button_decline.setLabel("Decline");
         buttons.add(button_decline);
         DiscordButton button_cancel = new DiscordButton(DiscordButtonStyle.GREY);
-        button_cancel.custom_id = "teaminvite_2_" + captain.getUrtauth() + "_" + player.getUrtauth();
-        button_cancel.label = "Cancel";
+        button_cancel.setCustomId("teaminvite_2_" + captain.getUrtauth() + "_" + player.getUrtauth());
+        button_cancel.setLabel("Cancel");
         buttons.add(button_cancel);
 
         String invite_message = Config.team_invited;
         invite_message = invite_message.replace(".invited.", player.getDiscordUser().getMentionString());
         invite_message = invite_message.replace(".captain.", captain.getDiscordUser().getMentionString());
-        logic.bot.sendMsgToEdit(threadChannel, invite_message, null, buttons);
+        threadChannel.sendMessage(invite_message, null, buttons);
     }
 
     public void acceptInvitation(Player player) {
@@ -101,23 +97,23 @@ public class Team {
 
         List<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
         DiscordButton button_remove = new DiscordButton(DiscordButtonStyle.RED);
-        button_remove.custom_id = "teamremove_" + captain.getUrtauth() + "_" + player.getUrtauth();
-        button_remove.label = "Remove";
+        button_remove.setCustomId("teamremove_" + captain.getUrtauth() + "_" + player.getUrtauth());
+        button_remove.setLabel("Remove");
         buttons.add(button_remove);
 
         String accept_message = Config.team_accepted;
         accept_message = accept_message.replace(".player.", player.getDiscordUser().getMentionString());
-        logic.bot.sendMsgToEdit(threadChannel, accept_message, null, buttons);
+        threadChannel.sendMessage(accept_message, null, buttons);
     }
 
     public void declineInvitation(Player player) {
         invitedPlayers.remove(player);
-        logic.bot.sendMsg(threadChannel, Config.team_declined.replace(".player.", player.getDiscordUser().getMentionString()));
+        threadChannel.sendMessage(Config.team_declined.replace(".player.", player.getDiscordUser().getMentionString()));
     }
 
     public void cancelInvitation(Player player) {
         invitedPlayers.remove(player);
-        logic.bot.sendMsg(threadChannel, Config.team_canceled.replace(".player.", player.getDiscordUser().getMentionString()));
+        threadChannel.sendMessage(Config.team_canceled.replace(".player.", player.getDiscordUser().getMentionString()));
     }
 
     public boolean isFull() {

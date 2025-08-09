@@ -1,6 +1,5 @@
 package de.gost0r.pickupbot.ftwgl;
 
-import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.models.*;
 import de.gost0r.pickupbot.pickup.Config;
 import de.gost0r.pickupbot.pickup.Country;
@@ -43,7 +42,7 @@ public class FtwglApi {
 
     public String launchAC(Player player, String ip, String password) {
         LaunchClientRequest request = LaunchClientRequest.builder()
-                .discordId(Long.parseLong(player.getDiscordUser().id))
+                .discordId(Long.parseLong(player.getDiscordUser().getId()))
                 .address(ip)
                 .password(password)
                 .build();
@@ -58,7 +57,7 @@ public class FtwglApi {
     }
 
     public boolean hasLauncherOn(Player player) {
-        String url = "/connected/launcher/" + player.getDiscordUser().id;
+        String url = "/connected/launcher/" + player.getDiscordUser().getId();
         try {
             ResponseEntity<String> response = sendGetRequest(url, String.class);
             return response.getStatusCode() == HttpStatus.OK;
@@ -69,7 +68,7 @@ public class FtwglApi {
     }
 
     public boolean checkIfPingStored(Player player) {
-        String url = "/ping/" + player.getDiscordUser().id;
+        String url = "/ping/" + player.getDiscordUser().getId();
         try {
             return sendHeadRequest(url).getStatusCode() == HttpStatus.OK;
         } catch (Exception e) {
@@ -81,8 +80,8 @@ public class FtwglApi {
     public String requestPingUrl(Player player) {
         PingUrlRequest request = PingUrlRequest
                 .builder()
-                .discordId(Long.parseLong(player.getDiscordUser().id))
-                .username(player.getDiscordUser().username)
+                .discordId(Long.parseLong(player.getDiscordUser().getId()))
+                .username(player.getDiscordUser().getUsername())
                 .urtAuth(player.getUrtauth())
                 .build();
 
@@ -99,7 +98,7 @@ public class FtwglApi {
     public Server spawnDynamicServer(List<Player> playerList) {
         RentPugRequest request = RentPugRequest.builder()
                 .discordIds(playerList.stream()
-                        .map(player -> Long.parseLong(player.getDiscordUser().id))
+                        .map(player -> Long.parseLong(player.getDiscordUser().getId()))
                         .toList())
                 .build();
 
@@ -126,7 +125,7 @@ public class FtwglApi {
                 server.playerPing.put(
                         player,
                         response.getPings()
-                                .getOrDefault(Long.parseLong(player.getDiscordUser().id), 0)
+                                .getOrDefault(Long.parseLong(player.getDiscordUser().getId()), 0)
                 );
             }
             return server;
@@ -168,7 +167,7 @@ public class FtwglApi {
     public Map<Player, Float> getPlayerRatings(List<Player> playerList) {
         PlayerRatingsRequest request = PlayerRatingsRequest.builder()
                 .discordIds(playerList.stream()
-                        .map(player -> Long.parseLong(player.getDiscordUser().id))
+                        .map(player -> Long.parseLong(player.getDiscordUser().getId()))
                         .toList())
                 .build();
         try {
@@ -180,7 +179,7 @@ public class FtwglApi {
                 ratings.put(
                         player,
                         response.getRatings()
-                                .getOrDefault(Long.parseLong(player.getDiscordUser().id), 0d)
+                                .getOrDefault(Long.parseLong(player.getDiscordUser().getId()), 0d)
                                 .floatValue()
                 );
             }
@@ -191,24 +190,17 @@ public class FtwglApi {
         return Collections.emptyMap();
     }
 
-    public Map<Player, Float> getTopPlayerRatings() {
+    public Map<String, Float> getTopPlayerRatings() {
         try {
             PlayerTopRatingsResponse.PlayerRatingEntry[] response = sendGetRequest("/ratings/top", PlayerTopRatingsResponse.PlayerRatingEntry[].class).getBody();
             assert response != null;
 
             // Create a LinkedHashMap to maintain insertion order (which should be descending by rating from API)
-            Map<Player, Float> playerRatings = new LinkedHashMap<>();
+            Map<String, Float> discordUserToRating = new LinkedHashMap<>();
             for (PlayerTopRatingsResponse.PlayerRatingEntry entry : response) {
-                DiscordUser discordUser = DiscordUser.getUser(entry.getDiscord_user_id().toString());
-                if (discordUser != null) {
-                    Player player = Player.get(discordUser);
-                    if (player != null) {
-                        float roundedRating = entry.getRating().floatValue();
-                        playerRatings.put(player, roundedRating);
-                    }
-                }
+                discordUserToRating.put(entry.getDiscordUserId().toString(), entry.getRating().floatValue());
             }
-            return playerRatings;
+            return discordUserToRating;
         } catch (Exception e) {
             log.warn("Exception: ", e);
             return Collections.emptyMap();

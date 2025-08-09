@@ -1,27 +1,20 @@
 package de.gost0r.pickupbot.discord;
 
-import de.gost0r.pickupbot.discord.api.DiscordAPI;
+import java.util.List;
 
-public class DiscordMessage {
+public interface DiscordMessage {
 
-    public String id;
-    public DiscordUser user;
-    public DiscordChannel channel;
-    public String content;
+    String getId();
 
-    public DiscordMessage(String id, DiscordUser user, DiscordChannel channel, String content) {
-        this.id = id;
-        this.user = user;
-        this.channel = channel;
-        this.content = content;
-    }
+    DiscordUser getUser();
 
-    public void edit(String content, DiscordEmbed embed) {
-        DiscordAPI.editMessage(this, content, embed);
-        this.content = content;
-    }
+    DiscordChannel getChannel();
 
-    public void delete() {
-        DiscordAPI.deleteMessage(channel, id);
-    }
+    String getContent();
+
+    List<DiscordUser> getMentionedUser();
+
+    void edit(DiscordEmbed embed);
+
+    void delete();
 }
