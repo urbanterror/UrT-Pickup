@@ -86,11 +86,18 @@ public class JdaDiscordUser implements DiscordUser {
 
     @Override
     public void sendPrivateMessage(String message, DiscordEmbed embed, List<DiscordComponent> components) {
-        MessageCreateData messageData = new MessageCreateBuilder()
-                .setContent(message)
-                .addEmbeds(mapToMessageEmbed(embed))
-                .addActionRow(components.stream().map(JdaUtils::mapToItemComponent).toList())
-                .build();
+        MessageCreateBuilder builder = new MessageCreateBuilder()
+                .setContent(message);
+
+        if (embed != null) {
+            builder = builder.addEmbeds(mapToMessageEmbed(embed));
+        }
+
+        if (components != null && !components.isEmpty()) {
+            builder = builder.addActionRow(components.stream().map(JdaUtils::mapToItemComponent).toList());
+        }
+
+        MessageCreateData messageData = builder.build();
         getUser().openPrivateChannel()
                 .flatMap(channel -> channel.sendMessage(messageData))
                 .queue();
