@@ -8,6 +8,7 @@ import lombok.Getter;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
 import net.dv8tion.jda.api.interactions.components.ActionRow;
+import net.dv8tion.jda.api.interactions.components.ItemComponent;
 import net.dv8tion.jda.api.requests.restaction.interactions.ReplyCallbackAction;
 
 import java.util.ArrayList;
@@ -65,25 +66,25 @@ public class JdaDiscordSlashCommandInteraction implements DiscordSlashCommandInt
                 callback.setEmbeds(JdaUtils.mapToMessageEmbed(embed));
             }
             if (components != null) {
-                callback.addActionRow(components.stream().map(JdaUtils::mapToItemComponent).toList());
+                JdaUtils.mapToActionRows(components).forEach(callback::addActionRow);
             }
             callback.setEphemeral(true)
                     .queue();
         } else if (embed != null) {
             ReplyCallbackAction callback = event.replyEmbeds(JdaUtils.mapToMessageEmbed(embed));
             if (components != null) {
-                callback.addActionRow(components.stream().map(JdaUtils::mapToItemComponent).toList());
+                JdaUtils.mapToActionRows(components).forEach(callback::addActionRow);
             }
             callback.setEphemeral(true)
                     .queue();
         } else if (components != null) {
-            event.replyComponents(ActionRow.of(components
-                            .stream()
-                            .map(JdaUtils::mapToItemComponent)
-                            .toList())
-                    )
-                    .setEphemeral(true)
-                    .queue();
+            List<List<ItemComponent>> rows = JdaUtils.mapToActionRows(components);
+            if (!rows.isEmpty()) {
+                ReplyCallbackAction callback = event.replyComponents(ActionRow.of(rows.removeFirst()));
+                rows.forEach(callback::addActionRow);
+                callback.setEphemeral(true)
+                        .queue();
+            }
         }
     }
 

@@ -15,6 +15,7 @@ import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 public class JdaUtils {
@@ -51,6 +52,22 @@ public class JdaUtils {
                     .build();
         }
         return null;
+    }
+
+    public static List<List<ItemComponent>> mapToActionRows(List<DiscordComponent> components) {
+        List<List<ItemComponent>> rows = new ArrayList<>();
+        List<ItemComponent> componentList = new ArrayList<>();
+        for (DiscordComponent component : components) {
+            componentList.add(JdaUtils.mapToItemComponent(component));
+            if (componentList.size() == 5) {
+                rows.add(new ArrayList<>(componentList));
+                componentList.clear();
+            }
+        }
+        if (!componentList.isEmpty()) {
+            rows.add(new ArrayList<>(componentList));
+        }
+        return rows;
     }
 
     public static ButtonStyle mapToButtonStyle(DiscordButtonStyle style) {
