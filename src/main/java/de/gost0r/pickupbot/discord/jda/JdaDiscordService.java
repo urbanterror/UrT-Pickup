@@ -8,6 +8,7 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.exceptions.ErrorResponseException;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
 import org.jetbrains.annotations.NotNull;
@@ -47,9 +48,13 @@ public class JdaDiscordService implements DiscordService {
         try {
             Guild guild = jda.getGuildById("117622053061787657");
             if (guild != null) {
-                Member member = guild.retrieveMemberById(userId).complete();
-                if (member != null) {
-                    return new JdaDiscordUser(member);
+                try {
+                    Member member = guild.retrieveMemberById(userId).complete();
+                    if (member != null) {
+                        return new JdaDiscordUser(member);
+                    }
+                } catch (ErrorResponseException e) {
+                    log.warn("Failed to retrieve member with id {} - {}", userId, e.getMessage());
                 }
             }
             User user = jda.getUserById(userId);
