@@ -1499,7 +1499,7 @@ public class PickupBot {
 
         Player p = Player.get(interaction.getUser());
         if (p == null) {
-            interaction.respond(Config.user_not_registered);
+            interaction.respondEphemeral(Config.user_not_registered);
             return;
         }
 
@@ -1574,7 +1574,7 @@ public class PickupBot {
 
         Player p = Player.get(command.getUser());
         if (p == null) {
-            command.respond(Config.user_not_registered);
+            command.respondEphemeral(Config.user_not_registered);
             return;
         }
 
@@ -1587,7 +1587,7 @@ public class PickupBot {
                 DiscordUser u = discordService.getUserById(command.getOptions().get(0).getAsString());
                 Player pPardon = Player.get(u);
                 if (pPardon == null) {
-                    command.respond(Config.player_not_found);
+                    command.respondEphemeral(Config.player_not_found);
                     return;
                 }
                 logic.pardonPlayer(command, pPardon, command.getOptions().get(1).getAsString(), p);
@@ -1597,7 +1597,7 @@ public class PickupBot {
                 DiscordUser user = discordService.getUserById(command.getOptions().get(0).getAsString());
                 Player pRefund = Player.get(user);
                 if (pRefund == null) {
-                    command.respond(Config.player_not_found);
+                    command.respondEphemeral(Config.player_not_found);
                     return;
                 }
                 logic.refundPlayer(command, pRefund, command.getOptions().get(1).getAsInt(), command.getOptions().get(2).getAsString(), p);

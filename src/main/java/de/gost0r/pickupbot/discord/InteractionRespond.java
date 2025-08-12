@@ -6,10 +6,10 @@ public interface InteractionRespond {
 
     void deferReply();
 
-    void respond(String content);
+    void respondEphemeral(String content);
 
-    void respond(String content, DiscordEmbed embed);
+    void respondEphemeral(String content, DiscordEmbed embed);
 
-    void respond(String content, DiscordEmbed embed, ArrayList<DiscordComponent> components);
+    void respondEphemeral(String content, DiscordEmbed embed, ArrayList<DiscordComponent> components);
 
 }

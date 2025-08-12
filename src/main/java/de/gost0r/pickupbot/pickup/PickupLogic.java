@@ -214,7 +214,7 @@ public class PickupLogic {
                 return;
             }
         }
-        interaction.respond(Config.player_not_captain);
+        interaction.respondEphemeral(Config.player_not_captain);
     }
 
     public void cmdLock() {
@@ -724,7 +724,7 @@ public class PickupLogic {
         DiscordSelectMenu seasonMenu = new DiscordSelectMenu(options);
         seasonMenu.setCustomId(Config.INT_SEASONSELECTED + "_" + p.getUrtauth());
         components.add(seasonMenu);
-        interaction.respond(null, null, components);
+        interaction.respondEphemeral(null, null, components);
     }
 
     public void showSeasonStats(DiscordInteraction interaction, Player p, int seasonnumber) {
@@ -740,7 +740,7 @@ public class PickupLogic {
         }
 
         DiscordEmbed statsEmbed = getDetailedStatsEmbed(p, season);
-        interaction.respond(null, statsEmbed);
+        interaction.respondEphemeral(null, statsEmbed);
     }
 
     public DiscordEmbed getStatsEmbed(Player p) {
@@ -1526,14 +1526,14 @@ public class PickupLogic {
         try {
             Match match = db.loadLastMatchPlayer(p);
             if (match != null) {
-                interaction.respond(null, match.getMatchEmbed(true));
+                interaction.respondEphemeral(null, match.getMatchEmbed(true));
                 return;
             }
 
         } catch (NumberFormatException e) {
             log.warn("Exception: ", e);
         }
-        interaction.respond("Match not found.");
+        interaction.respondEphemeral("Match not found.");
     }
 
     public void cmdResetElo() {
@@ -1828,7 +1828,7 @@ public class PickupLogic {
             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
         } else {
             // Player is not banned
-            command.respond(printPlayerNotBannedInfo(pPardon));
+            command.respondEphemeral(printPlayerNotBannedInfo(pPardon));
         }
     }
 
@@ -2108,26 +2108,26 @@ public class PickupLogic {
                 for (Player playerInMatch : match.getPlayerList()) {
                     if (playerInMatch.equals(player)) {
                         String response = ftwglApi.launchAC(player, ip, password);
-                        interaction.respond(response);
+                        interaction.respondEphemeral(response);
                         return;
                     }
                 }
                 if (permissionService.hasStreamerRights(player.getDiscordUser()) || permissionService.hasAdminRights(player.getDiscordUser())) {
                     boolean success = match.addStreamerAuth(player.getUrtauth());
                     if (!success) {
-                        interaction.respond(Config.ftw_servernotready);
+                        interaction.respondEphemeral(Config.ftw_servernotready);
                         return;
                     }
                     String response = ftwglApi.launchAC(player, ip, password);
-                    interaction.respond(response);
+                    interaction.respondEphemeral(response);
                     return;
                 }
-                interaction.respond(Config.ftw_playernotinmatch);
+                interaction.respondEphemeral(Config.ftw_playernotinmatch);
                 return;
             }
         }
 
-        interaction.respond(Config.ftw_matchnotfound);
+        interaction.respondEphemeral(Config.ftw_matchnotfound);
     }
 
     public void invitePlayersToTeam(Player captain, List<Player> invitedPlayers) {
@@ -2202,7 +2202,7 @@ public class PickupLogic {
             }
         }
         if (team == null) {
-            interaction.respond(Config.team_error_active);
+            interaction.respondEphemeral(Config.team_error_active);
             interaction.getMessage().delete();
             return;
         }
@@ -2214,13 +2214,13 @@ public class PickupLogic {
             return;
         }
         if (!player.equals(invitedPlayer)) {
-            interaction.respond(Config.team_error_invite.replace(".player.", invitedPlayer.getUrtauth()));
+            interaction.respondEphemeral(Config.team_error_invite.replace(".player.", invitedPlayer.getUrtauth()));
             return;
         }
 
         if (answer == 1) {
             if (team.isFull()) {
-                interaction.respond(Config.team_is_full);
+                interaction.respondEphemeral(Config.team_is_full);
                 return;
             }
             team.acceptInvitation(invitedPlayer);
@@ -2234,7 +2234,7 @@ public class PickupLogic {
 
     public void removeTeamMember(DiscordInteraction interaction, Player player, Player captain, Player playerToRemove) {
         if (!player.equals(playerToRemove) && !player.equals(captain)) {
-            interaction.respond(Config.team_error_remove);
+            interaction.respondEphemeral(Config.team_error_remove);
             return;
         }
 
@@ -2245,7 +2245,7 @@ public class PickupLogic {
             }
         }
         if (team == null) {
-            interaction.respond(Config.team_error_active);
+            interaction.respondEphemeral(Config.team_error_active);
             return;
         }
 
@@ -2410,18 +2410,18 @@ public class PickupLogic {
             }
         }
         if (match == null || !match.acceptBets()) {
-            interaction.respond(Config.bets_notaccepting);
+            interaction.respondEphemeral(Config.bets_notaccepting);
             return;
         }
 
         String otherTeam = color.equals("red") ? "blue" : "red";
         if (match.isInMatch(p) && match.getTeam(p).equals(otherTeam)) {
-            interaction.respond(Config.bets_otherteam);
+            interaction.respondEphemeral(Config.bets_otherteam);
             return;
         }
 
         if (p.getCoins() <= 0) {
-            interaction.respond(Config.bets_nomoney);
+            interaction.respondEphemeral(Config.bets_nomoney);
             return;
         }
 
@@ -2495,7 +2495,7 @@ public class PickupLogic {
         msg = msg.replace(".matchid.", String.valueOf(matchId));
         msg = msg.replace(".emojiname.", coinEmoji.name());
         msg = msg.replace(".emojiid.", coinEmoji.id());
-        interaction.respond(msg, null, buttons);
+        interaction.respondEphemeral(msg, null, buttons);
     }
 
     public void bet(InteractionRespond command, int matchId, String color, long amount, Player p) {
@@ -2507,22 +2507,22 @@ public class PickupLogic {
             }
         }
         if (match == null || !match.acceptBets()) {
-            command.respond(Config.bets_notaccepting);
+            command.respondEphemeral(Config.bets_notaccepting);
             return;
         }
 
         if (amount > p.getCoins()) {
-            command.respond(Config.bets_insufficient);
+            command.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
         if (p.getCoins() <= 0) {
-            command.respond(Config.bets_nomoney);
+            command.respondEphemeral(Config.bets_nomoney);
             return;
         }
 
         if (amount > 1000000) {
-            command.respond(Config.bets_above_limit);
+            command.respondEphemeral(Config.bets_above_limit);
             return;
         }
 
@@ -2534,7 +2534,7 @@ public class PickupLogic {
 
         String otherTeam = color.equals("red") ? "blue" : "red";
         if (match.isInMatch(p) && match.getTeam(p).equals(otherTeam)) {
-            command.respond(Config.bets_otherteam);
+            command.respondEphemeral(Config.bets_otherteam);
             return;
         }
         float odds = color.equals("red") ? match.getOdds(0) : match.getOdds(1);
@@ -2542,7 +2542,7 @@ public class PickupLogic {
         for (Bet matchBet : match.bets) {
             if (matchBet.player.equals(p) && color.equals(matchBet.color)) {
                 if (!allIn && amount + matchBet.amount > 1000000) {
-                    command.respond(Config.bets_above_limit);
+                    command.respondEphemeral(Config.bets_above_limit);
                     return;
                 }
                 matchBet.amount += amount;
@@ -2598,19 +2598,19 @@ public class PickupLogic {
         msg = msg.replace(".balance.", String.format("%,d", p.getCoins()));
         msg = msg.replace(".emojiname.", coinEmoji.name());
         msg = msg.replace(".emojiid.", coinEmoji.id());
-        interaction.respond(msg, null, buttons);
+        interaction.respondEphemeral(msg, null, buttons);
     }
 
     public void buyBoost(DiscordInteraction interaction, Player p) {
         int price = 1000;
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
-            interaction.respond(Config.bets_insufficient);
+            interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
         if (p.hasBoostActive()) {
-            interaction.respond(Config.buy_boostactive.replace(".remaining.", String.valueOf(p.getEloBoost() / 1000)));
+            interaction.respondEphemeral(Config.buy_boostactive.replace(".remaining.", String.valueOf(p.getEloBoost() / 1000)));
             return;
         }
 
@@ -2630,7 +2630,7 @@ public class PickupLogic {
 
     public void showAdditionalVoteOptions(DiscordInteraction interaction, Player p) {
         if (p.getAdditionalMapVotes() > 0) {
-            interaction.respond(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(p.getAdditionalMapVotes())));
+            interaction.respondEphemeral(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(p.getAdditionalMapVotes())));
             return;
         }
         ArrayList<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
@@ -2686,7 +2686,7 @@ public class PickupLogic {
 
 
         String msg = Config.buy_showvoteoptions;
-        interaction.respond(msg, null, buttons);
+        interaction.respondEphemeral(msg, null, buttons);
     }
 
     public void buyAdditionalVotes(DiscordInteraction interaction, Player p, int number) {
@@ -2701,20 +2701,20 @@ public class PickupLogic {
             price = 16000;
         }
         if (p.getAdditionalMapVotes() > 0) {
-            interaction.respond(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(p.getAdditionalMapVotes())));
+            interaction.respondEphemeral(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(p.getAdditionalMapVotes())));
             return;
         }
 
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
-            interaction.respond(Config.bets_insufficient);
+            interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
         p.setAdditionalMapVotes(number);
         p.spendCoins(price);
         p.saveWallet();
-        interaction.respond(Config.buy_addvote_purchased);
+        interaction.respondEphemeral(Config.buy_addvote_purchased);
 
         String msg = Config.buy_addvotesactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
@@ -2730,14 +2730,14 @@ public class PickupLogic {
 
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
         if (p.getCoins() < price) {
-            interaction.respond(Config.bets_insufficient);
+            interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
         p.setMapBans(p.getMapBans() + 1);
         p.spendCoins(price);
         p.saveWallet();
-        interaction.respond(Config.buy_banmap_purchased);
+        interaction.respondEphemeral(Config.buy_banmap_purchased);
 
         String msg = Config.buy_mapbanactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());
