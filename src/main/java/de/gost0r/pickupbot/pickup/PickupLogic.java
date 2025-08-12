@@ -209,7 +209,7 @@ public class PickupLogic {
     public void cmdPick(DiscordInteraction interaction, Player player, int pick) {
         for (Match match : ongoingMatches) {
             if (!match.hasSquads() && match.isCaptainTurn(player)) {
-                interaction.deferReply();
+                interaction.deleteDeferredReply();
                 match.pick(player, pick);
                 return;
             }
@@ -1810,7 +1810,7 @@ public class PickupLogic {
     public void pardonPlayer(DiscordSlashCommandInteraction command, Player pPardon, String reason, Player pAdmin) {
 
         if (pPardon.isBannedByBot()) {
-            command.deferReply();
+            command.deleteDeferredReply();
 
             pPardon.forgiveBotBan();
 
@@ -1833,7 +1833,7 @@ public class PickupLogic {
     }
 
     public void refundPlayer(DiscordSlashCommandInteraction command, Player pRefund, int amount, String reason, Player pAdmin) {
-        command.deferReply();
+        command.deleteDeferredReply();
         pRefund.addCoins(amount);
         pRefund.saveWallet();
 
@@ -2209,7 +2209,7 @@ public class PickupLogic {
 
         if (player.equals(captain) && answer == 2) {
             team.cancelInvitation(invitedPlayer);
-            interaction.deferReply();
+            interaction.deleteDeferredReply();
             interaction.getMessage().delete();
             return;
         }
@@ -2228,7 +2228,7 @@ public class PickupLogic {
         } else {
             team.declineInvitation(invitedPlayer);
         }
-        interaction.deferReply();
+        interaction.deleteDeferredReply();
         interaction.getMessage().delete();
     }
 
@@ -2250,7 +2250,7 @@ public class PickupLogic {
         }
 
         team.removePlayer(playerToRemove);
-        interaction.deferReply();
+        interaction.deleteDeferredReply();
         interaction.getMessage().delete();
         cmdRemovePlayer(playerToRemove, null);
     }
@@ -2553,7 +2553,7 @@ public class PickupLogic {
         match.bets.add(bet);
         bet.place(match);
 
-        command.deferReply();
+        command.deleteDeferredReply();
     }
 
     public void showBuys(DiscordInteraction interaction, Player p) {
@@ -2617,7 +2617,7 @@ public class PickupLogic {
         p.setEloBoost((long) (System.currentTimeMillis() + 7.2e6)); // 2h
         p.spendCoins(price);
         p.saveWallet();
-        interaction.deferReply();
+        interaction.deleteDeferredReply();
 
         String msg = Config.buy_boostactivated;
         msg = msg.replace(".player.", p.getDiscordUser().getMentionString());

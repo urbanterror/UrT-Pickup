@@ -4,6 +4,8 @@ import java.util.ArrayList;
 
 public interface InteractionRespond {
 
+    void deleteDeferredReply();
+
     void deferReply();
 
     void respondEphemeral(String content);

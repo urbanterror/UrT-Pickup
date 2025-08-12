@@ -30,6 +30,13 @@ public class JdaDiscordSlashCommandInteraction implements DiscordSlashCommandInt
     }
 
     @Override
+    public void deleteDeferredReply() {
+        event.getHook()
+                .deleteOriginal()
+                .queue();
+    }
+
+    @Override
     public void deferReply() {
         event.deferReply()
                 .setEphemeral(true)

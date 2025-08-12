@@ -29,6 +29,13 @@ public class JdaDiscordInteraction implements DiscordInteraction {
     }
 
     @Override
+    public void deleteDeferredReply() {
+        event.getHook()
+                .deleteOriginal()
+                .queue();
+    }
+
+    @Override
     public void deferReply() {
         event.deferReply()
                 .setEphemeral(true)
