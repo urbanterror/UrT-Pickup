@@ -2,11 +2,11 @@ package de.gost0r.pickupbot.discord.jda;
 
 import de.gost0r.pickupbot.discord.*;
 import lombok.Getter;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.interactions.components.ActionRow;
-import net.dv8tion.jda.api.interactions.components.ItemComponent;
-import net.dv8tion.jda.api.requests.restaction.interactions.ReplyCallbackAction;
+import net.dv8tion.jda.api.requests.restaction.WebhookMessageEditAction;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,14 +30,16 @@ public class JdaDiscordInteraction implements DiscordInteraction {
 
     @Override
     public void deferReply() {
-        event.deferReply().queue();
+        event.deferReply()
+                .setEphemeral(true)
+                .queue();
     }
 
     @Override
     public void respondEphemeral(String content) {
         if (content != null) {
-            event.reply(content)
-                    .setEphemeral(true)
+            event.getHook()
+                    .editOriginal(content)
                     .queue();
         }
     }
@@ -45,45 +47,37 @@ public class JdaDiscordInteraction implements DiscordInteraction {
     @Override
     public void respondEphemeral(String content, DiscordEmbed embed) {
         if (content != null) {
-            ReplyCallbackAction callback = event.reply(content);
+            WebhookMessageEditAction<Message> callback = event.getHook().editOriginal(content);
             if (embed != null) {
                 callback.setEmbeds(JdaUtils.mapToMessageEmbed(embed));
             }
-            callback.setEphemeral(true)
-                    .queue();
+            callback.queue();
         } else if (embed != null) {
-            event.replyEmbeds(JdaUtils.mapToMessageEmbed(embed))
-                    .setEphemeral(true).queue();
+            event.getHook().editOriginalEmbeds(JdaUtils.mapToMessageEmbed(embed))
+                    .queue();
         }
     }
 
     @Override
     public void respondEphemeral(String content, DiscordEmbed embed, ArrayList<DiscordComponent> components) {
         if (content != null) {
-            ReplyCallbackAction callback = event.reply(content);
+            WebhookMessageEditAction<Message> callback = event.getHook().editOriginal(content);
             if (embed != null) {
                 callback.setEmbeds(JdaUtils.mapToMessageEmbed(embed));
             }
             if (components != null) {
-                JdaUtils.mapToActionRows(components).forEach(callback::addActionRow);
+                callback.setComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList());
             }
-            callback.setEphemeral(true)
-                    .queue();
+            callback.queue();
         } else if (embed != null) {
-            ReplyCallbackAction callback = event.replyEmbeds(JdaUtils.mapToMessageEmbed(embed));
+            WebhookMessageEditAction<Message> callback = event.getHook().editOriginalEmbeds(JdaUtils.mapToMessageEmbed(embed));
             if (components != null) {
-                JdaUtils.mapToActionRows(components).forEach(callback::addActionRow);
+                callback.setComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList());
             }
-            callback.setEphemeral(true)
-                    .queue();
+            callback.queue();
         } else if (components != null) {
-            List<List<ItemComponent>> rows = JdaUtils.mapToActionRows(components);
-            if (!rows.isEmpty()) {
-                ReplyCallbackAction callback = event.replyComponents(ActionRow.of(rows.removeFirst()));
-                rows.forEach(callback::addActionRow);
-                callback.setEphemeral(true)
-                        .queue();
-            }
+            event.getHook().editOriginalComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList())
+                    .queue();
         }
     }
 
