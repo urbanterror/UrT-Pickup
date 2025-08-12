@@ -43,7 +43,11 @@ public class JdaDiscordService implements DiscordService {
     @Override
     public DiscordUser getUserById(String userId) {
         User user = jda.getUserById(userId);
-        return user == null ? null : new JdaDiscordUser(user);
+        if (user == null) {
+            try { user = jda.retrieveUserById(userId).complete(); }
+            catch (Exception ignored) { return null; }
+        }
+        return new JdaDiscordUser(user);
     }
 
     @Nullable
