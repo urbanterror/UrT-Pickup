@@ -20,7 +20,7 @@ public class JdaDiscordInteraction implements DiscordInteraction {
 
     public JdaDiscordInteraction(GenericComponentInteractionCreateEvent event) {
         this.event = event;
-        user = new JdaDiscordUser(event.getUser());
+        user = new JdaDiscordUser(event.getMember(), event.getUser());
         message = new JdaDiscordMessage(event.getMessage());
 
         values = event instanceof StringSelectInteractionEvent ? ((StringSelectInteractionEvent) event).getInteraction().getValues() : null;

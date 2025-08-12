@@ -3,6 +3,8 @@ package de.gost0r.pickupbot.discord.jda;
 import de.gost0r.pickupbot.discord.*;
 import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
@@ -42,12 +44,23 @@ public class JdaDiscordService implements DiscordService {
     @Nullable
     @Override
     public DiscordUser getUserById(String userId) {
-        User user = jda.getUserById(userId);
-        if (user == null) {
-            try { user = jda.retrieveUserById(userId).complete(); }
-            catch (Exception ignored) { return null; }
+        try {
+            Guild guild = jda.getGuildById("117622053061787657");
+            if (guild != null) {
+                Member member = guild.retrieveMemberById(userId).complete();
+                if (member != null) {
+                    return new JdaDiscordUser(member);
+                }
+            }
+            User user = jda.getUserById(userId);
+            if (user == null) {
+                user = jda.retrieveUserById(userId).complete();
+            }
+            return new JdaDiscordUser(user);
+        } catch (Exception e) {
+            log.error("Failed to retrieve user with id {}", userId, e);
+            return null;
         }
-        return new JdaDiscordUser(user);
     }
 
     @Nullable

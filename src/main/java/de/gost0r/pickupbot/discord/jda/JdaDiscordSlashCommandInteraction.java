@@ -22,7 +22,7 @@ public class JdaDiscordSlashCommandInteraction implements DiscordSlashCommandInt
 
     JdaDiscordSlashCommandInteraction(SlashCommandInteractionEvent event) {
         this.event = event;
-        user = new JdaDiscordUser(event.getUser());
+        user = new JdaDiscordUser(event.getMember(), event.getUser());
         options = event.getOptions();
     }
 

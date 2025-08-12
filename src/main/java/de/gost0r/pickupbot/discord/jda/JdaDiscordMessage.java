@@ -8,9 +8,6 @@ import lombok.Getter;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.utils.messages.MessageEditData;
 
-import java.util.List;
-import java.util.stream.Collectors;
-
 import static de.gost0r.pickupbot.discord.jda.JdaUtils.mapToMessageEmbed;
 
 public class JdaDiscordMessage implements DiscordMessage {
@@ -48,10 +45,6 @@ public class JdaDiscordMessage implements DiscordMessage {
     @Override
     public void edit(DiscordEmbed embed) {
         message.editMessage(MessageEditData.fromEmbeds(mapToMessageEmbed(embed))).queue();
-    }
-
-    public List<DiscordUser> getMentionedUser() {
-        return message.getMentions().getMembers().stream().map(JdaDiscordUser::new).collect(Collectors.toUnmodifiableList());
     }
 
     public void delete() {

@@ -23,14 +23,17 @@ public class JdaDiscordUser implements DiscordUser {
     private final Member member;
     private final User user;
 
-    public JdaDiscordUser(Member member) {
+    public JdaDiscordUser(Member member, User user) {
         this.member = member;
-        user = null;
+        this.user = user;
+    }
+
+    public JdaDiscordUser(Member member) {
+        this(member, null);
     }
 
     public JdaDiscordUser(User user) {
-        this.member = null;
-        this.user = user;
+        this(null, user);
     }
 
     @Override
