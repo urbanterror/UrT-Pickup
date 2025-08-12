@@ -1496,6 +1496,7 @@ public class PickupBot {
                 interaction.getUser().getUsername(),
                 interaction.getComponentId()
         );
+        interaction.deferReply();
 
         Player p = Player.get(interaction.getUser());
         if (p == null) {
@@ -1571,6 +1572,7 @@ public class PickupBot {
 
     public void recvApplicationCommand(DiscordSlashCommandInteraction command) {
         log.info("RECV #{} {}", command.getName(), command.getUser().getUsername());
+        command.deferReply();
 
         Player p = Player.get(command.getUser());
         if (p == null) {
