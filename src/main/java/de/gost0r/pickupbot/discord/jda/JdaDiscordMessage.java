@@ -23,12 +23,7 @@ public class JdaDiscordMessage implements DiscordMessage {
     public JdaDiscordMessage(Message message) {
         this.message = message;
         channel = new JdaDiscordChannel(message.getChannel());
-        if (message.getMember() != null) {
-            user = new JdaDiscordUser(message.getMember());
-        } else {
-            user = new JdaDiscordUser(message.getAuthor());
-        }
-
+        user = new JdaDiscordUser(message.getMember(), message.getAuthor());
     }
 
 
