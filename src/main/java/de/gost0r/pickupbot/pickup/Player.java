@@ -254,18 +254,18 @@ public class Player {
 
         // Update roles
         // TODO make it work for different servers
-        if (currentRank != previousRank) {
-            user.removeRoleById(previousRank.getRoleId());
-        }
-        if (user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank > 5) {
-            user.removeRoleById(PlayerRank.LEET.getRoleId());
-        }
-        if (!user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank <= 5) {
-            user.addRoleById(PlayerRank.LEET.getRoleId());
-        }
-        if (!user.hasRoleById(currentRank.getRoleId())) {
-            user.addRoleById(currentRank.getRoleId());
-        }
+//        if (currentRank != previousRank) {
+//            user.removeRoleById(previousRank.getRoleId());
+//        }
+//        if (user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank > 5) {
+//            user.removeRoleById(PlayerRank.LEET.getRoleId());
+//        }
+//        if (!user.hasRoleById(PlayerRank.LEET.getRoleId()) && elorank <= 5) {
+//            user.addRoleById(PlayerRank.LEET.getRoleId());
+//        }
+//        if (!user.hasRoleById(currentRank.getRoleId())) {
+//            user.addRoleById(currentRank.getRoleId());
+//        }
 
         return currentRank != previousRank;
     }
