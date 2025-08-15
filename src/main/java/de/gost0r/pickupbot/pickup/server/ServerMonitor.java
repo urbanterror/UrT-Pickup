@@ -40,6 +40,9 @@ public class ServerMonitor implements Runnable {
     private boolean firstHalf;
     private boolean swapRoles;
 
+    private int maxRounds = 0;
+    private int scoreLimit = 0;
+
     private boolean hasPaused;
     private boolean isPauseDetected;
 
@@ -364,6 +367,8 @@ public class ServerMonitor implements Runnable {
                 if (match.getGametype().getTeamSize() > 2) {
                     match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
                 }
+                maxRounds = getMaxRounds();
+                scoreLimit = getScoreLimit();
                 log.info("SWITCHED WELCOME -> LIVE");
             }
         } else if (state == ServerState.WARMUP) {
@@ -372,6 +377,8 @@ public class ServerMonitor implements Runnable {
                 if (match.getGametype().getTeamSize() > 2) {
                     match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
                 }
+                maxRounds = getMaxRounds();
+                scoreLimit = getScoreLimit();
 //				backupStats.clear();
 //				for (ServerPlayer p : players){
 //					backupStats.put(p.auth, new CTF_Stats());
@@ -389,6 +396,14 @@ public class ServerMonitor implements Runnable {
                     && rpp.gametime.equals("00:00:00"))) {
                 state = ServerState.SCORE;
                 log.info("SWITCHED LIVE -> SCORE");
+            }
+            if (maxRounds > 0 && maxRounds >= rpp.scores[0] + rpp.scores[1]) {
+                state = ServerState.SCORE;
+                log.info("SWITCHED LIVE -> SCORE (maxRounds reached)");
+            }
+            if (scoreLimit > 0 && (scoreLimit >= rpp.scores[0] || scoreLimit >= rpp.scores[1])) {
+                state = ServerState.SCORE;
+                log.info("SWITCHED LIVE -> SCORE (scoreLimit reached)");
             }
             checkNoMercy(rpp);
             // backUpScores(rpp);
@@ -509,13 +524,26 @@ public class ServerMonitor implements Runnable {
     }
 
     private boolean getSwapRoles() throws Exception {
-        String swaproles = server.sendRcon("g_swaproles");
-        log.trace(swaproles);
-        String[] split = swaproles.split("\"");
-        if (split.length > 4) {
-            return split[3].equals("1^7");
+        String response = server.sendRcon("g_swaproles");
+        return getNumberFromRcon(response) == 1;
+    }
+
+    private int getMaxRounds() {
+        String survivorResponse = server.sendRcon("g_survivor");
+        int survivor = getNumberFromRcon(survivorResponse);
+        if (survivor == 0) {
+            return 0;
         }
-        return false;
+        String response = server.sendRcon("g_maxrounds");
+        return getNumberFromRcon(response);
+    }
+
+    private int getScoreLimit() {
+        String gametype = server.sendRcon("g_gametype");
+        int gametypeNumber = getNumberFromRcon(gametype);
+        String rconCommand = gametypeNumber > 5 ? "capturelimit" : "fraglimit";
+        String response = server.sendRcon(rconCommand);
+        return getNumberFromRcon(response);
     }
 
     private RconPlayersParsed parseRconPlayers() throws Exception {
@@ -813,6 +841,18 @@ public class ServerMonitor implements Runnable {
             match.getLogic().bot.sendMsg(match.getLogic().getChannelByType(PickupChannelType.PUBLIC), text);
             lastDiscordMessage = System.currentTimeMillis();
         }
+    }
+
+    private int getNumberFromRcon(String response) {
+        try {
+            String[] split = response.split("\"");
+            if (split.length > 4) {
+                return Integer.parseInt(split[3].replace("^7", ""));
+            }
+        } catch (NumberFormatException e) {
+            log.warn("Cannot parse int of response {}", response);
+        }
+        return 0;
     }
 
     public ServerState getState() {
