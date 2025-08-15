@@ -42,6 +42,7 @@ public class ServerMonitor implements Runnable {
 
     private int maxRounds = 0;
     private int scoreLimit = 0;
+    private int timeLimit = 0;
 
     private boolean hasPaused;
     private boolean isPauseDetected;
@@ -367,8 +368,7 @@ public class ServerMonitor implements Runnable {
                 if (match.getGametype().getTeamSize() > 2) {
                     match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
                 }
-                maxRounds = getMaxRounds();
-                scoreLimit = getScoreLimit();
+                handleLiveTransition();
                 log.info("SWITCHED WELCOME -> LIVE");
             }
         } else if (state == ServerState.WARMUP) {
@@ -377,8 +377,7 @@ public class ServerMonitor implements Runnable {
                 if (match.getGametype().getTeamSize() > 2) {
                     match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
                 }
-                maxRounds = getMaxRounds();
-                scoreLimit = getScoreLimit();
+                handleLiveTransition();
 //				backupStats.clear();
 //				for (ServerPlayer p : players){
 //					backupStats.put(p.auth, new CTF_Stats());
@@ -390,12 +389,16 @@ public class ServerMonitor implements Runnable {
             }
         } else if (state == ServerState.LIVE) {
             // TODO: Refactor this, hard-coded for 1v1 and 2v2
-            if ((rpp.gametime != null && rpp.gametime.equals("00:00:00")
-                    && match.getGametype().getTeamSize() > 2)
-                    || (match.getGametype().getTeamSize() <= 2 && (rpp.scores[0] >= 15 || rpp.scores[1] >= 15)
-                    && rpp.gametime.equals("00:00:00"))) {
+            boolean gameEndedInNonSoloDuoMatches = rpp.gametime != null
+                    && rpp.gametime.equals("00:00:00")
+                    && match.getGametype().getTeamSize() > 2;
+            boolean gameEndedIfSoloDuoMatchAndScoreThresholdReached = match.getGametype().getTeamSize() <= 2
+                    && (rpp.scores[0] >= 15 || rpp.scores[1] >= 15)
+                    && rpp.gametime != null
+                    && rpp.gametime.equals("00:00:00");
+            if (timeLimit > 0 && (gameEndedInNonSoloDuoMatches || gameEndedIfSoloDuoMatchAndScoreThresholdReached)) {
                 state = ServerState.SCORE;
-                log.info("SWITCHED LIVE -> SCORE");
+                log.info("SWITCHED LIVE -> SCORE (timeLimit reached)");
             }
             if (maxRounds > 0 && maxRounds >= rpp.scores[0] + rpp.scores[1]) {
                 state = ServerState.SCORE;
@@ -451,6 +454,12 @@ public class ServerMonitor implements Runnable {
         } else {
             firstHalf = false;
         }
+    }
+
+    private void handleLiveTransition() {
+        timeLimit = getTimeLimit();
+        maxRounds = getMaxRounds();
+        scoreLimit = getScoreLimit();
     }
 
     private void updatePlayers(RconPlayersParsed rpp) throws Exception {
@@ -526,6 +535,11 @@ public class ServerMonitor implements Runnable {
     private boolean getSwapRoles() throws Exception {
         String response = server.sendRcon("g_swaproles");
         return getNumberFromRcon(response) == 1;
+    }
+
+    private int getTimeLimit() {
+        String response = server.sendRcon("timelimit");
+        return getNumberFromRcon(response);
     }
 
     private int getMaxRounds() {
