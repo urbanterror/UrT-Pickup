@@ -22,7 +22,7 @@ public interface DiscordChannel {
 
     DiscordMessage sendMessage(String message, DiscordEmbed embed, List<DiscordComponent> component);
 
-    DiscordChannel createThread(String name);
+    DiscordChannel createThread(String name, boolean autoArchive);
 
     String getMentionString();
 

@@ -468,7 +468,7 @@ public class Match implements Runnable {
             threadTitle = threadTitle.replace(".ID.", String.valueOf(logic.db.getLastMatchID() + 1));
 
             for (DiscordChannel publicChannel : logic.getChannelByType(PickupChannelType.PUBLIC)) {
-                threadChannels.add(publicChannel.createThread(threadTitle));
+                threadChannels.add(publicChannel.createThread(threadTitle, true));
             }
 
             logic.matchStarted(this);

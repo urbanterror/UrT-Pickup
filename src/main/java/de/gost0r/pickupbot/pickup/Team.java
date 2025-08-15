@@ -23,7 +23,7 @@ public class Team {
         players = new ArrayList<Player>();
         invitedPlayers = new ArrayList<Player>();
 
-        threadChannel = captain.getLastPublicChannel().createThread(captain.getUrtauth() + "'s team");
+        threadChannel = captain.getLastPublicChannel().createThread(captain.getUrtauth() + "'s team", false);
 
         addPlayer(captain);
     }

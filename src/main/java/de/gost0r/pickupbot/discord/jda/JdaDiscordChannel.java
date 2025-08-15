@@ -11,6 +11,7 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
+import net.dv8tion.jda.api.requests.restaction.ThreadChannelAction;
 import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 
 import java.util.List;
@@ -112,9 +113,13 @@ public class JdaDiscordChannel implements DiscordChannel {
     }
 
     @Override
-    public DiscordChannel createThread(String name) {
+    public DiscordChannel createThread(String name, boolean autoArchive) {
         if (channel instanceof TextChannel textChannel) {
-            return new JdaDiscordChannel(textChannel.createThreadChannel(name).complete());
+            ThreadChannelAction action = textChannel.createThreadChannel(name);
+            if (autoArchive) {
+                action = action.setAutoArchiveDuration(ThreadChannel.AutoArchiveDuration.TIME_1_HOUR);
+            }
+            return new JdaDiscordChannel(action.complete());
         }
         throw new PickupException("Cannot create thread in channel of type " + channel.getType().name() + ".");
     }
