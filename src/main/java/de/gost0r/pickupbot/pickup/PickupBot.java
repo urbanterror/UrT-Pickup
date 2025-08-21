@@ -1417,30 +1417,6 @@ public class PickupBot {
                     } else sendNotice(msg.getUser(), "You need SuperAdmin rights to use this.");
                     break;
 
-
-                case Config.CMD_SHOWROLES:
-                    if (permissionService.hasSuperAdminRights(msg.getUser())) {
-                        DiscordUser u = msg.getUser();
-                        if (data.length == 2) {
-                            DiscordUser testUser = discordService.getUserFromMention(data[1]);
-                            if (testUser != null) {
-                                u = testUser;
-                            }
-                        }
-                        List<DiscordRole> list = u.getRoles();
-                        StringBuilder message = new StringBuilder();
-                        for (DiscordRole role : list) {
-                            if (msg.getChannel().isPrivateChannel()) {
-                                message.append(role.getMentionString()).append(" ");
-                            } else {
-                                message.append(role.getMentionString()).append(" ");
-                            }
-                        }
-                        sendNotice(u, message.toString());
-                    } else sendNotice(msg.getUser(), "You need SuperAdmin rights to use this.");
-                    break;
-
-
                 case Config.CMD_SHOWKNOWNROLES:
                     if (permissionService.hasSuperAdminRights(msg.getUser())) {
                         StringBuilder message = new StringBuilder("Roles: ");
@@ -1449,7 +1425,12 @@ public class PickupBot {
 
                             for (DiscordRole role : pickupRoleCache.getRolesByType(type)) {
                                 if (msg.getChannel().isPrivateChannel()) {
-                                    message.append(role.getMentionString() + " (``" + role.getId() + "``)").append(" ");
+                                    message.append(role.getMentionString())
+                                            .append(" (`")
+                                            .append(role.getId())
+                                            .append(" ")
+                                            .append(role.getName())
+                                            .append("`) ");
                                 } else {
                                     message.append(role.getMentionString()).append(" ");
                                 }

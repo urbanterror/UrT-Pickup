@@ -7,5 +7,7 @@ public interface DiscordRole {
     String getName();
 
     String getMentionString();
-    
+
+    DiscordGuild getGuild();
+
 }

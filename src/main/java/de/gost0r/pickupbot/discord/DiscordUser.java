@@ -6,14 +6,6 @@ public interface DiscordUser {
 
     String getMentionString();
 
-    List<DiscordRole> getRoles();
-
-    boolean hasRoleById(String roleId);
-
-    void removeRoleById(String roleId);
-
-    void addRoleById(String roleId);
-
     void sendPrivateMessage(String message);
 
     void sendPrivateMessage(String message, DiscordEmbed embed, List<DiscordComponent> components);

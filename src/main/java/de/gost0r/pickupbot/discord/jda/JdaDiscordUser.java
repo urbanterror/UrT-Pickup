@@ -2,24 +2,22 @@ package de.gost0r.pickupbot.discord.jda;
 
 import de.gost0r.pickupbot.discord.DiscordComponent;
 import de.gost0r.pickupbot.discord.DiscordEmbed;
-import de.gost0r.pickupbot.discord.DiscordRole;
 import de.gost0r.pickupbot.discord.DiscordUser;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.entities.Member;
-import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static de.gost0r.pickupbot.discord.jda.JdaUtils.mapToMessageEmbed;
 
 @Slf4j
 public class JdaDiscordUser implements DiscordUser {
 
-
+    @Getter
     private final Member member;
     private final User user;
 
@@ -39,45 +37,6 @@ public class JdaDiscordUser implements DiscordUser {
     @Override
     public String getMentionString() {
         return getUser().getAsMention();
-    }
-
-    @Override
-    public List<DiscordRole> getRoles() {
-        assert member != null;
-        return member.getRoles().stream().map(JdaDiscordRole::new).collect(Collectors.toUnmodifiableList());
-    }
-
-    @Override
-    public boolean hasRoleById(String roleId) {
-        if (member != null) {
-            return member.getRoles()
-                    .stream()
-                    .anyMatch(role -> role.getId().equals(roleId));
-        }
-        return false;
-    }
-
-    @Override
-    public void removeRoleById(String roleId) {
-        assert member != null;
-        Role role = member.getRoles()
-                .stream()
-                .filter(r -> r.getId().equals(roleId))
-                .findFirst()
-                .orElseThrow();
-        member.getGuild().removeRoleFromMember(member, role).queue();
-    }
-
-    @Override
-    public void addRoleById(String roleId) {
-        assert member != null;
-        Role role = member.getGuild()
-                .getRoles()
-                .stream()
-                .filter(r -> r.getId().equals(roleId))
-                .findFirst()
-                .orElseThrow();
-        member.getGuild().addRoleToMember(member, role).queue();
     }
 
     @Override

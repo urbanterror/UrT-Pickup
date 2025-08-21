@@ -1,34 +1,20 @@
 package de.gost0r.pickupbot.discord;
 
-import java.util.HashMap;
-import java.util.Map;
+import org.jetbrains.annotations.Nullable;
 
-public class DiscordGuild {
-    public String id = "";
+import java.util.List;
 
-    public DiscordGuild(String id) {
-        this.id = id;
-    }
+public interface DiscordGuild {
 
-    public static Map<String, DiscordGuild> guildList = new HashMap<String, DiscordGuild>();
+    @Nullable
+    DiscordUser getMember(String userId);
 
-    public static DiscordGuild getGuild(String id) {
-        if (id.matches("[0-9]+")) {
-            if (guildList.containsKey(id)) {
-                return guildList.get(id);
-            }
-//			JSONObject guild = DiscordAPI.requestGuild(id);
-//			if (guild != null) {
-//				DiscordGuild newGuild = new DiscordGuild(guild);
-//				guildList.put(newGuild.id, newGuild);
-//				return newGuild;
-//			}
-            // TODO temp solution:
-            DiscordGuild newGuild = new DiscordGuild(id);
-            guildList.put(id, newGuild);
-            return newGuild;
-        }
-        return null;
-    }
+    void addRoleToMember(DiscordUser user, DiscordRole role);
+
+    void removeRoleFromMember(DiscordUser user, DiscordRole role);
+
+    List<DiscordRole> getRolesOfMember(DiscordUser user);
+
+    boolean hasRole(DiscordUser user, DiscordRole role);
 
 }

@@ -1,5 +1,6 @@
 package de.gost0r.pickupbot.discord.jda;
 
+import de.gost0r.pickupbot.discord.DiscordGuild;
 import de.gost0r.pickupbot.discord.DiscordRole;
 import lombok.Getter;
 import net.dv8tion.jda.api.entities.Role;
@@ -9,8 +10,12 @@ public class JdaDiscordRole implements DiscordRole {
     @Getter
     private final Role role;
 
+    @Getter
+    private final DiscordGuild guild;
+
     public JdaDiscordRole(Role role) {
         this.role = role;
+        this.guild = new JdaDiscordGuild(role.getGuild());
     }
 
     @Override
