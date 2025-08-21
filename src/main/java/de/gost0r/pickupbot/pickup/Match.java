@@ -770,8 +770,9 @@ public class Match implements Runnable {
             fullmsg.append("\n").append(msg);
         }
 
+        String mapString = this.map.name + " (" + map.getDiscordDownloadLink() + ")";
         msg = Config.pkup_go_pub_map;
-        msg = msg.replace(".map.", this.map.name);
+        msg = msg.replace(".map.", mapString);
         msg = msg.replace(".gametype.", gametype.getName());
         fullmsg.append("\n").append(msg);
 
@@ -1088,7 +1089,7 @@ public class Match implements Runnable {
 
         embed.setColor(7056881);
 
-        String mapName = map != null ? "**" + gametype.getName() + "** - " + map.name + " ([download](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3))" : null;
+        String mapName = map != null ? "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")" : null;
         if (gametype.getPrivate()) {
             embed.setDescription(":lock: " + mapName);
         } else {

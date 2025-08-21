@@ -25,6 +25,10 @@ public class GameMap {
         return false;
     }
 
+    public String getDiscordDownloadLink() {
+        return "[download](https://maps.pugbot.net/q3ut4/" + name + ".pk3)";
+    }
+
     @Override
     public boolean equals(Object obj) {
         if (obj instanceof GameMap) {
