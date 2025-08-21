@@ -1087,10 +1087,12 @@ public class Match implements Runnable {
         }
 
         embed.setColor(7056881);
+
+        String mapName = map != null ? "**" + gametype.getName() + "** - " + map.name + " ([download](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3))" : null;
         if (gametype.getPrivate()) {
-            embed.setDescription(map != null ? ":lock: **" + gametype.getName().toUpperCase() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null");
+            embed.setDescription(":lock: " + mapName);
         } else {
-            embed.setDescription(map != null ? "**" + gametype.getName() + "** - [" + map.name + "](https://maps.pugbot.net/q3ut4/" + map.name + ".pk3)" : "null");
+            embed.setDescription(mapName);
         }
 
 
