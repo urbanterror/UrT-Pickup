@@ -1072,6 +1072,9 @@ public class Database {
 
     public WinDrawLoss getWDLForPlayer(Player player, Gametype gt, Season season) {
         WinDrawLoss wdl = new WinDrawLoss();
+        if (gt == null) {
+            return wdl;
+        }
         try {
             String gametypeCondition;
             if (gt.getName().equals("TS")) {
@@ -1118,6 +1121,9 @@ public class Database {
 
     public int getWDLRankForPlayer(Player player, Gametype gt, Season season) {
         int rank = -1;
+        if (gt == null) {
+            return rank;
+        }
         try {
             int limit = 20;
             if (season.number == 0) {
@@ -1159,6 +1165,9 @@ public class Database {
 
     public int getKDRRankForPlayer(Player player, Gametype gt, Season season) {
         int rank = -1;
+        if (gt == null) {
+            return -1;
+        }
         try {
             int limit = 20;
             if (season.number == 0) {
