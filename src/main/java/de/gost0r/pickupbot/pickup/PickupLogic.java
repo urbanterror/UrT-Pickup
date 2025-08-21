@@ -1186,13 +1186,15 @@ public class PickupLogic {
             } else {
                 try {
                     int idx = Integer.parseInt(cmd);
+                    List<Match> toRemove = new ArrayList<>();
                     for (Match match : ongoingMatches) {
                         if (match.getID() == idx) {
                             match.reset();
-                            ongoingMatches.remove(match);
+                            toRemove.add(match);
                             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.pkup_reset_id.replace(".id.", cmd));
                         }
                     }
+                    ongoingMatches.removeAll(toRemove);
                 } catch (NumberFormatException e) {
                     log.warn("Exception: ", e);
                 }
