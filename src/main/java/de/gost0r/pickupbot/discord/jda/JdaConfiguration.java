@@ -20,7 +20,15 @@ public class JdaConfiguration {
 
     @Bean
     public JDA jda() {
-        return JDABuilder.create(token, EnumSet.of(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_MESSAGES, GatewayIntent.MESSAGE_CONTENT))
+        return JDABuilder.create(
+                        token,
+                        EnumSet.of(
+                                GatewayIntent.GUILD_MEMBERS,
+                                GatewayIntent.GUILD_MESSAGES,
+                                GatewayIntent.MESSAGE_CONTENT,
+                                GatewayIntent.DIRECT_MESSAGES
+                        )
+                )
                 .build();
     }
 }
