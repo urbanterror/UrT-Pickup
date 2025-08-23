@@ -1,6 +1,5 @@
 package de.gost0r.pickupbot.pickup;
 
-import de.gost0r.pickupbot.discord.DiscordChannel;
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.pickup.stats.WinDrawLoss;
 
@@ -37,7 +36,6 @@ public class Player {
 
     private long lastMessage = -1L;
     private boolean afkReminderSent = false;
-    private DiscordChannel lastPublicChannel;
 
     private String country = "NOT_DEFINED";
 
@@ -319,14 +317,6 @@ public class Player {
         if (playerList.contains(player)) {
             playerList.remove(player);
         }
-    }
-
-    public DiscordChannel getLastPublicChannel() {
-        return lastPublicChannel;
-    }
-
-    public void setLastPublicChannel(DiscordChannel channel) {
-        lastPublicChannel = channel;
     }
 
     public boolean getEnforceAC() {

@@ -11,6 +11,7 @@ import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 
 import java.util.List;
+import java.util.Objects;
 
 import static de.gost0r.pickupbot.discord.jda.JdaUtils.mapToMessageEmbed;
 
@@ -37,6 +38,13 @@ public class JdaDiscordUser implements DiscordUser {
     @Override
     public String getMentionString() {
         return getUser().getAsMention();
+    }
+
+    @Override
+    public boolean isInGuild(String guildId) {
+        return getUser().getMutualGuilds()
+                .stream()
+                .anyMatch(it -> Objects.equals(it.getId(), guildId));
     }
 
     @Override

@@ -17,13 +17,13 @@ public class Team {
     private DiscordChannel threadChannel;
 
 
-    public Team(Player captain) {
+    public Team(Player captain, DiscordChannel baseChannel) {
         this.captain = captain;
 
         players = new ArrayList<Player>();
         invitedPlayers = new ArrayList<Player>();
 
-        threadChannel = captain.getLastPublicChannel().createThread(captain.getUrtauth() + "'s team", false);
+        threadChannel = baseChannel.createThread(captain.getUrtauth() + "'s team", false);
 
         addPlayer(captain);
     }

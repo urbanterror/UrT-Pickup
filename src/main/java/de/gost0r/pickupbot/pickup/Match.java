@@ -182,7 +182,7 @@ public class Match implements Runnable {
         }
     }
 
-    public void voteMap(Player player, GameMap map, int number, boolean bonus) {
+    public PickupReply voteMap(Player player, GameMap map, int number, boolean bonus) {
         if ((state == MatchState.Signup || state == MatchState.AwaitingServer) && (isInMatch(player) || sortedPlayers.contains(player))) {
             GameMap oldMap = player.getVotedMap(gametype);
             if (oldMap != null) {
@@ -204,15 +204,15 @@ public class Match implements Runnable {
                 msg = msg.replace(".map.", map.name);
                 msg = msg.replace(".count.", String.valueOf(mapVotes.get(map)));
                 logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), msg);
-                return;
+                return PickupReply.NONE;
             }
-            logic.bot.sendNotice(player.getDiscordUser(), msg);
+            return new PickupReply(msg);
         } else {
-            logic.bot.sendNotice(player.getDiscordUser(), Config.map_cannot_vote);
+            return new PickupReply(Config.map_cannot_vote);
         }
     }
 
-    public void voteSurrender(Player player) {
+    public PickupReply voteSurrender(Player player) {
         long timeUntilSurrender = (startTime + 180000L) - System.currentTimeMillis(); // 3min in milliseconds
         if (timeUntilSurrender < 0) {
             if (!player.hasVotedSurrender()) {
@@ -224,10 +224,10 @@ public class Match implements Runnable {
                     String msg = Config.pkup_surrender_cast;
                     msg = msg.replace(".num.", String.valueOf(surrender[teamnum]));
                     msg = msg.replace(".s.", surrender[teamnum] > 1 ? "s" : "");
-                    logic.bot.sendNotice(player.getDiscordUser(), msg);
+                    return new PickupReply(msg);
                 }
             } else {
-                logic.bot.sendNotice(player.getDiscordUser(), Config.player_already_surrender);
+                return new PickupReply(Config.player_already_surrender);
             }
         } else {
             timeUntilSurrender /= 1000d;
@@ -237,8 +237,9 @@ public class Match implements Runnable {
             sec = sec.length() == 1 ? "0" + sec : sec;
             String msg = Config.pkup_surrender_time;
             msg = msg.replace(".time.", min + ":" + sec);
-            logic.bot.sendNotice(player.getDiscordUser(), msg);
+            return new PickupReply(msg);
         }
+        return PickupReply.NONE;
     }
 
     public void checkSurrender() {

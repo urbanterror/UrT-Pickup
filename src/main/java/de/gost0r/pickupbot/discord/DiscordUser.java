@@ -6,6 +6,8 @@ public interface DiscordUser {
 
     String getMentionString();
 
+    boolean isInGuild(String guildId);
+
     void sendPrivateMessage(String message);
 
     void sendPrivateMessage(String message, DiscordEmbed embed, List<DiscordComponent> components);
