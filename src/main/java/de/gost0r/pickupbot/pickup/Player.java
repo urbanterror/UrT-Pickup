@@ -229,28 +229,12 @@ public class Player {
     }
 
     public PlayerRank getRank() {
-        return getRank(elo);
-    }
-
-    private PlayerRank getRank(int elo) {
-        if (elo >= 1600) {
-            return PlayerRank.DIAMOND;
-        } else if (elo >= 1400) {
-            return PlayerRank.PLATINUM;
-        } else if (elo >= 1200) {
-            return PlayerRank.GOLD;
-        } else if (elo >= 1000) {
-            return PlayerRank.SILVER;
-        } else if (elo >= 800) {
-            return PlayerRank.BRONZE;
-        } else {
-            return PlayerRank.WOOD;
-        }
+        return PlayerRank.getRankByElo(elo);
     }
 
     public boolean didChangeRank() {
-        PlayerRank currentRank = getRank(elo);
-        PlayerRank previousRank = getRank(elo - eloChange);
+        PlayerRank currentRank = PlayerRank.getRankByElo(elo);
+        PlayerRank previousRank = PlayerRank.getRankByElo(elo - eloChange);
 
         // Update roles
         // TODO make it work for different servers

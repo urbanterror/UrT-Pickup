@@ -21,4 +21,15 @@ public enum PlayerRank {
     private final DiscordEmoji emoji;
     @Getter
     private final String roleId;
+
+    public static PlayerRank getRankByElo(int elo) {
+        return switch (Integer.valueOf(elo)) {
+            case Integer i when i >= 1600 -> PlayerRank.DIAMOND;
+            case Integer i when i >= 1400 -> PlayerRank.PLATINUM;
+            case Integer i when i >= 1200 -> PlayerRank.GOLD;
+            case Integer i when i >= 1000 -> PlayerRank.SILVER;
+            case Integer i when i >= 800 -> PlayerRank.BRONZE;
+            default -> PlayerRank.WOOD;
+        };
+    }
 }
