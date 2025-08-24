@@ -22,9 +22,10 @@ public class PermissionService {
     }
 
     public boolean hasAdminRights(DiscordUser user) {
-        return pickupRoleCache.getRolesByType(PickupRoleType.ADMIN)
-                .stream()
-                .anyMatch(role -> roleService.hasRole(user, role));
+        return hasSuperAdminRights(user) ||
+                pickupRoleCache.getRolesByType(PickupRoleType.ADMIN)
+                        .stream()
+                        .anyMatch(role -> roleService.hasRole(user, role));
     }
 
     public boolean hasSuperAdminRights(DiscordUser user) {
