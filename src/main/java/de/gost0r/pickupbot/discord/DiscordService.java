@@ -19,4 +19,6 @@ public interface DiscordService {
     DiscordChannel getChannelById(String channelId);
 
     void registerApplicationCommands(List<DiscordApplicationCommand> commands);
+
+    void createOrUpdateApplicationCommand(DiscordApplicationCommand command);
 }

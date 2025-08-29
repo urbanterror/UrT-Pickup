@@ -102,11 +102,39 @@ public class JdaDiscordService implements DiscordService {
         return channel == null ? null : new JdaDiscordChannel(channel);
     }
 
+    @Override
+    public void createOrUpdateApplicationCommand(DiscordApplicationCommand command) {
+        jda.getGuilds().forEach(guild -> {
+            guild.upsertCommand(toCommandData(command))
+                    .queue(
+                            cmd -> log.info("Created or updated application command {} on guild {}", cmd.getName(), guild.getName()),
+                            e -> log.error("Failed to create or update application command {} on guild {}", command.name(), guild.getName(), e)
+                    );
+        });
+
+    }
+
+    @Override
     public void registerApplicationCommands(List<DiscordApplicationCommand> commands) {
-        jda.updateCommands().addCommands(commands.stream().map(this::toCommandData).toList()).queue();
+        List<SlashCommandData> data = commands.stream().map(this::toCommandData).toList();
+        jda.getGuilds().forEach(guild -> {
+            guild.updateCommands()
+                    .addCommands(data)
+                    .queue(
+                            unused -> log.info("Registered {} application commands on guild {}", data.size(), guild.getName()),
+                            e -> log.error("Failed to register application commands on guild {}", guild.getName(), e)
+                    );
+        });
     }
 
     private SlashCommandData toCommandData(DiscordApplicationCommand command) {
-        return Commands.slash(command.name(), command.description()).addOptions(command.options().stream().map(JdaUtils::mapToCommandOption).toList());
+        SlashCommandData slashCommandData = Commands.slash(command.name(), command.description());
+        if (command.subcommands() != null) {
+            slashCommandData.addSubcommands(command.subcommands().stream().map(JdaUtils::mapToSubcommand).toList());
+        }
+        if (command.options() != null) {
+            slashCommandData.addOptions(command.options().stream().map(JdaUtils::mapToCommandOption).toList());
+        }
+        return slashCommandData;
     }
 }

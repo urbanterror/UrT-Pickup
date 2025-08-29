@@ -7,6 +7,7 @@ import net.dv8tion.jda.api.entities.emoji.Emoji;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
+import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
 import net.dv8tion.jda.api.interactions.components.ItemComponent;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.interactions.components.buttons.ButtonStyle;
@@ -81,11 +82,23 @@ public class JdaUtils {
     }
 
     public static OptionData mapToCommandOption(DiscordCommandOption option) {
-        return new OptionData(mapToOptionType(option.type()), option.name(), option.description(), true)
-                .addChoices(option.choices().stream()
-                        .map(choice -> new Command.Choice(choice.name, choice.value))
-                        .toList()
-                );
+        OptionData optionData = new OptionData(mapToOptionType(option.type()), option.name(), option.description(), option.required());
+        if (option.choices() != null) {
+            optionData.addChoices(option.choices().stream()
+                    .map(choice -> new Command.Choice(choice.name(), choice.value()))
+                    .toList()
+            );
+        }
+
+        return optionData;
+    }
+
+    public static SubcommandData mapToSubcommand(DiscordApplicationCommand command) {
+        SubcommandData subcommandData = new SubcommandData(command.name(), command.description());
+        if (command.options() != null) {
+            subcommandData.addOptions(command.options().stream().map(JdaUtils::mapToCommandOption).toList());
+        }
+        return subcommandData;
     }
 
     public static OptionType mapToOptionType(DiscordCommandOptionType type) {

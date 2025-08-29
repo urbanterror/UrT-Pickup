@@ -5,6 +5,7 @@ import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
 import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class PickupBot {
     private final PickupRoleCache pickupRoleCache;
     public final String env;
 
+    @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
     private PickupLogic logic;
     private DiscordUser self;
 
@@ -50,7 +52,6 @@ public class PickupBot {
 
         logic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
         logic.init();
-        createApplicationCommands();
 
         sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), Config.bot_online);
         log.info("Bot online");
@@ -1541,47 +1542,6 @@ public class PickupBot {
         }
     }
 
-    public void recvApplicationCommand(DiscordSlashCommandInteraction command) {
-        log.info("RECV #{} {}", command.getName(), command.getUser().getUsername());
-        command.deferReply();
-
-        Player p = Player.get(command.getUser());
-        if (p == null) {
-            command.respondEphemeral(Config.user_not_registered);
-            return;
-        }
-
-        switch (command.getName()) {
-            case Config.APP_BET:
-                logic.bet(command, command.getOptions().get(0).getAsInt(), command.getOptions().get(1).getAsString(), command.getOptions().get(2).getAsInt(), p);
-                break;
-
-            case Config.APP_PARDON:
-                DiscordUser u = discordService.getUserById(command.getOptions().get(0).getAsString());
-                Player pPardon = Player.get(u);
-                if (pPardon == null) {
-                    command.respondEphemeral(Config.player_not_found);
-                    return;
-                }
-                logic.pardonPlayer(command, pPardon, command.getOptions().get(1).getAsString(), p);
-                break;
-
-            case Config.APP_REFUND:
-                DiscordUser user = discordService.getUserById(command.getOptions().get(0).getAsString());
-                Player pRefund = Player.get(user);
-                if (pRefund == null) {
-                    command.respondEphemeral(Config.player_not_found);
-                    return;
-                }
-                logic.refundPlayer(command, pRefund, command.getOptions().get(1).getAsInt(), command.getOptions().get(2).getAsString(), p);
-                break;
-
-//		case Config.APP_BUY:
-//			logic.showBuys(interaction, p);
-//			break;
-        }
-    }
-
     public boolean isChannel(PickupChannelType type, DiscordChannel channel) {
         return logic.getChannelByType(type).contains(channel);
     }
@@ -1670,28 +1630,5 @@ public class PickupBot {
         }
 
         return sentMessages;
-    }
-
-    public void createApplicationCommands() {
-        discordService.registerApplicationCommands(List.of(
-                new DiscordApplicationCommand("bet", "Place a bet for a game", List.of(
-                        new DiscordCommandOption(DiscordCommandOptionType.INTEGER, "matchid", "The game number.", List.of()),
-                        new DiscordCommandOption(DiscordCommandOptionType.STRING, "team", "The color of the team you want to bet on.", List.of(
-                                new DiscordCommandOptionChoice("red", "red"),
-                                new DiscordCommandOptionChoice("blue", "blue")
-                        )),
-                        new DiscordCommandOption(DiscordCommandOptionType.INTEGER, "amount", "The amount of coins you want to bet", List.of())
-                )),
-                new DiscordApplicationCommand("buy", "Buy a perk with your coins.", List.of()),
-                new DiscordApplicationCommand("pardon", "Unbans a player banned by the bot. Does not work on manual bans.", List.of(
-                        new DiscordCommandOption(DiscordCommandOptionType.USER, "player", "Player to unban.", List.of()),
-                        new DiscordCommandOption(DiscordCommandOptionType.STRING, "reason", "Reason for the unban.", List.of())
-                )),
-                new DiscordApplicationCommand("refund", "Refund pugcoins to a player following a bot error.", List.of(
-                        new DiscordCommandOption(DiscordCommandOptionType.USER, "player", "Player to refund.", List.of()),
-                        new DiscordCommandOption(DiscordCommandOptionType.INTEGER, "amount", "Amount to refund.", List.of()),
-                        new DiscordCommandOption(DiscordCommandOptionType.STRING, "reason", "Reason for the refund.", List.of())
-                ))
-        ));
     }
 }
