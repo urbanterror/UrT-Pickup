@@ -1419,8 +1419,6 @@ public class PickupLogic {
     }
 
     public List<PickupReply> cmdLive(DiscordChannel channel) {
-        DiscordEmbed scoreBoardLinkEmbed = new DiscordEmbed();
-
         if (ongoingMatches.isEmpty()) {
             return List.of(new PickupReply("No live matches found."));
         }
@@ -1440,12 +1438,13 @@ public class PickupLogic {
                 }
                 StringBuilder embedDescription = new StringBuilder(scoreBoardLink);
 
-                scoreBoardLinkEmbed.setColor(7056881);
 
                 if (match.getGtvServer() != null) {
                     embedDescription.append("\n").append(Config.pkup_go_pub_calm);
                 }
 
+                DiscordEmbed scoreBoardLinkEmbed = new DiscordEmbed();
+                scoreBoardLinkEmbed.setColor(7056881);
                 scoreBoardLinkEmbed.setDescription(embedDescription.toString());
                 replies.add(new PickupReply(msg, scoreBoardLinkEmbed));
             }
