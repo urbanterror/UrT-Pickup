@@ -26,7 +26,10 @@ public class GameMap {
     }
 
     public String getDiscordDownloadLink() {
-        return "[download](https://maps.pugbot.net/q3ut4/" + name + ".pk3)";
+        String mapFile = name + ".pk3";
+        return ":floppy_disk: [ftw](https://q3.ftwgl.com/q3ut4/" + mapFile + ") "
+                + "[pugbot](https://maps.pugbot.net/q3ut4/" + mapFile + ") "
+                + "[urt.li](http://urt.li/q3ut4/" + mapFile + ")";
     }
 
     @Override
