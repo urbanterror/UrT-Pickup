@@ -1099,20 +1099,22 @@ public class PickupBot {
                         break;
 
                     case Config.CMD_REMOVEBAN:
-                        if (data.length == 2) {
-                            Player p;
-                            DiscordUser u = discordService.getUserFromMention(data[1]);
-                            if (u != null) {
-                                p = Player.get(u);
-                            } else {
-                                p = Player.get(data[1].toLowerCase());
-                            }
+                        if (data.length >= 2) {
+                            for (int i = 1; i < data.length; i++) {
+                                Player p;
+                                DiscordUser u = discordService.getUserFromMention(data[i]);
+                                if (u != null) {
+                                    p = Player.get(u);
+                                } else {
+                                    p = Player.get(data[i].toLowerCase());
+                                }
 
-                            if (p != null) {
-                                logic.UnbanPlayer(p);
-                            } else msg.reply(Config.player_not_found);
+                                if (p != null) {
+                                    logic.UnbanPlayer(p);
+                                } else msg.reply(Config.player_not_found);
+                            }
                         } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));
+                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
                         break;
 
                     case Config.CMD_COUNTRY:
