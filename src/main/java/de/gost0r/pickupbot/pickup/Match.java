@@ -497,10 +497,16 @@ public class Match implements Runnable {
             return;
         }
 
+        // Fetch FTWGL ratings for all players to use in captain selection
+        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(playerList);
+        if (playerRatings.values().stream().filter(r -> r != null && r != 0f).count() < gametype.getTeamSize()) playerRatings.clear();
+
         sortedPlayers.add(playerList.get(0));
         for (Player player : playerList) {
             for (Player sortedPlayer : sortedPlayers) {
-                if (player.getCaptainScore(gametype) >= sortedPlayer.getCaptainScore(gametype) && !player.equals(sortedPlayer)) {
+                Float playerRating = playerRatings.get(player);
+                Float sortedPlayerRating = playerRatings.get(sortedPlayer);
+                if (player.getCaptainScore(gametype, playerRating) >= sortedPlayer.getCaptainScore(gametype, sortedPlayerRating) && !player.equals(sortedPlayer)) {
                     sortedPlayers.add(sortedPlayers.indexOf(sortedPlayer), player);
                     break;
                 }
@@ -1373,15 +1379,22 @@ public class Match implements Runnable {
     }
 
     private void computeOdds() {
+        // Get all players for rating lookup
+        List<Player> allPlayers = new ArrayList<>();
+        allPlayers.addAll(teamList.get("red"));
+        allPlayers.addAll(teamList.get("blue"));
+        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(allPlayers);
+        if (playerRatings.values().stream().filter(r -> r != null && r != 0f).count() < gametype.getTeamSize()) playerRatings.clear();
+
         float scoreRed = 0.0f;
         for (Player redP : teamList.get("red")) {
-            scoreRed += redP.getCaptainScore(gametype);
+            scoreRed += redP.getCaptainScore(gametype, playerRatings.get(redP));
         }
         scoreRed /= gametype.getTeamSize();
 
         float scoreBlue = 0.0f;
         for (Player blueP : teamList.get("blue")) {
-            scoreBlue += blueP.getCaptainScore(gametype);
+            scoreBlue += blueP.getCaptainScore(gametype, playerRatings.get(blueP));
         }
         scoreBlue /= gametype.getTeamSize();
 
