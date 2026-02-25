@@ -13,6 +13,18 @@ public class PickupReply {
     private final DiscordEmbed embed;
     private final List<DiscordComponent> components;
 
+    public String getMessage() {
+        return message;
+    }
+
+    public DiscordEmbed getEmbed() {
+        return embed;
+    }
+
+    public List<DiscordComponent> getComponents() {
+        return components;
+    }
+
     public PickupReply(String message) {
         this.message = message;
         embed = null;
