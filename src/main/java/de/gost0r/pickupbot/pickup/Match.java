@@ -499,14 +499,15 @@ public class Match implements Runnable {
 
         // Fetch FTWGL ratings for all players to use in captain selection
         Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(playerList);
-        if (playerRatings.values().stream().filter(r -> r != null && r != 0f).count() < gametype.getTeamSize()) playerRatings.clear();
+        boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
+        if (!useFtwOnly) playerRatings.clear();
 
         sortedPlayers.add(playerList.get(0));
         for (Player player : playerList) {
             for (Player sortedPlayer : sortedPlayers) {
                 Float playerRating = playerRatings.get(player);
                 Float sortedPlayerRating = playerRatings.get(sortedPlayer);
-                if (player.getCaptainScore(gametype, playerRating) >= sortedPlayer.getCaptainScore(gametype, sortedPlayerRating) && !player.equals(sortedPlayer)) {
+                if (player.getCaptainScore(gametype, playerRating, useFtwOnly) >= sortedPlayer.getCaptainScore(gametype, sortedPlayerRating, useFtwOnly) && !player.equals(sortedPlayer)) {
                     sortedPlayers.add(sortedPlayers.indexOf(sortedPlayer), player);
                     break;
                 }
@@ -1384,19 +1385,30 @@ public class Match implements Runnable {
         allPlayers.addAll(teamList.get("red"));
         allPlayers.addAll(teamList.get("blue"));
         Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(allPlayers);
-        if (playerRatings.values().stream().filter(r -> r != null && r != 0f).count() < gametype.getTeamSize()) playerRatings.clear();
+        boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
+        if (!useFtwOnly) playerRatings.clear();
 
         float scoreRed = 0.0f;
+        int countRed = 0;
         for (Player redP : teamList.get("red")) {
-            scoreRed += redP.getCaptainScore(gametype, playerRatings.get(redP));
+            float score = redP.getCaptainScore(gametype, playerRatings.get(redP), useFtwOnly);
+            if (!useFtwOnly || score > 0) {
+                scoreRed += score;
+                countRed++;
+            }
         }
-        scoreRed /= gametype.getTeamSize();
+        if (countRed > 0) scoreRed /= countRed;
 
         float scoreBlue = 0.0f;
+        int countBlue = 0;
         for (Player blueP : teamList.get("blue")) {
-            scoreBlue += blueP.getCaptainScore(gametype, playerRatings.get(blueP));
+            float score = blueP.getCaptainScore(gametype, playerRatings.get(blueP), useFtwOnly);
+            if (!useFtwOnly || score > 0) {
+                scoreBlue += score;
+                countBlue++;
+            }
         }
-        scoreBlue /= gametype.getTeamSize();
+        if (countBlue > 0) scoreBlue /= countBlue;
 
         float scoreAvg = (scoreBlue + scoreRed) / 2.0f;
 
