@@ -1115,6 +1115,44 @@ public class PickupBot {
                             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));
                         break;
 
+                    case Config.CMD_PARDON:
+                        // !pardon <player1> [player2...] "reason"
+                        // Extract quoted reason from raw message content
+                        Matcher pardonMatcher = Pattern.compile("\"([^\"]+)\"").matcher(msg.getContent());
+                        if (pardonMatcher.find()) {
+                            String reason = pardonMatcher.group(1);
+                            // Get everything before the quote as player args
+                            String beforeQuote = msg.getContent().substring(0, pardonMatcher.start()).trim();
+                            String[] pardonArgs = beforeQuote.split("\\s+");
+                            // pardonArgs[0] is "!pardon", rest are players
+                            if (pardonArgs.length >= 2) {
+                                Player admin = Player.get(msg.getUser());
+                                if (admin == null) {
+                                    msg.reply("You are not registered");
+                                    break;
+                                }
+                                for (int i = 1; i < pardonArgs.length; i++) {
+                                    Player p;
+                                    DiscordUser u = discordService.getUserFromMention(pardonArgs[i]);
+                                    if (u != null) {
+                                        p = Player.get(u);
+                                    } else {
+                                        p = Player.get(pardonArgs[i].toLowerCase());
+                                    }
+                                    if (p != null) {
+                                        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, reason, admin);
+                                    } else {
+                                        msg.reply(Config.player_not_found + " (" + pardonArgs[i] + ")");
+                                    }
+                                }
+                            } else {
+                                msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                            }
+                        } else {
+                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                        }
+                        break;
+
                     case Config.CMD_COUNTRY:
                         if (data.length == 3) {
                             Player p;
@@ -1227,6 +1265,9 @@ public class PickupBot {
                                 break;
                             case Config.CMD_REMOVEBAN:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
+                                break;
+                            case Config.CMD_PARDON:
+                                msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_PARDON));
                                 break;
                             case Config.CMD_BANINFO:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_BANINFO));

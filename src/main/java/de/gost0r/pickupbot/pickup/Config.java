@@ -83,6 +83,7 @@ public class Config {
 
     public static final String CMD_ADDBAN = "!ban";
     public static final String CMD_REMOVEBAN = "!unban";
+    public static final String CMD_PARDON = "!pardon";
     public static final String CMD_BANINFO = "!baninfo";
 
     public static final String CMD_SHOWSERVERS = "!showservers";
@@ -182,6 +183,7 @@ public class Config {
 
     public static final String USE_CMD_ADDBAN = "!ban <urtauth> <reason> <duration> (duration=1y1M1w1d1h1m1s)";
     public static final String USE_CMD_REMOVEBAN = "!unban <urtauth>";
+    public static final String USE_CMD_PARDON = "!pardon </@User|urtauth/> [</@User|urtauth/> ...] \"<reason>\"";
     public static final String USE_CMD_BANINFO = "!baninfo </@User|urtauth/>";
 
     public static final String USE_CMD_SHOWSERVERS = "!showservers";
