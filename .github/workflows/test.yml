@@ -3,6 +3,10 @@ name: Run tests
 on:
   push:
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,3 +27,19 @@ jobs:
 
       - name: Run tests
         run: ./gradlew test
+
+      - name: Publish test report
+        uses: dorny/test-reporter@v3
+        if: ${{ !cancelled() }}
+        with:
+          name: Gradle Tests
+          path: build/test-results/test/*.xml
+          reporter: java-junit
+
+      - name: Upload HTML test report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: gradle-test-report
+          path: build/reports/tests/test
+          if-no-files-found: ignore
