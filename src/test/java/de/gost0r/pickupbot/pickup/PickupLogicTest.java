@@ -4,6 +4,7 @@ import de.gost0r.pickupbot.discord.*;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
+import de.gost0r.pickupbot.pickup.server.Server;
 import org.junit.jupiter.api.*;
 
 import java.io.File;
@@ -278,9 +279,92 @@ class PickupLogicTest {
         assertEquals(Config.bets_insufficient, r.getMessage());
     }
 
+    // ========== Match captain selection ==========
+
+    @Test void tsSortPlayers_prefersFtwRatingsForCaptainsWhenEnoughRatingsExist() throws Exception {
+        var india = players.get("india");
+        var echo = players.get("echo");
+        var hotel = players.get("hotel");
+        var charlie = players.get("charlie");
+
+        when(ftw.getPlayerRatings(anyList())).thenAnswer(invocation -> {
+            List<Player> requestedPlayers = invocation.getArgument(0);
+            Map<Player, Float> ratings = new HashMap<>();
+            for (Player player : requestedPlayers) {
+                if (player.equals(india)) {
+                    ratings.put(player, 2100f);
+                } else if (player.equals(echo)) {
+                    ratings.put(player, 1900f);
+                }
+            }
+            return ratings;
+        });
+
+        Match match = buildTsCaptainMatch();
+        match.sortPlayers();
+
+        assertTrue(match.getPlayerList().contains(hotel), "Match should include unrated players");
+        assertTrue(match.getPlayerList().contains(charlie), "Match should include unrated players");
+        assertEquals(india, match.getTeamRed().get(0), "Highest FTW-rated player should be red captain");
+        assertEquals(echo, match.getTeamBlue().get(0), "Second-highest FTW-rated player should be blue captain");
+        assertNotEquals(hotel, match.getTeamRed().get(0), "Unrated player should not become captain when rated players exist");
+        assertNotEquals(hotel, match.getTeamBlue().get(0), "Unrated player should not become captain when rated players exist");
+        assertNotEquals(charlie, match.getTeamRed().get(0), "Unrated player should not become captain when rated players exist");
+        assertNotEquals(charlie, match.getTeamBlue().get(0), "Unrated player should not become captain when rated players exist");
+        assertEquals(echo, match.getCaptainsTurn(), "Blue captain should pick first");
+
+        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+    }
+
+    @Test void tsSortPlayers_fallsBackToCaptainScoreWhenTooFewFtwRatingsExist() throws Exception {
+        var india = players.get("india");
+        var hotel = players.get("hotel");
+        var charlie = players.get("charlie");
+
+        when(ftw.getPlayerRatings(anyList())).thenAnswer(invocation -> {
+            List<Player> requestedPlayers = invocation.getArgument(0);
+            Map<Player, Float> ratings = new HashMap<>();
+            for (Player player : requestedPlayers) {
+                if (player.equals(india)) {
+                    ratings.put(player, 2500f);
+                }
+            }
+            return ratings;
+        });
+
+        Match match = buildTsCaptainMatch();
+        match.sortPlayers();
+
+        assertEquals(hotel, match.getTeamRed().get(0), "Fallback captain selection should use local captain score");
+        assertEquals(charlie, match.getTeamBlue().get(0), "Fallback captain selection should ignore a lone FTW rating");
+
+        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+    }
+
     // ========== Helpers ==========
 
     static Gametype gt(String name) { return logic.getGametypeByString(name); }
+
+    static Match buildTsCaptainMatch() throws Exception {
+        Match match = new Match(logic, gt("TS"), List.of(logic.getMapByName("ut4_turnpike")), perms);
+
+        Server server = new Server(999, "127.0.0.1", 27960, "rcon", "pw", true, Region.EU);
+        server.country = "DE";
+        server.city = "Berlin";
+        for (Player player : players.values()) {
+            server.playerPing.put(player, 50);
+        }
+
+        Map<Player, MatchStats> playerStats = new LinkedHashMap<>();
+        for (Player player : players.values()) {
+            playerStats.put(player, new MatchStats());
+        }
+
+        setField(match, "server", server);
+        setField(match, "playerStats", playerStats);
+
+        return match;
+    }
 
     static void assertContains(PickupReply r, String sub) {
         assertNotNull(r.getMessage(), "Reply message was null");
@@ -383,5 +467,11 @@ class PickupLogicTest {
             f.setAccessible(true);
             ((List<?>) f.get(null)).clear();
         } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    static void setField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }
