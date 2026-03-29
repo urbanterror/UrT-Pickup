@@ -348,6 +348,21 @@ public class Player {
         return (float) (elo + (kdr * 500 + wdl.calcWinRatio() * 500.0) / 4);
     }
 
+    public float getCaptainScore(Gametype gt, Float ftwglRating, boolean useFtwOnly) {
+        // Use FTWGL rating if available (higher is better)
+        if (ftwglRating != null && ftwglRating > 0) {
+            return ftwglRating;
+        }
+
+        // If we're in FTW-only mode, unrated players score 0 so they sort below rated players
+        if (useFtwOnly) {
+            return 0;
+        }
+        
+        // Fallback to existing ELO/KDR/WDL blended score
+        return getCaptainScore(gt);
+    }
+
     public void setRank(int rank) {
         this.elorank = rank;
     }
