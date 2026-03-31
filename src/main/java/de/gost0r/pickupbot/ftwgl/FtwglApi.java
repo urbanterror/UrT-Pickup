@@ -208,7 +208,7 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
+    private <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
         log.trace("Creating POST request to: {}", url);
         ResponseEntity<T> response = restClient.post()
                 .uri(url)
@@ -224,7 +224,7 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized <T> ResponseEntity<T> sendGetRequest(String url, Class<T> responseType) {
+    private <T> ResponseEntity<T> sendGetRequest(String url, Class<T> responseType) {
         log.trace("Creating GET request to: {}", url);
         ResponseEntity<T> response = restClient.get()
                 .uri(url)
@@ -237,7 +237,7 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized ResponseEntity<Void> sendHeadRequest(String url) {
+    private ResponseEntity<Void> sendHeadRequest(String url) {
         log.trace("Creating HEAD request to: {}", url);
         ResponseEntity<Void> response = restClient.head()
                 .uri(url)

@@ -3,6 +3,7 @@ package de.gost0r.pickupbot.command.common;
 import de.gost0r.pickupbot.discord.DiscordService;
 import de.gost0r.pickupbot.discord.DiscordSlashCommandInteraction;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Async;
 
 import java.util.List;
 
@@ -23,6 +24,7 @@ public class CommandInitService {
         updateAllApplicationCommands();
     }
 
+    @Async("commandExecutor")
     public void handleInteraction(DiscordSlashCommandInteraction interaction) {
         String command = interaction.getName();
         commandList

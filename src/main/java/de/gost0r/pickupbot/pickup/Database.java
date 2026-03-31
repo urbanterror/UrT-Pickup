@@ -35,6 +35,9 @@ public class Database {
     private void initConnection() {
         try {
             c = DriverManager.getConnection("jdbc:sqlite:" + logic.bot.env + ".pickup.db");
+            try (Statement stmt = c.createStatement()) {
+                stmt.execute("PRAGMA journal_mode=WAL;");
+            }
             initTable();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
@@ -224,6 +227,9 @@ public class Database {
             stmt.executeUpdate(sql);
 
             sql = "CREATE INDEX IF NOT EXISTS idx_spree_urtauth_gametype ON spree (player_urtauth, gametype)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_player_urtauth ON player (urtauth)";
             stmt.executeUpdate(sql);
 
             stmt.close();
@@ -598,6 +604,24 @@ public class Database {
         return matchList;
     }
 
+    private static class PlayerMatchData {
+        String userid;
+        String urtauth;
+        String team;
+        String ip;
+        MatchStats.Status status;
+        Score[] scores;
+        
+        PlayerMatchData(String userid, String urtauth, String team, String ip, MatchStats.Status status, Score[] scores) {
+            this.userid = userid;
+            this.urtauth = urtauth;
+            this.team = team;
+            this.ip = ip;
+            this.status = status;
+            this.scores = scores;
+        }
+    }
+
     public Match loadMatch(int id) {
         Match match = null;
         try {
@@ -619,9 +643,12 @@ public class Database {
                 pstmt.setInt(1, id);
                 rs1 = pstmt.executeQuery();
 
+                // Use a temporary list to collect all player data first, so we can fetch DiscordUsers concurrently
+                List<PlayerMatchData> matchPlayerData = new ArrayList<>();
+
                 while (rs1.next()) {
                     int pidmid = rs1.getInt("ID");
-                    String userid = rs1.getString("player_userid"); // not needed as we potentially load the player via loadPlayer(urtauth)
+                    String userid = rs1.getString("player_userid");
                     String urtauth = rs1.getString("player_urtauth");
                     String team = rs1.getString("team");
 
@@ -658,13 +685,26 @@ public class Database {
                         rs3.close();
                     }
 
-                    // assemble stats
-                    Player player = Player.get(discordService.getUserById(userid), urtauth);
-                    stats.put(player, new MatchStats(scores[0], scores[1], ip, status));
-                    teamList.get(team).add(player);
+                    matchPlayerData.add(new PlayerMatchData(userid, urtauth, team, ip, status, scores));
                     rs2.close();
                 }
                 rs1.close();
+
+                // Concurrently fetch users from Discord and construct players
+                matchPlayerData.parallelStream().forEach(pmd -> {
+                    Player player = Player.get(pmd.urtauth);
+                    if (player == null) {
+                        player = loadPlayer(null, pmd.urtauth, false);
+                    }
+                    if (player != null) {
+                        synchronized (stats) {
+                            stats.put(player, new MatchStats(pmd.scores[0], pmd.scores[1], pmd.ip, pmd.status));
+                        }
+                        synchronized (teamList) {
+                            teamList.get(pmd.team).add(player);
+                        }
+                    }
+                });
 
                 Gametype gametype = logic.getGametypeByString(rs.getString("gametype"));
                 Server server = logic.getServerByID(rs.getInt("server"));

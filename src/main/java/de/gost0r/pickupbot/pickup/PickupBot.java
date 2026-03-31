@@ -9,6 +9,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Async;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -74,6 +75,7 @@ public class PickupBot {
         }
     }
 
+    @Async("commandExecutor")
     public void recvMessage(DiscordMessage msg) {
         log.info("RECV #{} {}: {}",
                 (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
@@ -1465,6 +1467,7 @@ public class PickupBot {
         }
     }
 
+    @Async("commandExecutor")
     public void recvInteraction(DiscordInteraction interaction) {
         log.info("RECV #{} {}: {}",
                 (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),

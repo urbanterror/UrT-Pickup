@@ -1389,15 +1389,17 @@ public class PickupLogic {
     }
 
     public void cmdServerList(DiscordChannel channel) {
-        StringBuilder msg = new StringBuilder("None");
-        for (Server server : serverList) {
-            if (msg.toString().equals("None")) {
-                msg = new StringBuilder(server.toString());
-            } else {
-                msg.append("\n").append(server.toString());
-            }
+        if (serverList.isEmpty()) {
+            channel.sendMessage("None");
+            return;
         }
-        channel.sendMessage(msg.toString());
+        
+        // Fetch server statuses concurrently to avoid blocking
+        String msg = serverList.parallelStream()
+            .map(Server::toString)
+            .collect(java.util.stream.Collectors.joining("\n"));
+            
+        channel.sendMessage(msg);
     }
 
     public void cmdMatchList(DiscordChannel channel) {
