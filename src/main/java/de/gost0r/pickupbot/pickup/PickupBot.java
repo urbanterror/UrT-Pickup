@@ -53,6 +53,15 @@ public class PickupBot {
         this.queueExecutor = queueExecutor;
     }
 
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        log.info("Shutting down bot...");
+        if (logic != null && logic.db != null) {
+            logic.db.disconnect();
+        }
+        log.info("Bot shutdown complete");
+    }
+
     public void init() {
         log.info("Starting bot...");
         this.self = discordService.getMe();

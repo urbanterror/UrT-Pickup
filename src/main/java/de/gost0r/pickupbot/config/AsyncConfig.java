@@ -18,6 +18,8 @@ public class AsyncConfig {
         executor.setMaxPoolSize(50);
         executor.setQueueCapacity(500);
         executor.setThreadNamePrefix("CmdExec-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
     }
@@ -29,6 +31,8 @@ public class AsyncConfig {
         executor.setMaxPoolSize(1);
         executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("QueueExec-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
     }

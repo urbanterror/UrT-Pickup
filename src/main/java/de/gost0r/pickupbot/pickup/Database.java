@@ -46,9 +46,14 @@ public class Database {
 
     public void disconnect() {
         try {
+            // Checkpoint WAL to flush all pending writes to the main database file
+            try (Statement stmt = c.createStatement()) {
+                stmt.execute("PRAGMA wal_checkpoint(TRUNCATE);");
+            }
+            log.info("WAL checkpoint completed, closing database connection");
             c.close();
         } catch (SQLException e) {
-            log.warn("Exception: ", e);
+            log.warn("Exception during database shutdown: ", e);
         }
     }
 
