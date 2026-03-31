@@ -209,6 +209,27 @@ public class Database {
                     + "FOREIGN KEY (player_userid, player_urtauth) REFERENCES player(userid, urtauth) )";
             stmt.executeUpdate(sql);
 
+            sql = "CREATE INDEX IF NOT EXISTS idx_pim_matchid ON player_in_match (matchid)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_pim_urtauth_id ON player_in_match (player_urtauth, ID DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_match_start ON match (starttime)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_player_active_elo ON player (active, elo DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_banlist_urtauth ON banlist (player_urtauth)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_bets_urtauth ON bets (player_urtauth, ID DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_spree_urtauth_gametype ON spree (player_urtauth, gametype)";
+            stmt.executeUpdate(sql);
+
             stmt.close();
 
             // Migrations: add columns that may not exist in older databases
