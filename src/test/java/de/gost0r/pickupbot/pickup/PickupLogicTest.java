@@ -264,19 +264,27 @@ class PickupLogicTest {
     @Test void donate_transfersCoins() {
         var from = players.get("charlie");
         var to = players.get("delta");
-        long before = from.getCoins();
-        logic.cmdDonate(from, to, 100);
-        assertEquals(before - 100, from.getCoins());
+        long beforeFrom = from.getCoins();
+        long beforeTo = to.getCoins();
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+
+        logic.donatePlayer(interaction, from, to, 100);
+
+        assertEquals(beforeFrom - 100, from.getCoins());
+        assertEquals(beforeTo + 100, to.getCoins());
+        verify(interaction).respondEphemeral(contains("donated"));
     }
 
     @Test void donate_overLimit_rejected() {
-        var r = logic.cmdDonate(players.get("echo"), players.get("foxtrot"), 20_000);
-        assertEquals(Config.donate_above_limit, r.getMessage());
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        logic.donatePlayer(interaction, players.get("echo"), players.get("foxtrot"), 20_000);
+        verify(interaction).respondEphemeral(Config.donate_above_limit);
     }
 
     @Test void donate_insufficientFunds_rejected() {
-        var r = logic.cmdDonate(players.get("india"), players.get("juliet"), 5_000);
-        assertEquals(Config.bets_insufficient, r.getMessage());
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        logic.donatePlayer(interaction, players.get("india"), players.get("juliet"), 5_000);
+        verify(interaction).respondEphemeral(Config.bets_insufficient);
     }
 
     // ========== pardonPlayer (slash command) ==========

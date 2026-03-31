@@ -2788,15 +2788,18 @@ public class PickupLogic {
         return new PickupReply(msg);
     }
 
-    public PickupReply cmdDonate(Player p, Player destP, int amount) {
+    public void donatePlayer(DiscordSlashCommandInteraction interaction, Player p, Player destP, int amount) {
         if (amount <= 0) {
-            return new PickupReply(Config.donate_incorrect_amount);
+            interaction.respondEphemeral(Config.donate_incorrect_amount);
+            return;
         }
         if (amount > 10000) {
-            return new PickupReply(Config.donate_above_limit);
+            interaction.respondEphemeral(Config.donate_above_limit);
+            return;
         }
         if (amount > p.getCoins()) {
-            return new PickupReply(Config.bets_insufficient);
+            interaction.respondEphemeral(Config.bets_insufficient);
+            return;
         }
 
         p.spendCoins(amount);
@@ -2811,9 +2814,9 @@ public class PickupLogic {
         msg = msg.replace(".amount.", String.format("%,d", amount));
         msg = msg.replace(".emojiname.", coinEmoji.name());
         msg = msg.replace(".emojiid.", coinEmoji.id());
-        bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
-
-        return PickupReply.NONE;
+        
+        interaction.respondEphemeral(msg);
+        destP.getDiscordUser().sendPrivateMessage(msg);
     }
 
     public PickupReply cmdBetHistory(Player p) {
