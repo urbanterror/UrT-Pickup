@@ -279,6 +279,135 @@ class PickupLogicTest {
         assertEquals(Config.bets_insufficient, r.getMessage());
     }
 
+    // ========== pardonPlayer (slash command) ==========
+
+    @Test void pardon_slashCommand_bannedByBot_pardons() {
+        var p = players.get("alpha");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        assertTrue(p.isBannedByBot(), "Player should be banned by bot before pardon");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("bravo");
+        logic.pardonPlayer(interaction, p, "forgiven", admin);
+
+        assertFalse(p.isBannedByBot(), "Player should no longer be banned by bot after pardon");
+        verify(interaction).deleteDeferredReply();
+        verify(interaction, never()).respondEphemeral(anyString());
+    }
+
+    @Test void pardon_slashCommand_notBanned_respondsEphemeral() {
+        var p = players.get("bravo");
+        assertFalse(p.isBannedByBot(), "Player should not be banned");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("charlie");
+        logic.pardonPlayer(interaction, p, "test", admin);
+
+        verify(interaction).respondEphemeral(contains("not banned"));
+        verify(interaction, never()).deleteDeferredReply();
+    }
+
+    @Test void pardon_slashCommand_manualBan_notPardoned() {
+        var p = players.get("charlie");
+        addBotBan(p, PlayerBan.BanReason.INSULT);
+        assertTrue(p.isBanned(), "Player should be banned");
+        assertFalse(p.isBannedByBot(), "INSULT ban is not a bot ban");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("delta");
+        logic.pardonPlayer(interaction, p, "test", admin);
+
+        assertTrue(p.isBanned(), "Manual ban should remain");
+        verify(interaction).respondEphemeral(contains("!unban"));
+        verify(interaction, never()).deleteDeferredReply();
+        // Clean up manual ban so it doesn't affect other tests
+        p.forgiveBan();
+    }
+
+    @Test void pardon_slashCommand_ragequitBan_pardons() {
+        var p = players.get("delta");
+        addBotBan(p, PlayerBan.BanReason.RAGEQUIT);
+        assertTrue(p.isBannedByBot(), "RAGEQUIT should count as bot ban");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("echo");
+        logic.pardonPlayer(interaction, p, "cool down", admin);
+
+        assertFalse(p.isBannedByBot(), "RAGEQUIT ban should be pardoned");
+        verify(interaction).deleteDeferredReply();
+    }
+
+    // ========== pardonPlayer (text command / channel) ==========
+
+    @Test void pardon_channel_bannedByBot_pardons() {
+        var p = players.get("echo");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        assertTrue(p.isBannedByBot(), "Player should be banned by bot");
+
+        var admin = players.get("foxtrot");
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "text pardon", admin);
+
+        assertFalse(p.isBannedByBot(), "Player should be pardoned via text command");
+    }
+
+    @Test void pardon_channel_notBanned_sendsMessage() {
+        var p = players.get("foxtrot");
+        assertFalse(p.isBannedByBot(), "Player should not be banned");
+
+        var admin = players.get("alpha");
+        // Should not throw; sends "not banned" to admin channel
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "test", admin);
+
+        assertFalse(p.isBannedByBot(), "Player state unchanged");
+    }
+
+    @Test void pardon_channel_multiplePlayers_pardonsAll() {
+        var p1 = players.get("hotel");
+        var p2 = players.get("india");
+        addBotBan(p1, PlayerBan.BanReason.NOSHOW);
+        addBotBan(p2, PlayerBan.BanReason.RAGEQUIT);
+        assertTrue(p1.isBannedByBot(), "p1 should be banned");
+        assertTrue(p2.isBannedByBot(), "p2 should be banned");
+
+        var admin = players.get("juliet");
+        var channels = logic.getChannelByType(PickupChannelType.ADMIN);
+        logic.pardonPlayer(channels, p1, "batch pardon", admin);
+        logic.pardonPlayer(channels, p2, "batch pardon", admin);
+
+        assertFalse(p1.isBannedByBot(), "p1 should be pardoned");
+        assertFalse(p2.isBannedByBot(), "p2 should be pardoned");
+    }
+
+    @Test void pardon_channel_mixedBans_onlyBotBanPardoned() {
+        var p = players.get("juliet");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        addBotBan(p, PlayerBan.BanReason.INSULT);
+        assertTrue(p.isBannedByBot(), "Should have bot ban");
+        assertTrue(p.isBanned(), "Should also have manual ban");
+
+        var admin = players.get("alpha");
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "partial pardon", admin);
+
+        assertFalse(p.isBannedByBot(), "Bot ban should be pardoned");
+        assertTrue(p.isBanned(), "Manual INSULT ban should remain");
+        // Clean up manual ban
+        p.forgiveBan();
+    }
+
+    // ========== pardon helpers ==========
+
+    /** Creates and persists an active ban for the given player. */
+    static void addBotBan(Player p, PlayerBan.BanReason reason) {
+        var ban = new PlayerBan();
+        ban.player = p;
+        ban.startTime = System.currentTimeMillis() - 1000;
+        ban.endTime = System.currentTimeMillis() + 3_600_000; // 1 hour from now
+        ban.reason = reason;
+        ban.forgiven = false;
+        p.addBan(ban);
+        db.createBan(ban);
+    }
+    
     // ========== Match captain selection ==========
 
     @Test void tsSortPlayers_prefersFtwRatingsForCaptainsWhenEnoughRatingsExist() throws Exception {

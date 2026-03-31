@@ -15,6 +15,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Consumer;
 
 @Slf4j
 public class PickupLogic {
@@ -1791,9 +1792,20 @@ public class PickupLogic {
     }
 
     public void pardonPlayer(DiscordSlashCommandInteraction command, Player pPardon, String reason, Player pAdmin) {
+        pardonPlayer(pPardon, reason, pAdmin, () -> command.deleteDeferredReply(),
+                notBannedMsg -> command.respondEphemeral(notBannedMsg));
+    }
+
+    public void pardonPlayer(List<DiscordChannel> replyChannels, Player pPardon, String reason, Player pAdmin) {
+        pardonPlayer(pPardon, reason, pAdmin, () -> {},
+                notBannedMsg -> bot.sendMsg(replyChannels, notBannedMsg));
+    }
+
+    private void pardonPlayer(Player pPardon, String reason, Player pAdmin,
+                               Runnable onSuccess, Consumer<String> onNotBanned) {
 
         if (pPardon.isBannedByBot()) {
-            command.deleteDeferredReply();
+            onSuccess.run();
 
             pPardon.forgiveBotBan();
 
@@ -1811,7 +1823,7 @@ public class PickupLogic {
             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
         } else {
             // Player is not banned
-            command.respondEphemeral(printPlayerNotBannedInfo(pPardon));
+            onNotBanned.accept(printPlayerNotBannedInfo(pPardon));
         }
     }
 
@@ -1879,7 +1891,12 @@ public class PickupLogic {
     }
 
     public String printPlayerNotBannedInfo(Player player) {
-        String msg = Config.is_notbanned;
+        String msg;
+        if (player.isBanned()) {
+            msg = Config.is_notbanned_but_manual;
+        } else {
+            msg = Config.is_notbanned;
+        }
         msg = msg.replace(".user.", player.getDiscordUser().getMentionString());
         msg = msg.replace(".urtauth.", player.getUrtauth());
         return msg;
