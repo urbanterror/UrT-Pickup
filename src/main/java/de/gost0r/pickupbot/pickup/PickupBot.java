@@ -985,21 +985,36 @@ public class PickupBot {
                             }
 
                             if (p != null) {
-                                BanReason reason = null;
-                                for (BanReason banReason : BanReason.values()) {
-                                    if (banReason.name().equals(data[2].toUpperCase())) {
-                                        reason = banReason;
-                                        break;
+                                // Allow reason and duration in either order
+                                String reasonStr = null;
+                                String durationStr = null;
+                                for (int argIdx = 2; argIdx <= 3; argIdx++) {
+                                    boolean isReason = false;
+                                    for (BanReason banReason : BanReason.values()) {
+                                        if (banReason.name().equals(data[argIdx].toUpperCase())) {
+                                            isReason = true;
+                                            break;
+                                        }
+                                    }
+                                    if (isReason) {
+                                        reasonStr = data[argIdx];
+                                    } else {
+                                        durationStr = data[argIdx];
                                     }
                                 }
-                                if (reason != null) {
-                                    long duration = PickupLogic.parseDurationFromString(data[3]);
+
+                                if (reasonStr == null) {
+                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                } else if (durationStr == null) {
+                                    msg.reply(Config.banduration_invalid);
+                                } else {
+                                    BanReason reason = BanReason.valueOf(reasonStr.toUpperCase());
+                                    long duration = PickupLogic.parseDurationFromString(durationStr);
                                     if (duration > 0L) {
                                         logic.banPlayer(p, reason, duration);
                                         // no need to send msg due to banmsg being sent in that case
                                     } else msg.reply(Config.banduration_invalid);
-                                } else
-                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                }
                             } else msg.reply(Config.player_not_found);
                         } else
                             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));
@@ -1022,6 +1037,44 @@ public class PickupBot {
                             }
                         } else
                             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
+                        break;
+
+                    case Config.CMD_PARDON:
+                        // !pardon <player1> [player2...] "reason"
+                        // Extract quoted reason from raw message content
+                        Matcher pardonMatcher = Pattern.compile("\"([^\"]+)\"").matcher(msg.getContent());
+                        if (pardonMatcher.find()) {
+                            String reason = pardonMatcher.group(1);
+                            // Get everything before the quote as player args
+                            String beforeQuote = msg.getContent().substring(0, pardonMatcher.start()).trim();
+                            String[] pardonArgs = beforeQuote.split("\\s+");
+                            // pardonArgs[0] is "!pardon", rest are players
+                            if (pardonArgs.length >= 2) {
+                                Player admin = Player.get(msg.getUser());
+                                if (admin == null) {
+                                    msg.reply("You are not registered");
+                                    break;
+                                }
+                                for (int i = 1; i < pardonArgs.length; i++) {
+                                    Player p;
+                                    DiscordUser u = discordService.getUserFromMention(pardonArgs[i]);
+                                    if (u != null) {
+                                        p = Player.get(u);
+                                    } else {
+                                        p = Player.get(pardonArgs[i].toLowerCase());
+                                    }
+                                    if (p != null) {
+                                        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, reason, admin);
+                                    } else {
+                                        msg.reply(Config.player_not_found + " (" + pardonArgs[i] + ")");
+                                    }
+                                }
+                            } else {
+                                msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                            }
+                        } else {
+                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                        }
                         break;
 
                     case Config.CMD_COUNTRY:
@@ -1160,6 +1213,9 @@ public class PickupBot {
                                 break;
                             case Config.CMD_REMOVEBAN:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
+                                break;
+                            case Config.CMD_PARDON:
+                                msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_PARDON));
                                 break;
                             case Config.CMD_BANINFO:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_BANINFO));
