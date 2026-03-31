@@ -28,6 +28,7 @@ public class PickupBot {
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
     private final java.util.concurrent.Executor commandExecutor;
+    private final java.util.concurrent.Executor queueExecutor;
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -40,7 +41,8 @@ public class PickupBot {
             DiscordService discordService,
             PermissionService permissionService,
             PickupRoleCache pickupRoleCache,
-            @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor
+            @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor,
+            @org.springframework.beans.factory.annotation.Qualifier("queueExecutor") java.util.concurrent.Executor queueExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
@@ -48,6 +50,7 @@ public class PickupBot {
         this.permissionService = permissionService;
         this.pickupRoleCache = pickupRoleCache;
         this.commandExecutor = commandExecutor;
+        this.queueExecutor = queueExecutor;
     }
 
     public void init() {
@@ -78,19 +81,39 @@ public class PickupBot {
         }
     }
 
+    private static final java.util.Set<String> QUEUE_COMMANDS = java.util.Set.of(
+            Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
+            Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
+            Config.CMD_SKEET, Config.CMD_AIM, Config.CMD_PROMOD,
+            Config.CMD_REMOVE, Config.CMD_FORCEADD,
+            Config.CMD_MAP, Config.CMD_ADDVOTE, Config.CMD_BANMAP,
+            Config.CMD_SURRENDER, Config.CMD_RESET, Config.CMD_LOCK, Config.CMD_UNLOCK,
+            Config.CMD_TEAM, Config.CMD_LEAVETEAM, Config.CMD_SCRIM,
+            Config.CMD_REMOVETEAM, Config.CMD_PRIVATE,
+            Config.CMD_CREATE_PRIVATE, Config.CMD_ADD_PLAYER_PRIVATE,
+            Config.CMD_REMOVE_PLAYER_PRIVATE, Config.CMD_LEAVE_PRIVATE
+    );
+
     public void recvMessage(DiscordMessage msg) {
-        commandExecutor.execute(() -> {
-            log.info("RECV #{} {}: {}",
-                    (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
-                    msg.getUser().getUsername(),
-                    msg.getContent()
-            );
+        log.info("RECV #{} {}: {}",
+                (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
+                msg.getUser().getUsername(),
+                msg.getContent()
+        );
 
-            if (msg.getUser().getId().equals(self.getId()) || logic == null) {
-                return;
-            }
+        if (self == null || msg.getUser().getId().equals(self.getId()) || logic == null) {
+            return;
+        }
 
-            String[] data = msg.getContent().split(" ");
+        String[] data = msg.getContent().split(" ");
+
+        // Pick the right executor: queue-mutating commands go through the single-threaded
+        // queueExecutor so they are processed in order; read-only / other commands go
+        // through the multi-threaded commandExecutor so they never block.
+        java.util.concurrent.Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
+
+        executor.execute(() -> {
 
             if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
                 Player p = Player.get(msg.getUser());
@@ -1471,22 +1494,31 @@ public class PickupBot {
         });
     }
 
-    public void recvInteraction(DiscordInteraction interaction) {
-        commandExecutor.execute(() -> {
-            log.info("RECV #{} {}: {}",
-                    (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
-                    interaction.getUser().getUsername(),
-                    interaction.getComponentId()
-            );
-            interaction.deferReply();
+    private static final java.util.Set<String> QUEUE_INTERACTIONS = java.util.Set.of(
+            Config.INT_PICK, Config.INT_LAUNCHAC,
+            Config.INT_TEAMINVITE, Config.INT_TEAMREMOVE,
+            Config.INT_BET
+    );
 
+    public void recvInteraction(DiscordInteraction interaction) {
+        log.info("RECV #{} {}: {}",
+                (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
+                interaction.getUser().getUsername(),
+                interaction.getComponentId()
+        );
+        interaction.deferReply();
+
+        String[] data = interaction.getComponentId().split("_");
+
+        java.util.concurrent.Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
+
+        executor.execute(() -> {
             Player p = Player.get(interaction.getUser());
             if (p == null) {
                 interaction.respondEphemeral(Config.user_not_registered);
                 return;
             }
-
-            String[] data = interaction.getComponentId().split("_");
 
             switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
