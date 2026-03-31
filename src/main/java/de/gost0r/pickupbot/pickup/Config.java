@@ -182,7 +182,7 @@ public class Config {
     //public static final String USE_CMD_REPORTLIST		= "!reportlist";
 
     public static final String USE_CMD_ADDBAN = "!ban <urtauth> <reason> <duration> (duration=1y1M1w1d1h1m1s)";
-    public static final String USE_CMD_REMOVEBAN = "!unban <urtauth>";
+    public static final String USE_CMD_REMOVEBAN = "!unban <urtauth> [urtauth2] [urtauth3] ...";
     public static final String USE_CMD_PARDON = "!pardon </@User|urtauth/> [</@User|urtauth/> ...] \"<reason>\"";
     public static final String USE_CMD_BANINFO = "!baninfo </@User|urtauth/>";
 
