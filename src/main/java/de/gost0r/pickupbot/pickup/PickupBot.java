@@ -27,6 +27,7 @@ public class PickupBot {
     private final DiscordService discordService;
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
+    private final java.util.concurrent.Executor commandExecutor;
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -38,13 +39,15 @@ public class PickupBot {
             FtwglApi ftwglApi,
             DiscordService discordService,
             PermissionService permissionService,
-            PickupRoleCache pickupRoleCache
+            PickupRoleCache pickupRoleCache,
+            @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
         this.discordService = discordService;
         this.permissionService = permissionService;
         this.pickupRoleCache = pickupRoleCache;
+        this.commandExecutor = commandExecutor;
     }
 
     public void init() {
@@ -75,29 +78,29 @@ public class PickupBot {
         }
     }
 
-    @Async("commandExecutor")
     public void recvMessage(DiscordMessage msg) {
-        log.info("RECV #{} {}: {}",
-                (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
-                msg.getUser().getUsername(),
-                msg.getContent()
-        );
+        commandExecutor.execute(() -> {
+            log.info("RECV #{} {}: {}",
+                    (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
+                    msg.getUser().getUsername(),
+                    msg.getContent()
+            );
 
-        if (msg.getUser().getId().equals(self.getId()) || logic == null) {
-            return;
-        }
-
-        String[] data = msg.getContent().split(" ");
-
-        if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
-            Player p = Player.get(msg.getUser());
-
-            if (p != null) {
-                p.afkCheck();
+            if (msg.getUser().getId().equals(self.getId()) || logic == null) {
+                return;
             }
 
-            // Execute code according to cmd
-            switch (data[0].toLowerCase()) {
+            String[] data = msg.getContent().split(" ");
+
+            if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
+                Player p = Player.get(msg.getUser());
+
+                if (p != null) {
+                    p.afkCheck();
+                }
+
+                // Execute code according to cmd
+                switch (data[0].toLowerCase()) {
                 case Config.CMD_ADD:
                     if (data.length > 1) {
                         if (p != null) {
@@ -1465,26 +1468,27 @@ public class PickupBot {
                     break;
             }
         }
+        });
     }
 
-    @Async("commandExecutor")
     public void recvInteraction(DiscordInteraction interaction) {
-        log.info("RECV #{} {}: {}",
-                (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
-                interaction.getUser().getUsername(),
-                interaction.getComponentId()
-        );
-        interaction.deferReply();
+        commandExecutor.execute(() -> {
+            log.info("RECV #{} {}: {}",
+                    (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
+                    interaction.getUser().getUsername(),
+                    interaction.getComponentId()
+            );
+            interaction.deferReply();
 
-        Player p = Player.get(interaction.getUser());
-        if (p == null) {
-            interaction.respondEphemeral(Config.user_not_registered);
-            return;
-        }
+            Player p = Player.get(interaction.getUser());
+            if (p == null) {
+                interaction.respondEphemeral(Config.user_not_registered);
+                return;
+            }
 
-        String[] data = interaction.getComponentId().split("_");
+            String[] data = interaction.getComponentId().split("_");
 
-        switch (data[0].toLowerCase()) {
+            switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
                 logic.cmdPick(interaction, p, Integer.parseInt(data[1]));
                 break;
@@ -1541,7 +1545,8 @@ public class PickupBot {
 //					break;
 //			}
 //			break;
-        }
+            }
+        });
     }
 
     private void handleForceAdd(String[] data, DiscordMessage msg) {

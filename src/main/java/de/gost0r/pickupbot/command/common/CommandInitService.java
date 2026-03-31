@@ -12,11 +12,14 @@ public class CommandInitService {
 
     private final DiscordService discordService;
     private final List<BaseCommand> commandList;
+    private final java.util.concurrent.Executor commandExecutor;
 
     public CommandInitService(DiscordService discordService,
-                              List<BaseCommand> commandList) {
+                              List<BaseCommand> commandList,
+                              @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor) {
         this.discordService = discordService;
         this.commandList = commandList;
+        this.commandExecutor = commandExecutor;
     }
 
     public void initCommands() {
@@ -24,14 +27,15 @@ public class CommandInitService {
         updateAllApplicationCommands();
     }
 
-    @Async("commandExecutor")
     public void handleInteraction(DiscordSlashCommandInteraction interaction) {
-        String command = interaction.getName();
-        commandList
-                .stream()
-                .filter(c -> c.getApplicationCommand().name().equals(command))
-                .findFirst()
-                .ifPresent(c -> c.handle(interaction));
+        commandExecutor.execute(() -> {
+            String command = interaction.getName();
+            commandList
+                    .stream()
+                    .filter(c -> c.getApplicationCommand().name().equals(command))
+                    .findFirst()
+                    .ifPresent(c -> c.handle(interaction));
+        });
     }
 
     private void updateAllApplicationCommands() {
