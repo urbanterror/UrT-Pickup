@@ -406,6 +406,8 @@ class PickupLogicTest {
         ban.forgiven = false;
         p.addBan(ban);
         db.createBan(ban);
+    }
+    
     // ========== Match captain selection ==========
 
     @Test void tsSortPlayers_prefersFtwRatingsForCaptainsWhenEnoughRatingsExist() throws Exception {
