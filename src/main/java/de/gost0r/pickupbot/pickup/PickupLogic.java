@@ -2054,10 +2054,10 @@ public class PickupLogic {
     }
 
     public List<String> getRecentMapsPlayed(Gametype gt) {
-        if (gt.getPrivate()) {
+        if (gt.getPrivate() || gt.getRecentMapExclude() <= 0) {
             return Collections.emptyList();
         }
-        return db.getRecentMapsPlayed(gt.getName(), 2);
+        return db.getRecentMapsPlayed(gt.getName(), gt.getRecentMapExclude());
     }
 
     public boolean isRecentlyPlayed(Gametype gt, GameMap map) {

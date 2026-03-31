@@ -635,7 +635,7 @@ class PickupLogicTest {
         var s = c.createStatement();
         // Tables
         s.executeUpdate("CREATE TABLE IF NOT EXISTS player (userid TEXT,urtauth TEXT,elo INTEGER DEFAULT 1000,elochange INTEGER DEFAULT 0,active TEXT,country TEXT,enforce_ac TEXT DEFAULT 'true',coins INTEGER DEFAULT 1000,eloboost INTEGER DEFAULT 0,mapvote INTEGER DEFAULT 0,mapban INTEGER DEFAULT 0,proctf TEXT DEFAULT 'true',PRIMARY KEY(userid,urtauth))");
-        s.executeUpdate("CREATE TABLE IF NOT EXISTS gametype (gametype TEXT PRIMARY KEY,teamsize INTEGER,active TEXT)");
+        s.executeUpdate("CREATE TABLE IF NOT EXISTS gametype (gametype TEXT PRIMARY KEY,teamsize INTEGER,active TEXT,recent_map_exclude INTEGER DEFAULT 2)");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS map (map TEXT,gametype TEXT,active TEXT,banned_until INTEGER DEFAULT 0,PRIMARY KEY(map,gametype))");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS banlist (ID INTEGER PRIMARY KEY AUTOINCREMENT,player_userid TEXT,player_urtauth TEXT,reason TEXT,start INTEGER,end INTEGER,pardon TEXT,forgiven BOOLEAN)");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS report (ID INTEGER PRIMARY KEY AUTOINCREMENT,player_userid TEXT,player_urtauth TEXT,reporter_userid TEXT,reporter_urtauth TEXT,reason TEXT,match INTEGER)");
@@ -654,8 +654,8 @@ class PickupLogicTest {
         s.executeUpdate("INSERT INTO season VALUES(1,1704067200000,1767225600000)");
 
         // Gametypes
-        s.executeUpdate("INSERT INTO gametype VALUES('TS',5,'true')");
-        s.executeUpdate("INSERT INTO gametype VALUES('CTF',5,'true')");
+        s.executeUpdate("INSERT INTO gametype VALUES('TS',5,'true',2)");
+        s.executeUpdate("INSERT INTO gametype VALUES('CTF',5,'true',2)");
 
         // Maps
         for (var m : new String[]{"ut4_turnpike","ut4_abbey","ut4_casa","ut4_uptown","ut4_algiers"})

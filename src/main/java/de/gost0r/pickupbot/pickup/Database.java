@@ -78,7 +78,8 @@ public class Database {
 
             sql = "CREATE TABLE IF NOT EXISTS gametype ( gametype TEXT PRIMARY KEY,"
                     + "teamsize INTEGER, "
-                    + "active TEXT )";
+                    + "active TEXT,"
+                    + "recent_map_exclude INTEGER DEFAULT 2 )";
             stmt.executeUpdate(sql);
 
             sql = "CREATE TABLE IF NOT EXISTS map ( map TEXT,"
@@ -209,6 +210,14 @@ public class Database {
             stmt.executeUpdate(sql);
 
             stmt.close();
+
+            // Migrations: add columns that may not exist in older databases
+            if (!columnExists("gametype", "recent_map_exclude")) {
+                Statement mig = c.createStatement();
+                mig.executeUpdate("ALTER TABLE gametype ADD COLUMN recent_map_exclude INTEGER DEFAULT 2");
+                mig.close();
+            }
+
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -507,10 +516,10 @@ public class Database {
         List<Gametype> gametypeList = new ArrayList<Gametype>();
         try {
             Statement stmt = c.createStatement();
-            String sql = "SELECT gametype, teamsize, active FROM gametype";
+            String sql = "SELECT gametype, teamsize, active, recent_map_exclude FROM gametype";
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
-                Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")), false);
+                Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")), false, rs.getInt("recent_map_exclude"));
                 log.debug("{} active={}", gametype.getName(), gametype.getActive());
                 gametypeList.add(gametype);
             }
@@ -1741,5 +1750,21 @@ public class Database {
             log.warn("Exception: ", e);
         }
         return worstSpree;
+    }
+
+    private boolean columnExists(String table, String column) {
+        try {
+            ResultSet rs = c.createStatement().executeQuery("PRAGMA table_info(" + table + ")");
+            while (rs.next()) {
+                if (rs.getString("name").equals(column)) {
+                    rs.close();
+                    return true;
+                }
+            }
+            rs.close();
+        } catch (SQLException e) {
+            log.warn("Exception checking column existence: ", e);
+        }
+        return false;
     }
 }
