@@ -49,11 +49,21 @@ public class PickupBot {
     public void init() {
         log.info("Starting bot...");
         this.self = discordService.getMe();
+        log.info("Bot user: {} (ID: {})", self.getUsername(), self.getId());
 
         logic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
         logic.init();
 
-        sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), Config.bot_online);
+        var publicChannels = logic.getChannelByType(PickupChannelType.PUBLIC);
+        log.info("Attempting to send startup message to {} PUBLIC channels", publicChannels.size());
+        for (var channel : publicChannels) {
+            log.info("PUBLIC channel: id={}, name={}", channel.getId(), channel.getName());
+        }
+        try {
+            sendMsg(publicChannels, Config.bot_online);
+        } catch (Exception e) {
+            log.warn("Failed to send startup message to PUBLIC channel(s): {}", e.getMessage());
+        }
         log.info("Bot online");
     }
 
