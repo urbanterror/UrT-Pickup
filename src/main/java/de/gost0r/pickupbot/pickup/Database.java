@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordChannel;
+import de.gost0r.pickupbot.discord.DiscordEmbed;
 import de.gost0r.pickupbot.discord.DiscordRole;
 import de.gost0r.pickupbot.discord.DiscordService;
 import de.gost0r.pickupbot.discord.DiscordUser;
@@ -418,14 +419,15 @@ public class Database {
 
     public int getLastMatchID() {
         try {
-            Statement stmt = c.createStatement();
-            String sql = "SELECT ID FROM match ORDER BY ID DESC";
-            ResultSet rs = stmt.executeQuery(sql);
-            rs.next();
-            int id = rs.getInt("id");
-            stmt.close();
+            String sql = "SELECT MAX(ID) FROM match";
+            PreparedStatement pstmt = getPreparedStatement(sql);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                int id = rs.getInt(1);
+                rs.close();
+                return id;
+            }
             rs.close();
-            return id;
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -630,70 +632,92 @@ public class Database {
     public Match loadMatch(int id) {
         Match match = null;
         try {
-            ResultSet rs, rs1, rs2, rs3;
-            String sql = "SELECT starttime, map, gametype, score_red, score_blue, elo_red, elo_blue, state, server FROM match WHERE ID=?";
+            // Single query with JOINs to fetch match + all player data in one round-trip
+            String sql = "SELECT m.starttime, m.map, m.gametype, m.score_red, m.score_blue, m.elo_red, m.elo_blue, m.state, m.server,"
+                    + " pim.player_userid, pim.player_urtauth, pim.team,"
+                    + " st.ip, st.status,"
+                    + " s1.kills AS s1_kills, s1.deaths AS s1_deaths, s1.assists AS s1_assists, s1.caps AS s1_caps, s1.returns AS s1_returns, s1.fckills AS s1_fckills, s1.stopcaps AS s1_stopcaps, s1.protflag AS s1_protflag,"
+                    + " s2.kills AS s2_kills, s2.deaths AS s2_deaths, s2.assists AS s2_assists, s2.caps AS s2_caps, s2.returns AS s2_returns, s2.fckills AS s2_fckills, s2.stopcaps AS s2_stopcaps, s2.protflag AS s2_protflag"
+                    + " FROM match m"
+                    + " LEFT JOIN player_in_match pim ON pim.matchid = m.ID"
+                    + " LEFT JOIN stats st ON st.pim = pim.ID"
+                    + " LEFT JOIN score s1 ON s1.ID = st.score_1"
+                    + " LEFT JOIN score s2 ON s2.ID = st.score_2"
+                    + " WHERE m.ID=?";
+            // Use a fresh PreparedStatement (not the cache) because the ResultSet is iterated
+            // over multiple rows and concurrent calls would invalidate a cached statement's ResultSet
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setInt(1, id);
-            rs = pstmt.executeQuery();
-            if (rs.next()) {
+            ResultSet rs = pstmt.executeQuery();
 
+            // Use a temporary list to collect all player data first, so we can fetch DiscordUsers concurrently
+            List<PlayerMatchData> matchPlayerData = new ArrayList<>();
+
+            // Match-level fields (read from first row)
+            String matchGametype = null;
+            int matchServer = 0;
+            String matchMap = null;
+            String matchStateStr = null;
+            long matchStarttime = 0;
+            int matchScoreRed = 0, matchScoreBlue = 0;
+            int matchEloRed = 0, matchEloBlue = 0;
+            boolean matchFound = false;
+
+            while (rs.next()) {
+                if (!matchFound) {
+                    matchFound = true;
+                    matchStarttime = rs.getLong("starttime");
+                    matchMap = rs.getString("map");
+                    matchGametype = rs.getString("gametype");
+                    matchScoreRed = rs.getInt("score_red");
+                    matchScoreBlue = rs.getInt("score_blue");
+                    matchEloRed = rs.getInt("elo_red");
+                    matchEloBlue = rs.getInt("elo_blue");
+                    matchStateStr = rs.getString("state");
+                    matchServer = rs.getInt("server");
+                }
+
+                // Player data (may be null if LEFT JOIN found no players)
+                String urtauth = rs.getString("player_urtauth");
+                if (urtauth != null) {
+                    String userid = rs.getString("player_userid");
+                    String team = rs.getString("team");
+                    String ip = rs.getString("ip");
+                    MatchStats.Status status = MatchStats.Status.valueOf(rs.getString("status"));
+
+                    Score[] scores = new Score[2];
+
+                    scores[0] = new Score();
+                    scores[0].score = rs.getInt("s1_kills");
+                    scores[0].deaths = rs.getInt("s1_deaths");
+                    scores[0].assists = rs.getInt("s1_assists");
+                    scores[0].caps = rs.getInt("s1_caps");
+                    scores[0].returns = rs.getInt("s1_returns");
+                    scores[0].fc_kills = rs.getInt("s1_fckills");
+                    scores[0].stop_caps = rs.getInt("s1_stopcaps");
+                    scores[0].protect_flag = rs.getInt("s1_protflag");
+
+                    scores[1] = new Score();
+                    scores[1].score = rs.getInt("s2_kills");
+                    scores[1].deaths = rs.getInt("s2_deaths");
+                    scores[1].assists = rs.getInt("s2_assists");
+                    scores[1].caps = rs.getInt("s2_caps");
+                    scores[1].returns = rs.getInt("s2_returns");
+                    scores[1].fc_kills = rs.getInt("s2_fckills");
+                    scores[1].stop_caps = rs.getInt("s2_stopcaps");
+                    scores[1].protect_flag = rs.getInt("s2_protflag");
+
+                    matchPlayerData.add(new PlayerMatchData(userid, urtauth, team, ip, status, scores));
+                }
+            }
+            rs.close();
+            pstmt.close();
+
+            if (matchFound) {
                 Map<Player, MatchStats> stats = new HashMap<Player, MatchStats>();
                 Map<String, List<Player>> teamList = new HashMap<String, List<Player>>();
                 teamList.put("red", new ArrayList<Player>());
                 teamList.put("blue", new ArrayList<Player>());
-
-                // getting players in match
-                sql = "SELECT ID, player_userid, player_urtauth, team FROM player_in_match WHERE matchid=?";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, id);
-                rs1 = pstmt.executeQuery();
-
-                // Use a temporary list to collect all player data first, so we can fetch DiscordUsers concurrently
-                List<PlayerMatchData> matchPlayerData = new ArrayList<>();
-
-                while (rs1.next()) {
-                    int pidmid = rs1.getInt("ID");
-                    String userid = rs1.getString("player_userid");
-                    String urtauth = rs1.getString("player_urtauth");
-                    String team = rs1.getString("team");
-
-                    // getting stats
-                    sql = "SELECT ip, score_1, score_2, status FROM stats WHERE pim=?";
-                    pstmt = c.prepareStatement(sql);
-                    pstmt.setInt(1, pidmid);
-                    rs2 = pstmt.executeQuery();
-                    rs2.next();
-
-                    int[] scoreid = new int[]{rs2.getInt("score_1"), rs2.getInt("score_2")};
-                    String ip = rs2.getString("ip");
-                    MatchStats.Status status = MatchStats.Status.valueOf(rs2.getString("status"));
-
-                    Score[] scores = new Score[2];
-
-                    // getting score
-                    for (int i = 0; i < 2; ++i) {
-                        sql = "SELECT kills, deaths, assists, caps, returns, fckills, stopcaps, protflag FROM score WHERE ID=? ORDER BY ID DESC";
-                        pstmt = c.prepareStatement(sql);
-                        pstmt.setInt(1, scoreid[i]);
-                        rs3 = pstmt.executeQuery();
-                        rs3.next();
-
-                        scores[i] = new Score();
-                        scores[i].score = rs3.getInt("kills");
-                        scores[i].deaths = rs3.getInt("deaths");
-                        scores[i].assists = rs3.getInt("assists");
-                        scores[i].caps = rs3.getInt("caps");
-                        scores[i].returns = rs3.getInt("returns");
-                        scores[i].fc_kills = rs3.getInt("fckills");
-                        scores[i].stop_caps = rs3.getInt("stopcaps");
-                        scores[i].protect_flag = rs3.getInt("protflag");
-                        rs3.close();
-                    }
-
-                    matchPlayerData.add(new PlayerMatchData(userid, urtauth, team, ip, status, scores));
-                    rs2.close();
-                }
-                rs1.close();
 
                 // Concurrently fetch users from Discord and construct players
                 matchPlayerData.parallelStream().forEach(pmd -> {
@@ -711,15 +735,15 @@ public class Database {
                     }
                 });
 
-                Gametype gametype = logic.getGametypeByString(rs.getString("gametype"));
-                Server server = logic.getServerByID(rs.getInt("server"));
-                GameMap map = logic.getMapByName(rs.getString("map"));
-                MatchState state = MatchState.valueOf(rs.getString("state"));
+                Gametype gametype = logic.getGametypeByString(matchGametype);
+                Server server = logic.getServerByID(matchServer);
+                GameMap map = logic.getMapByName(matchMap);
+                MatchState state = MatchState.valueOf(matchStateStr);
 
-                match = new Match(id, rs.getLong("starttime"),
+                match = new Match(id, matchStarttime,
                         map,
-                        new int[]{rs.getInt("score_red"), rs.getInt("score_blue")},
-                        new int[]{rs.getInt("elo_red"), rs.getInt("elo_blue")},
+                        new int[]{matchScoreRed, matchScoreBlue},
+                        new int[]{matchEloRed, matchEloBlue},
                         teamList,
                         state,
                         gametype,
@@ -728,8 +752,6 @@ public class Database {
                         logic,
                         permissionService);
             }
-            rs.close();
-            pstmt.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -739,12 +761,16 @@ public class Database {
     public Match loadLastMatch() {
         Match match = null;
         try {
-            String sql = "SELECT * FROM match ORDER BY ID DESC LIMIT 1";
+            String sql = "SELECT MAX(ID) FROM match";
             PreparedStatement pstmt = getPreparedStatement(sql);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                match = loadMatch(rs.getInt("ID"));
+                int id = rs.getInt(1);
+                if (id > 0) {
+                    match = loadMatch(id);
+                }
             }
+            rs.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -755,20 +781,184 @@ public class Database {
     public Match loadLastMatchPlayer(Player p) {
         Match match = null;
         try {
-            String sql = "SELECT matchid FROM  player_in_match  WHERE player_urtauth = ? ORDER BY ID DESC LIMIT 1;";
-            PreparedStatement pstmt = c.prepareStatement(sql);
+            String sql = "SELECT pim.matchid FROM player_in_match pim"
+                    + " INNER JOIN match m ON m.ID = pim.matchid"
+                    + " WHERE pim.player_urtauth = ? ORDER BY pim.ID DESC LIMIT 1";
+            PreparedStatement pstmt = getPreparedStatement(sql);
             pstmt.setString(1, p.getUrtauth());
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 match = loadMatch(rs.getInt("matchid"));
             }
             rs.close();
-            pstmt.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
         return match;
 
+    }
+
+    /**
+     * Build a match embed directly from a single SQL query, bypassing Player/Match object
+     * construction entirely. Used by !last where we only need display data.
+     * Returns null if the match ID is invalid.
+     */
+    public DiscordEmbed loadMatchEmbed(int matchId) {
+        try {
+            String sql = "SELECT m.starttime, m.map, m.gametype, m.score_red, m.score_blue, m.state, m.server,"
+                    + " pim.player_urtauth, pim.team,"
+                    + " p.country,"
+                    + " (s1.kills + s2.kills) AS total_kills,"
+                    + " (s1.deaths + s2.deaths) AS total_deaths,"
+                    + " (s1.assists + s2.assists) AS total_assists"
+                    + " FROM match m"
+                    + " LEFT JOIN player_in_match pim ON pim.matchid = m.ID"
+                    + " LEFT JOIN player p ON p.userid = pim.player_userid AND p.urtauth = pim.player_urtauth"
+                    + " LEFT JOIN stats st ON st.pim = pim.ID"
+                    + " LEFT JOIN score s1 ON s1.ID = st.score_1"
+                    + " LEFT JOIN score s2 ON s2.ID = st.score_2"
+                    + " WHERE m.ID=?"
+                    + " ORDER BY total_kills DESC";
+            PreparedStatement pstmt = c.prepareStatement(sql);
+            pstmt.setInt(1, matchId);
+            ResultSet rs = pstmt.executeQuery();
+
+            // Match-level fields from first row
+            boolean matchFound = false;
+            String matchMap = null, matchGametype = null, matchStateStr = null;
+            int matchScoreRed = 0, matchScoreBlue = 0, matchServer = 0;
+            long matchStarttime = 0;
+
+            StringBuilder redPlayers = new StringBuilder();
+            StringBuilder redScores = new StringBuilder();
+            StringBuilder bluePlayers = new StringBuilder();
+            StringBuilder blueScores = new StringBuilder();
+
+            while (rs.next()) {
+                if (!matchFound) {
+                    matchFound = true;
+                    matchStarttime = rs.getLong("starttime");
+                    matchMap = rs.getString("map");
+                    matchGametype = rs.getString("gametype");
+                    matchScoreRed = rs.getInt("score_red");
+                    matchScoreBlue = rs.getInt("score_blue");
+                    matchStateStr = rs.getString("state");
+                    matchServer = rs.getInt("server");
+                }
+
+                String urtauth = rs.getString("player_urtauth");
+                if (urtauth != null) {
+                    String team = rs.getString("team");
+                    String country = rs.getString("country");
+                    if (country == null || country.equalsIgnoreCase("NOT_DEFINED")) {
+                        country = "<:puma:849287183474884628>";
+                    } else {
+                        country = ":flag_" + country.toLowerCase() + ":";
+                    }
+                    String playerRow = country + " \u200b \u200b " + urtauth + "\n";
+                    String scoreRow = rs.getInt("total_kills") + "/" + rs.getInt("total_deaths") + "/" + rs.getInt("total_assists") + "\n";
+
+                    if ("red".equals(team)) {
+                        redPlayers.append(playerRow);
+                        redScores.append(scoreRow);
+                    } else {
+                        bluePlayers.append(playerRow);
+                        blueScores.append(scoreRow);
+                    }
+                }
+            }
+            rs.close();
+            pstmt.close();
+
+            if (!matchFound) return null;
+
+            // Resolve gametype/server/map from in-memory caches
+            Gametype gametype = logic.getGametypeByString(matchGametype);
+            Server server = logic.getServerByID(matchServer);
+            GameMap map = logic.getMapByName(matchMap);
+
+            DiscordEmbed embed = new DiscordEmbed();
+
+            String regionFlag = ":globe_with_meridians:";
+            if (server != null) {
+                regionFlag = server.getRegionFlag(logic.getDynamicServers() || (gametype != null && gametype.getTeamSize() == 0), true);
+            }
+            embed.setTitle(regionFlag + " Match #" + matchId);
+            embed.setColor(7056881);
+
+            if (map != null && gametype != null) {
+                String mapName = "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")";
+                if (gametype.getPrivate()) {
+                    embed.setDescription(":lock: " + mapName);
+                } else {
+                    embed.setDescription(mapName);
+                }
+            }
+
+            if (gametype != null && gametype.getTeamSize() != 0) {
+                embed.addField("<:rush_red:510982162263179275> \u200b \u200b " + matchScoreRed + "\n \u200b", redPlayers.toString(), true);
+                embed.addField("K/D/A\n \u200b", redScores.toString(), true);
+                embed.addField("\u200b", "\u200b", false);
+            }
+
+            embed.addField("<:rush_blue:510067909628788736> \u200b \u200b " + matchScoreBlue + "\n \u200b", bluePlayers.toString(), true);
+            embed.addField("K/D/A\n \u200b", blueScores.toString(), true);
+
+            embed.setTimestamp(matchStarttime);
+            embed.setFooterText(matchStateStr);
+
+            return embed;
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return null;
+    }
+
+    /**
+     * Get the embed for the most recent match. Single query, no Player objects.
+     */
+    public DiscordEmbed loadLastMatchEmbed() {
+        try {
+            String sql = "SELECT MAX(ID) FROM match";
+            PreparedStatement pstmt = getPreparedStatement(sql);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                int id = rs.getInt(1);
+                rs.close();
+                if (id > 0) {
+                    return loadMatchEmbed(id);
+                }
+            } else {
+                rs.close();
+            }
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return null;
+    }
+
+    /**
+     * Get the embed for a player's most recent match. Single query, no Player objects.
+     * Joins against match table to skip orphaned player_in_match rows.
+     */
+    public DiscordEmbed loadLastMatchPlayerEmbed(String urtauth) {
+        try {
+            String sql = "SELECT pim.matchid FROM player_in_match pim"
+                    + " INNER JOIN match m ON m.ID = pim.matchid"
+                    + " WHERE pim.player_urtauth = ? ORDER BY pim.ID DESC LIMIT 1";
+            PreparedStatement pstmt = getPreparedStatement(sql);
+            pstmt.setString(1, urtauth);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                int matchId = rs.getInt("matchid");
+                rs.close();
+                return loadMatchEmbed(matchId);
+            }
+            rs.close();
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return null;
     }
 
     public Player loadPlayer(String urtauth) {

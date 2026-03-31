@@ -1464,9 +1464,9 @@ public class PickupLogic {
                 }
             }
 
-            Match match = db.loadMatch(idx); // TODO: cache?
-            if (match != null) {
-                return new PickupReply(null, match.getMatchEmbed(true));
+            DiscordEmbed embed = db.loadMatchEmbed(idx);
+            if (embed != null) {
+                return new PickupReply(null, embed);
             }
 
         } catch (NumberFormatException ignored) {
@@ -1475,49 +1475,26 @@ public class PickupLogic {
     }
 
     public PickupReply cmdDisplayLastMatch() {
-        // if (!ongoingMatches.isEmpty()){
-        // 	return new PickupReply("Can't display the match when a game is active.");
-        // 	return;
-        // }
-        try {
-            Match match = db.loadLastMatch();
-            if (match != null) {
-                return new PickupReply(null, match.getMatchEmbed(true));
-            }
-
-        } catch (NumberFormatException e) {
-            log.warn("Exception: ", e);
+        DiscordEmbed embed = db.loadLastMatchEmbed();
+        if (embed != null) {
+            return new PickupReply(null, embed);
         }
         return new PickupReply("Match not found.");
     }
 
     public PickupReply cmdDisplayLastMatchPlayer(Player p) {
-        // if (!ongoingMatches.isEmpty()){
-        // 	return new PickupReply("Can't display the match when a game is active.");
-        // 	return;
-        // }
-        try {
-            Match match = db.loadLastMatchPlayer(p);
-            if (match != null) {
-                return new PickupReply(null, match.getMatchEmbed(true));
-            }
-
-        } catch (NumberFormatException e) {
-            log.warn("Exception: ", e);
+        DiscordEmbed embed = db.loadLastMatchPlayerEmbed(p.getUrtauth());
+        if (embed != null) {
+            return new PickupReply(null, embed);
         }
         return new PickupReply("Match not found.");
     }
 
     public void showLastMatchPlayer(DiscordInteraction interaction, Player p) {
-        try {
-            Match match = db.loadLastMatchPlayer(p);
-            if (match != null) {
-                interaction.respondEphemeral(null, match.getMatchEmbed(true));
-                return;
-            }
-
-        } catch (NumberFormatException e) {
-            log.warn("Exception: ", e);
+        DiscordEmbed embed = db.loadLastMatchPlayerEmbed(p.getUrtauth());
+        if (embed != null) {
+            interaction.respondEphemeral(null, embed);
+            return;
         }
         interaction.respondEphemeral("Match not found.");
     }
