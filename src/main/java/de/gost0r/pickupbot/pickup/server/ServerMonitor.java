@@ -365,18 +365,12 @@ public class ServerMonitor implements Runnable {
                 log.info("SWITCHED WELCOME -> WARMUP");
             } else if (rpp.matchready[0] && rpp.matchready[1] && !rpp.warmupphase) {
                 state = ServerState.LIVE;
-                if (match.getGametype().getTeamSize() > 2) {
-                    match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
-                }
                 handleLiveTransition();
                 log.info("SWITCHED WELCOME -> LIVE");
             }
         } else if (state == ServerState.WARMUP) {
             if (rpp.matchready[0] && rpp.matchready[1] && !rpp.warmupphase) {
                 state = ServerState.LIVE;
-                if (match.getGametype().getTeamSize() > 2) {
-                    match.getLogic().setLastMapPlayed(match.getGametype(), match.getMap());
-                }
                 handleLiveTransition();
 //				backupStats.clear();
 //				for (ServerPlayer p : players){
@@ -774,9 +768,6 @@ public class ServerMonitor implements Runnable {
         log.info(sendString);
 
         stop();
-        if (match.getLogic().getLastMapPlayed(match.getGametype()).equals(match.getMap())) {
-            match.getLogic().removeLastMapPlayed(match.getGametype());
-        }
         match.abandon(status, involvedPlayers);
     }
 

@@ -127,6 +127,9 @@ public class Database {
                     + "FOREIGN KEY (gametype) REFERENCES gametype(gametype) )";
             stmt.executeUpdate(sql);
 
+            sql = "CREATE INDEX IF NOT EXISTS idx_match_gametype_state ON match (gametype, state, ID)";
+            stmt.executeUpdate(sql);
+
             sql = "CREATE TABLE IF NOT EXISTS player_in_match ( ID INTEGER PRIMARY KEY AUTOINCREMENT,"
                     + "matchid INTEGER,"
                     + "player_userid TEXT,"
@@ -703,6 +706,27 @@ public class Database {
         }
         return match;
 
+    }
+
+    public List<String> getRecentMapsPlayed(String gametype, int count) {
+        List<String> maps = new ArrayList<>();
+        try {
+            String sql = "SELECT map FROM match WHERE gametype = ? "
+                    + "AND state IN ('Done', 'Surrender', 'Mercy') "
+                    + "ORDER BY ID DESC LIMIT ?";
+            PreparedStatement pstmt = c.prepareStatement(sql);
+            pstmt.setString(1, gametype);
+            pstmt.setInt(2, count);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                maps.add(rs.getString("map"));
+            }
+            rs.close();
+            pstmt.close();
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return maps;
     }
 
     public Player loadPlayer(String urtauth) {
