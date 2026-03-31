@@ -317,7 +317,7 @@ class PickupLogicTest {
         logic.pardonPlayer(interaction, p, "test", admin);
 
         assertTrue(p.isBanned(), "Manual ban should remain");
-        verify(interaction).respondEphemeral(contains("not banned"));
+        verify(interaction).respondEphemeral(contains("!unban"));
         verify(interaction, never()).deleteDeferredReply();
         // Clean up manual ban so it doesn't affect other tests
         p.forgiveBan();

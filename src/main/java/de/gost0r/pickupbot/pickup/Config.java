@@ -311,6 +311,7 @@ public class Config {
     public static final String is_pardonned_admin = ".user. (.urtauth.) has been pardonned by .userAdmin.. Reason: ``.reason.``";
     public static final String is_refunded = ".user. (.urtauth.) has been refunded **.amount.** pugcoins by .userAdmin.. Reason: ``.reason.``";
     public static final String is_notbanned = ".urtauth. is not banned (yet).";
+    public static final String is_notbanned_but_manual = ".urtauth. has no bot ban, but has an active manual ban. Use !unban instead.";
     public static final String not_banned = "No active bans found for .urtauth.";
     public static final String ban_history = "**__Ban history:__** (Past 2 months)";
     public static final String ban_history_item = "<t:.date.:d> .duration. .reason.";

@@ -1078,21 +1078,36 @@ public class PickupBot {
                             }
 
                             if (p != null) {
-                                BanReason reason = null;
-                                for (BanReason banReason : BanReason.values()) {
-                                    if (banReason.name().equals(data[2].toUpperCase())) {
-                                        reason = banReason;
-                                        break;
+                                // Allow reason and duration in either order
+                                String reasonStr = null;
+                                String durationStr = null;
+                                for (int argIdx = 2; argIdx <= 3; argIdx++) {
+                                    boolean isReason = false;
+                                    for (BanReason banReason : BanReason.values()) {
+                                        if (banReason.name().equals(data[argIdx].toUpperCase())) {
+                                            isReason = true;
+                                            break;
+                                        }
+                                    }
+                                    if (isReason) {
+                                        reasonStr = data[argIdx];
+                                    } else {
+                                        durationStr = data[argIdx];
                                     }
                                 }
-                                if (reason != null) {
-                                    long duration = PickupLogic.parseDurationFromString(data[3]);
+
+                                if (reasonStr == null) {
+                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                } else if (durationStr == null) {
+                                    msg.reply(Config.banduration_invalid);
+                                } else {
+                                    BanReason reason = BanReason.valueOf(reasonStr.toUpperCase());
+                                    long duration = PickupLogic.parseDurationFromString(durationStr);
                                     if (duration > 0L) {
                                         logic.banPlayer(p, reason, duration);
                                         // no need to send msg due to banmsg being sent in that case
                                     } else msg.reply(Config.banduration_invalid);
-                                } else
-                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                }
                             } else msg.reply(Config.player_not_found);
                         } else
                             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));

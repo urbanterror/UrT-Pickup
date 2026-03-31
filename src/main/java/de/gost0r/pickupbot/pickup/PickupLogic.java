@@ -1891,7 +1891,12 @@ public class PickupLogic {
     }
 
     public String printPlayerNotBannedInfo(Player player) {
-        String msg = Config.is_notbanned;
+        String msg;
+        if (player.isBanned()) {
+            msg = Config.is_notbanned_but_manual;
+        } else {
+            msg = Config.is_notbanned;
+        }
         msg = msg.replace(".user.", player.getDiscordUser().getMentionString());
         msg = msg.replace(".urtauth.", player.getUrtauth());
         return msg;
