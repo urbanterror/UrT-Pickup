@@ -1,7 +1,6 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordChannel;
-import de.gost0r.pickupbot.discord.DiscordEmbed;
 import de.gost0r.pickupbot.discord.DiscordRole;
 import de.gost0r.pickupbot.discord.DiscordService;
 import de.gost0r.pickupbot.discord.DiscordUser;
@@ -799,11 +798,11 @@ public class Database {
     }
 
     /**
-     * Build a match embed directly from a single SQL query, bypassing Player/Match object
-     * construction entirely. Used by !last where we only need display data.
+     * Load a lightweight match summary from a single SQL query, bypassing full Player/Match
+     * object construction. Used by !last and !match where we only need display data.
      * Returns null if the match ID is invalid.
      */
-    public DiscordEmbed loadMatchEmbed(int matchId) {
+    public MatchSummary loadMatchSummary(int matchId) {
         try {
             String sql = "SELECT m.starttime, m.map, m.gametype, m.score_red, m.score_blue, m.state, m.server,"
                     + " pim.player_urtauth, pim.team,"
@@ -823,91 +822,37 @@ public class Database {
             pstmt.setInt(1, matchId);
             ResultSet rs = pstmt.executeQuery();
 
-            // Match-level fields from first row
-            boolean matchFound = false;
-            String matchMap = null, matchGametype = null, matchStateStr = null;
-            int matchScoreRed = 0, matchScoreBlue = 0, matchServer = 0;
-            long matchStarttime = 0;
-
-            StringBuilder redPlayers = new StringBuilder();
-            StringBuilder redScores = new StringBuilder();
-            StringBuilder bluePlayers = new StringBuilder();
-            StringBuilder blueScores = new StringBuilder();
+            MatchSummary summary = null;
 
             while (rs.next()) {
-                if (!matchFound) {
-                    matchFound = true;
-                    matchStarttime = rs.getLong("starttime");
-                    matchMap = rs.getString("map");
-                    matchGametype = rs.getString("gametype");
-                    matchScoreRed = rs.getInt("score_red");
-                    matchScoreBlue = rs.getInt("score_blue");
-                    matchStateStr = rs.getString("state");
-                    matchServer = rs.getInt("server");
+                if (summary == null) {
+                    summary = new MatchSummary(
+                            matchId,
+                            rs.getLong("starttime"),
+                            rs.getString("map"),
+                            rs.getString("gametype"),
+                            rs.getInt("score_red"),
+                            rs.getInt("score_blue"),
+                            rs.getString("state"),
+                            rs.getInt("server")
+                    );
                 }
 
                 String urtauth = rs.getString("player_urtauth");
                 if (urtauth != null) {
-                    String team = rs.getString("team");
-                    String country = rs.getString("country");
-                    if (country == null || country.equalsIgnoreCase("NOT_DEFINED")) {
-                        country = "<:puma:849287183474884628>";
-                    } else {
-                        country = ":flag_" + country.toLowerCase() + ":";
-                    }
-                    String playerRow = country + " \u200b \u200b " + urtauth + "\n";
-                    String scoreRow = rs.getInt("total_kills") + "/" + rs.getInt("total_deaths") + "/" + rs.getInt("total_assists") + "\n";
-
-                    if ("red".equals(team)) {
-                        redPlayers.append(playerRow);
-                        redScores.append(scoreRow);
-                    } else {
-                        bluePlayers.append(playerRow);
-                        blueScores.append(scoreRow);
-                    }
+                    summary.players.add(new MatchSummary.PlayerLine(
+                            urtauth,
+                            rs.getString("team"),
+                            rs.getString("country"),
+                            rs.getInt("total_kills"),
+                            rs.getInt("total_deaths"),
+                            rs.getInt("total_assists")
+                    ));
                 }
             }
             rs.close();
             pstmt.close();
-
-            if (!matchFound) return null;
-
-            // Resolve gametype/server/map from in-memory caches
-            Gametype gametype = logic.getGametypeByString(matchGametype);
-            Server server = logic.getServerByID(matchServer);
-            GameMap map = logic.getMapByName(matchMap);
-
-            DiscordEmbed embed = new DiscordEmbed();
-
-            String regionFlag = ":globe_with_meridians:";
-            if (server != null) {
-                regionFlag = server.getRegionFlag(logic.getDynamicServers() || (gametype != null && gametype.getTeamSize() == 0), true);
-            }
-            embed.setTitle(regionFlag + " Match #" + matchId);
-            embed.setColor(7056881);
-
-            if (map != null && gametype != null) {
-                String mapName = "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")";
-                if (gametype.getPrivate()) {
-                    embed.setDescription(":lock: " + mapName);
-                } else {
-                    embed.setDescription(mapName);
-                }
-            }
-
-            if (gametype != null && gametype.getTeamSize() != 0) {
-                embed.addField("<:rush_red:510982162263179275> \u200b \u200b " + matchScoreRed + "\n \u200b", redPlayers.toString(), true);
-                embed.addField("K/D/A\n \u200b", redScores.toString(), true);
-                embed.addField("\u200b", "\u200b", false);
-            }
-
-            embed.addField("<:rush_blue:510067909628788736> \u200b \u200b " + matchScoreBlue + "\n \u200b", bluePlayers.toString(), true);
-            embed.addField("K/D/A\n \u200b", blueScores.toString(), true);
-
-            embed.setTimestamp(matchStarttime);
-            embed.setFooterText(matchStateStr);
-
-            return embed;
+            return summary;
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -915,9 +860,9 @@ public class Database {
     }
 
     /**
-     * Get the embed for the most recent match. Single query, no Player objects.
+     * Load the most recent match as a lightweight summary.
      */
-    public DiscordEmbed loadLastMatchEmbed() {
+    public MatchSummary loadLastMatchSummary() {
         try {
             String sql = "SELECT MAX(ID) FROM match";
             PreparedStatement pstmt = getPreparedStatement(sql);
@@ -926,7 +871,7 @@ public class Database {
                 int id = rs.getInt(1);
                 rs.close();
                 if (id > 0) {
-                    return loadMatchEmbed(id);
+                    return loadMatchSummary(id);
                 }
             } else {
                 rs.close();
@@ -938,10 +883,9 @@ public class Database {
     }
 
     /**
-     * Get the embed for a player's most recent match. Single query, no Player objects.
-     * Joins against match table to skip orphaned player_in_match rows.
+     * Load a player's most recent match as a lightweight summary.
      */
-    public DiscordEmbed loadLastMatchPlayerEmbed(String urtauth) {
+    public MatchSummary loadLastMatchPlayerSummary(String urtauth) {
         try {
             String sql = "SELECT pim.matchid FROM player_in_match pim"
                     + " INNER JOIN match m ON m.ID = pim.matchid"
@@ -952,7 +896,7 @@ public class Database {
             if (rs.next()) {
                 int matchId = rs.getInt("matchid");
                 rs.close();
-                return loadMatchEmbed(matchId);
+                return loadMatchSummary(matchId);
             }
             rs.close();
         } catch (SQLException e) {

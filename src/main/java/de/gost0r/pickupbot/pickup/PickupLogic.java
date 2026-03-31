@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class PickupLogic {
@@ -1397,7 +1398,7 @@ public class PickupLogic {
         // Fetch server statuses concurrently to avoid blocking
         String msg = serverList.parallelStream()
             .map(Server::toString)
-            .collect(java.util.stream.Collectors.joining("\n"));
+            .collect(Collectors.joining("\n"));
             
         channel.sendMessage(msg);
     }
@@ -1464,9 +1465,9 @@ public class PickupLogic {
                 }
             }
 
-            DiscordEmbed embed = db.loadMatchEmbed(idx);
-            if (embed != null) {
-                return new PickupReply(null, embed);
+            MatchSummary summary = db.loadMatchSummary(idx);
+            if (summary != null) {
+                return new PickupReply(null, buildMatchEmbed(summary));
             }
 
         } catch (NumberFormatException ignored) {
@@ -1475,28 +1476,91 @@ public class PickupLogic {
     }
 
     public PickupReply cmdDisplayLastMatch() {
-        DiscordEmbed embed = db.loadLastMatchEmbed();
-        if (embed != null) {
-            return new PickupReply(null, embed);
+        MatchSummary summary = db.loadLastMatchSummary();
+        if (summary != null) {
+            return new PickupReply(null, buildMatchEmbed(summary));
         }
         return new PickupReply("Match not found.");
     }
 
     public PickupReply cmdDisplayLastMatchPlayer(Player p) {
-        DiscordEmbed embed = db.loadLastMatchPlayerEmbed(p.getUrtauth());
-        if (embed != null) {
-            return new PickupReply(null, embed);
+        MatchSummary summary = db.loadLastMatchPlayerSummary(p.getUrtauth());
+        if (summary != null) {
+            return new PickupReply(null, buildMatchEmbed(summary));
         }
         return new PickupReply("Match not found.");
     }
 
     public void showLastMatchPlayer(DiscordInteraction interaction, Player p) {
-        DiscordEmbed embed = db.loadLastMatchPlayerEmbed(p.getUrtauth());
-        if (embed != null) {
-            interaction.respondEphemeral(null, embed);
+        MatchSummary summary = db.loadLastMatchPlayerSummary(p.getUrtauth());
+        if (summary != null) {
+            interaction.respondEphemeral(null, buildMatchEmbed(summary));
             return;
         }
         interaction.respondEphemeral("Match not found.");
+    }
+
+    /** Convert a lightweight MatchSummary into a Discord embed for display. */
+    private DiscordEmbed buildMatchEmbed(MatchSummary summary) {
+        Gametype gametype = getGametypeByString(summary.gametype);
+        Server server = getServerByID(summary.serverId);
+        GameMap map = getMapByName(summary.map);
+
+        DiscordEmbed embed = new DiscordEmbed();
+
+        String regionFlag = ":globe_with_meridians:";
+        if (server != null) {
+            regionFlag = server.getRegionFlag(getDynamicServers() || (gametype != null && gametype.getTeamSize() == 0), true);
+        }
+        embed.setTitle(regionFlag + " Match #" + summary.id);
+        embed.setColor(7056881);
+
+        if (map != null && gametype != null) {
+            String mapName = "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")";
+            if (gametype.getPrivate()) {
+                embed.setDescription(":lock: " + mapName);
+            } else {
+                embed.setDescription(mapName);
+            }
+        }
+
+        StringBuilder redPlayers = new StringBuilder();
+        StringBuilder redScores = new StringBuilder();
+        StringBuilder bluePlayers = new StringBuilder();
+        StringBuilder blueScores = new StringBuilder();
+
+        for (MatchSummary.PlayerLine pl : summary.players) {
+            String country;
+            if (pl.country == null || pl.country.equalsIgnoreCase("NOT_DEFINED")) {
+                country = "<:puma:849287183474884628>";
+            } else {
+                country = ":flag_" + pl.country.toLowerCase() + ":";
+            }
+            String playerRow = country + " \u200b \u200b " + pl.urtauth + "\n";
+            String scoreRow = pl.kills + "/" + pl.deaths + "/" + pl.assists + "\n";
+
+            if ("red".equals(pl.team)) {
+                redPlayers.append(playerRow);
+                redScores.append(scoreRow);
+            } else {
+                bluePlayers.append(playerRow);
+                blueScores.append(scoreRow);
+            }
+        }
+
+        if (gametype != null && gametype.getTeamSize() != 0) {
+            embed.addField("<:rush_red:510982162263179275> \u200b \u200b " + summary.scoreRed + "\n \u200b", redPlayers.toString(), true);
+            embed.addField("K/D/A\n \u200b", redScores.toString(), true);
+            embed.addField("\u200b", "\u200b", false);
+        }
+
+        embed.addField("<:rush_blue:510067909628788736> \u200b \u200b " + summary.scoreBlue + "\n \u200b", bluePlayers.toString(), true);
+        embed.addField("K/D/A\n \u200b", blueScores.toString(), true);
+
+        embed.setTimestamp(summary.starttime);
+        embed.setFooterText(summary.state);
+
+        return embed;
     }
 
     public void cmdResetElo() {

@@ -2,24 +2,25 @@ package de.gost0r.pickupbot.command.common;
 
 import de.gost0r.pickupbot.discord.DiscordService;
 import de.gost0r.pickupbot.discord.DiscordSlashCommandInteraction;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.scheduling.annotation.Async;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 @Service
 public class CommandInitService {
 
     private final DiscordService discordService;
     private final List<BaseCommand> commandList;
-    private final java.util.concurrent.Executor commandExecutor;
+    private final Executor queueExecutor;
 
     public CommandInitService(DiscordService discordService,
                               List<BaseCommand> commandList,
-                              @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor) {
+                              @Qualifier("queueExecutor") Executor queueExecutor) {
         this.discordService = discordService;
         this.commandList = commandList;
-        this.commandExecutor = commandExecutor;
+        this.queueExecutor = queueExecutor;
     }
 
     public void initCommands() {
@@ -28,7 +29,7 @@ public class CommandInitService {
     }
 
     public void handleInteraction(DiscordSlashCommandInteraction interaction) {
-        commandExecutor.execute(() -> {
+        queueExecutor.execute(() -> {
             String command = interaction.getName();
             commandList
                     .stream()

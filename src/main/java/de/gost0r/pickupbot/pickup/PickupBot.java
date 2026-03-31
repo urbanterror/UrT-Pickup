@@ -8,14 +8,18 @@ import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.scheduling.annotation.Async;
+
+import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,8 +31,8 @@ public class PickupBot {
     private final DiscordService discordService;
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
-    private final java.util.concurrent.Executor commandExecutor;
-    private final java.util.concurrent.Executor queueExecutor;
+    private final Executor commandExecutor;
+    private final Executor queueExecutor;
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -41,8 +45,8 @@ public class PickupBot {
             DiscordService discordService,
             PermissionService permissionService,
             PickupRoleCache pickupRoleCache,
-            @org.springframework.beans.factory.annotation.Qualifier("commandExecutor") java.util.concurrent.Executor commandExecutor,
-            @org.springframework.beans.factory.annotation.Qualifier("queueExecutor") java.util.concurrent.Executor queueExecutor
+            @Qualifier("commandExecutor") Executor commandExecutor,
+            @Qualifier("queueExecutor") Executor queueExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
@@ -53,7 +57,7 @@ public class PickupBot {
         this.queueExecutor = queueExecutor;
     }
 
-    @jakarta.annotation.PreDestroy
+    @PreDestroy
     public void shutdown() {
         log.info("Shutting down bot...");
         if (logic != null && logic.db != null) {
@@ -90,7 +94,7 @@ public class PickupBot {
         }
     }
 
-    private static final java.util.Set<String> QUEUE_COMMANDS = java.util.Set.of(
+    private static final Set<String> QUEUE_COMMANDS = Set.of(
             Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
             Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
             Config.CMD_SKEET, Config.CMD_AIM, Config.CMD_PROMOD,
@@ -119,7 +123,7 @@ public class PickupBot {
         // Pick the right executor: queue-mutating commands go through the single-threaded
         // queueExecutor so they are processed in order; read-only / other commands go
         // through the multi-threaded commandExecutor so they never block.
-        java.util.concurrent.Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
+        Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
                 ? queueExecutor : commandExecutor;
 
         executor.execute(() -> {
@@ -1503,7 +1507,7 @@ public class PickupBot {
         });
     }
 
-    private static final java.util.Set<String> QUEUE_INTERACTIONS = java.util.Set.of(
+    private static final Set<String> QUEUE_INTERACTIONS = Set.of(
             Config.INT_PICK, Config.INT_LAUNCHAC,
             Config.INT_TEAMINVITE, Config.INT_TEAMREMOVE,
             Config.INT_BET
@@ -1519,7 +1523,7 @@ public class PickupBot {
 
         String[] data = interaction.getComponentId().split("_");
 
-        java.util.concurrent.Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
+        Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
                 ? queueExecutor : commandExecutor;
 
         executor.execute(() -> {
