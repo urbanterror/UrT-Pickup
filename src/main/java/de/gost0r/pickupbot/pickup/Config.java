@@ -319,7 +319,7 @@ public class Config {
     public static final String map_not_unique = "Mapstring not unique.";
     public static final String map_cannot_vote = "You cannot vote right now.";
     public static final String map_specify_gametype = "Please use: **!map <gametype> <map>**.";
-    public static final String map_played_last_game = "This map was played last game, please vote for a different map.";
+    public static final String map_played_last_game = "This map was played recently, please vote for a different map.";
     public static final String map_already_banned = "This map is already banned (Expires <t:.remaining.:R>).";
     public static final String map_banned = "This map is currently banned (Expires <t:.remaining.:R>).";
     public static final String no_additonal_vote = "You currently don't have any additional vote to spend. Buy some by sending ``/buy``.";
