@@ -55,6 +55,7 @@ public class DonateCommand extends BaseCommand {
     @Override
     public void handle(DiscordSlashCommandInteraction interaction) {
         log.debug("Received donate command");
+        interaction.deferReply();
 
         OptionMapping donateUser = interaction.getOptions().stream().filter(o -> o.getName().equals(OPTION_PLAYER)).findFirst().orElse(null);
         OptionMapping amount = interaction.getOptions().stream().filter(o -> o.getName().equals(OPTION_AMOUNT)).findFirst().orElse(null);
