@@ -290,20 +290,18 @@ public class ServerMonitor implements Runnable {
             }
         }
 
-        // save playerscores
+        // save playerscores (statsOffset holds accumulated stats from previous connections before disconnects)
         for (ServerPlayer player : players) {
             try {
                 if (player.player != null && match.isInMatch(player.player) && rpp.players.contains(player)) {
-                    // player.ctfstats.add(backupStats.get(player.auth));
-                    // CTF_Stats backupstats = backupStats.get(player.auth);
-                    match.getStats(player.player).score[half].score = player.ctfstats.score;
-                    match.getStats(player.player).score[half].deaths = player.ctfstats.deaths;
-                    match.getStats(player.player).score[half].assists = player.ctfstats.assists;
-                    match.getStats(player.player).score[half].caps = player.ctfstats.caps;
-                    match.getStats(player.player).score[half].returns = player.ctfstats.returns;
-                    match.getStats(player.player).score[half].fc_kills = player.ctfstats.fc_kills;
-                    match.getStats(player.player).score[half].stop_caps = player.ctfstats.stop_caps;
-                    match.getStats(player.player).score[half].protect_flag = player.ctfstats.protect_flag;
+                    match.getStats(player.player).score[half].score = player.statsOffset.score + player.ctfstats.score;
+                    match.getStats(player.player).score[half].deaths = player.statsOffset.deaths + player.ctfstats.deaths;
+                    match.getStats(player.player).score[half].assists = player.statsOffset.assists + player.ctfstats.assists;
+                    match.getStats(player.player).score[half].caps = player.statsOffset.caps + player.ctfstats.caps;
+                    match.getStats(player.player).score[half].returns = player.statsOffset.returns + player.ctfstats.returns;
+                    match.getStats(player.player).score[half].fc_kills = player.statsOffset.fc_kills + player.ctfstats.fc_kills;
+                    match.getStats(player.player).score[half].stop_caps = player.statsOffset.stop_caps + player.ctfstats.stop_caps;
+                    match.getStats(player.player).score[half].protect_flag = player.statsOffset.protect_flag + player.ctfstats.protect_flag;
                 }
             } catch (NumberFormatException e) {
                 log.warn("Exception: ", e);
@@ -447,6 +445,12 @@ public class ServerMonitor implements Runnable {
             endGame();
         } else {
             firstHalf = false;
+            // Reset statsOffset for all players at halftime so first-half disconnect
+            // offsets don't carry into second-half stats (server resets scores for new half)
+            for (ServerPlayer sp : players) {
+                sp.statsOffset = new CTF_Stats();
+            }
+            log.info("Halftime: reset statsOffset for all players");
         }
     }
 
@@ -494,14 +498,13 @@ public class ServerMonitor implements Runnable {
 
         for (ServerPlayer player : oldPlayers) {
             if (player.state != ServerPlayerState.Disconnected) {
+                // Save current stats into offset before disconnect so they survive a reconnect
+                player.statsOffset.add(player.ctfstats);
                 player.state = ServerPlayerState.Disconnected;
                 player.timeDisconnect = System.currentTimeMillis();
-//				CTF_Stats backup_stats = backupStats.get(player.auth);
-//				if (backup_stats != null){
-//					backup_stats.add(player.ctfstats);
-//					backupStats.put(player.auth, backup_stats);
-//				}
-                log.info("Player {} ({}) disconnected.", player.name, player.auth);
+                log.info("Player {} ({}) disconnected. Stats preserved in offset (score={}, deaths={}, assists={}).",
+                        player.name, player.auth,
+                        player.statsOffset.score, player.statsOffset.deaths, player.statsOffset.assists);
             }
         }
 
