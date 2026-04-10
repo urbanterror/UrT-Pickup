@@ -860,7 +860,7 @@ public class Match implements Runnable {
         server.sendRcon("map " + this.map.name);
         server.sendRcon("g_warmup 10");
 
-        //logic.setLastMapPlayed(gametype, map);
+        // Recently-played map exclusion is now DB-backed (no in-memory tracking needed)
 
         if (gtvServer != null) {
             gtvServer.sendRcon("gtv_connect " + server.getAddress() + "  " + server.password);
@@ -885,7 +885,7 @@ public class Match implements Runnable {
                 mapList.clear();
                 mapList.add(map);
                 currentVotes = mapVotes.get(map);
-            } else if (mapVotes.get(map) == currentVotes && !map.equals(logic.getLastMapPlayed(gametype)) && map.bannedUntil < System.currentTimeMillis()) {
+            } else if (mapVotes.get(map) == currentVotes && !logic.isRecentlyPlayed(gametype, map) && map.bannedUntil < System.currentTimeMillis()) {
                 mapList.add(map);
             }
         }
@@ -897,15 +897,15 @@ public class Match implements Runnable {
         List<GameMap> mostMapVotes = getMostMapVotes();
         StringBuilder msg = new StringBuilder("None");
         for (GameMap map : mapVotes.keySet()) {
-            if (skipNull && mapVotes.get(map) == 0 && !logic.getLastMapPlayed(gametype).name.equals(map.name) && map.bannedUntil < System.currentTimeMillis())
+            if (skipNull && mapVotes.get(map) == 0 && !logic.isRecentlyPlayed(gametype, map) && map.bannedUntil < System.currentTimeMillis())
                 continue;
             if (msg.toString().equals("None")) {
                 msg = new StringBuilder();
             } else {
                 msg.append(" - ");
             }
-            log.info("{} {}", logic.getLastMapPlayed(gametype).name, map.name);
-            if (logic.getLastMapPlayed(gametype).name.equals(map.name)) {
+            log.info("recentMaps={} current={}", logic.getRecentMapsPlayed(gametype), map.name);
+            if (logic.isRecentlyPlayed(gametype, map)) {
                 String mapString = "~~" + map.name + "~~";
                 msg.append(mapString);
             } else if (map.bannedUntil >= System.currentTimeMillis()) {
