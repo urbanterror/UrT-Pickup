@@ -20,11 +20,13 @@ public class ServerPlayer {
     public String auth;
     public Player player = null;
     public CTF_Stats ctfstats;
+    public CTF_Stats statsOffset;
 
     public long timeDisconnect = -1L;
 
     public ServerPlayer() {
         ctfstats = new CTF_Stats();
+        statsOffset = new CTF_Stats();
     }
 
     public void copy(ServerPlayer other) {
