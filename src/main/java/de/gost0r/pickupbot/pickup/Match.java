@@ -1477,6 +1477,11 @@ public class Match implements Runnable {
         embed.addField("Rating | Win%", rating_wdl_string.toString(), true);
         embed.addField("Ping", ping_string.toString(), true);
 
+        String compareUrl = logic.ftwglApi.getComparePageUrl(sortedPlayers);
+        if (compareUrl != null) {
+            embed.addField("\u200b", "[Compare on FTW](" + compareUrl + ")", false);
+        }
+
         return embed;
     }
 

@@ -207,6 +207,29 @@ public class FtwglApi {
         }
     }
 
+    /**
+     * FTW web compare page for these players (scoped to the API key's league). Null if unavailable.
+     */
+    public String getComparePageUrl(List<Player> playerList) {
+        if (playerList == null || playerList.size() < 2) {
+            return null;
+        }
+        CompareUrlRequest request = CompareUrlRequest.builder()
+                .discordIds(playerList.stream()
+                        .map(player -> Long.parseLong(player.getDiscordUser().getId()))
+                        .toList())
+                .build();
+        try {
+            CompareUrlResponse response = sendPostRequest("/compare/url", request, CompareUrlResponse.class).getBody();
+            if (response != null && response.getUrl() != null && !response.getUrl().isBlank()) {
+                return response.getUrl();
+            }
+        } catch (Exception e) {
+            log.warn("Exception: ", e);
+        }
+        return null;
+    }
+
     @Retryable(retryFor = {RetryableHttpException.class})
     private synchronized <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
         log.trace("Creating POST request to: {}", url);
