@@ -49,11 +49,21 @@ public class PickupBot {
     public void init() {
         log.info("Starting bot...");
         this.self = discordService.getMe();
+        log.info("Bot user: {} (ID: {})", self.getUsername(), self.getId());
 
         logic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
         logic.init();
 
-        sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), Config.bot_online);
+        var publicChannels = logic.getChannelByType(PickupChannelType.PUBLIC);
+        log.info("Attempting to send startup message to {} PUBLIC channels", publicChannels.size());
+        for (var channel : publicChannels) {
+            log.info("PUBLIC channel: id={}, name={}", channel.getId(), channel.getName());
+        }
+        try {
+            sendMsg(publicChannels, Config.bot_online);
+        } catch (Exception e) {
+            log.warn("Failed to send startup message to PUBLIC channel(s): {}", e.getMessage());
+        }
         log.info("Bot online");
     }
 
@@ -244,36 +254,7 @@ public class PickupBot {
                     break;
 
                 case Config.CMD_REMOVE:
-                    Player player = p;
-                    int startindex = 1;
-                    if (permissionService.hasAdminRights(msg.getUser()) && data.length > 1) {
-                        DiscordUser u = discordService.getUserFromMention(data[1]);
-                        if (u != null) {
-                            player = Player.get(u);
-                            if (data.length > 2) {
-                                startindex = 2;
-                            } else {
-                                startindex = -1;
-                            }
-                        }
-                    }
-
-                    List<Gametype> gametypes = new ArrayList<Gametype>();
-                    if (data.length == 1 || startindex == -1) {
-                        gametypes = null;
-                    } else {
-                        String[] modes = Arrays.copyOfRange(data, startindex, data.length);
-                        for (String mode : modes) {
-                            Gametype gt = logic.getGametypeByString(mode);
-                            if (gt != null) {
-                                gametypes.add(gt);
-                            }
-                        }
-                    }
-                    if (player != null) {
-                        logic.cmdRemovePlayer(player, gametypes).replyTo(msg);
-                    }
-
+                    handleRemove(p, permissionService.hasAdminRights(msg.getUser()), data, msg);
                     break;
 
                 case Config.CMD_FORCEADD:
@@ -281,43 +262,7 @@ public class PickupBot {
                         msg.reply(Config.player_not_admin);
                         return;
                     }
-                    if (data.length >= 3) {
-                        for (int i = 2; i < data.length; i++) {
-                            if (data[i].trim().length() == 0) {
-                                continue;
-                            }
-                            DiscordUser u = discordService.getUserFromMention(data[i]);
-                            Player playerToAdd = null;
-                            if (u != null) {
-                                playerToAdd = Player.get(u);
-                            } else {
-                                playerToAdd = Player.get(data[i]);
-                            }
-                            if (playerToAdd != null) {
-                                gametypes = new ArrayList<Gametype>();
-                                String[] modes = Arrays.copyOfRange(data, 1, data.length);
-                                for (String mode : modes) {
-                                    Gametype gt = logic.getGametypeByString(mode);
-                                    if (gt != null) {
-                                        gametypes.add(gt);
-                                    }
-                                }
-                                if (gametypes.size() > 0) {
-                                    for (Team activeTeam : logic.getActiveTeams()) {
-                                        if (activeTeam.isInTeam(playerToAdd)) {
-                                            logic.cmdAddTeam(playerToAdd, gametypes.get(0), true).replyTo(msg);
-                                            return;
-                                        }
-                                    }
-                                    logic.cmdAddPlayer(playerToAdd, gametypes, true).forEach(m -> m.replyTo(msg));
-                                } else {
-                                    msg.reply(Config.no_gt_found);
-                                }
-                            } else
-                                msg.reply(Config.other_user_not_registered.replace(".user.", data[i]));
-                        }
-                    } else
-                        msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_FORCEADD));
+                    handleForceAdd(data, msg);
                     break;
 
                 case Config.CMD_MAPS:
@@ -386,30 +331,19 @@ public class PickupBot {
 
                 case Config.CMD_RESET:
                     if (permissionService.hasAdminRights(msg.getUser())) {
-                        if (data.length == 1) {
-                            logic.cmdReset("all");
-                        } else if (data.length == 2) {
-                            logic.cmdReset(data[1]);
-                        } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_RESET));
+                        handleReset(data, msg);
                     }
                     break;
 
                 case Config.CMD_LOCK:
                     if (permissionService.hasAdminRights(msg.getUser())) {
-                        if (data.length == 1) {
-                            logic.cmdLock();
-                        } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_LOCK));
+                        handleLock(data, msg);
                     }
                     break;
 
                 case Config.CMD_UNLOCK:
                     if (permissionService.hasAdminRights(msg.getUser())) {
-                        if (data.length == 1) {
-                            logic.cmdUnlock();
-                        } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_UNLOCK));
+                        handleUnlock(data, msg);
                     }
                     break;
 
@@ -587,24 +521,7 @@ public class PickupBot {
                     break;
 
                 case Config.CMD_BANINFO:
-                    if (p != null) {
-                        if (data.length == 1) {
-                            msg.reply(logic.printBanInfo(p));
-                        } else if (data.length == 2) {
-                            Player pOther;
-                            DiscordUser u = discordService.getUserFromMention(data[1]);
-                            if (u != null) {
-                                pOther = Player.get(u);
-                            } else {
-                                pOther = Player.get(data[1].toLowerCase());
-                            }
-
-                            if (pOther != null) {
-                                msg.reply(logic.printBanInfo(pOther));
-                            } else msg.reply(Config.player_not_found);
-                        } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_BANINFO));
-                    } else msg.reply(Config.user_not_registered);
+                    handleBanInfo(p, data, msg);
                     break;
 
                 case Config.CMD_TEAM:
@@ -1078,41 +995,96 @@ public class PickupBot {
                             }
 
                             if (p != null) {
-                                BanReason reason = null;
-                                for (BanReason banReason : BanReason.values()) {
-                                    if (banReason.name().equals(data[2].toUpperCase())) {
-                                        reason = banReason;
-                                        break;
+                                // Allow reason and duration in either order
+                                String reasonStr = null;
+                                String durationStr = null;
+                                for (int argIdx = 2; argIdx <= 3; argIdx++) {
+                                    boolean isReason = false;
+                                    for (BanReason banReason : BanReason.values()) {
+                                        if (banReason.name().equals(data[argIdx].toUpperCase())) {
+                                            isReason = true;
+                                            break;
+                                        }
+                                    }
+                                    if (isReason) {
+                                        reasonStr = data[argIdx];
+                                    } else {
+                                        durationStr = data[argIdx];
                                     }
                                 }
-                                if (reason != null) {
-                                    long duration = PickupLogic.parseDurationFromString(data[3]);
+
+                                if (reasonStr == null) {
+                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                } else if (durationStr == null) {
+                                    msg.reply(Config.banduration_invalid);
+                                } else {
+                                    BanReason reason = BanReason.valueOf(reasonStr.toUpperCase());
+                                    long duration = PickupLogic.parseDurationFromString(durationStr);
                                     if (duration > 0L) {
                                         logic.banPlayer(p, reason, duration);
                                         // no need to send msg due to banmsg being sent in that case
                                     } else msg.reply(Config.banduration_invalid);
-                                } else
-                                    msg.reply(Config.banreason_not_found.replace(".banreasons.", Arrays.toString(BanReason.values())));
+                                }
                             } else msg.reply(Config.player_not_found);
                         } else
                             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));
                         break;
 
                     case Config.CMD_REMOVEBAN:
-                        if (data.length == 2) {
-                            Player p;
-                            DiscordUser u = discordService.getUserFromMention(data[1]);
-                            if (u != null) {
-                                p = Player.get(u);
-                            } else {
-                                p = Player.get(data[1].toLowerCase());
-                            }
+                        if (data.length >= 2) {
+                            for (int i = 1; i < data.length; i++) {
+                                Player p;
+                                DiscordUser u = discordService.getUserFromMention(data[i]);
+                                if (u != null) {
+                                    p = Player.get(u);
+                                } else {
+                                    p = Player.get(data[i].toLowerCase());
+                                }
 
-                            if (p != null) {
-                                logic.UnbanPlayer(p);
-                            } else msg.reply(Config.player_not_found);
+                                if (p != null) {
+                                    logic.UnbanPlayer(p);
+                                } else msg.reply(Config.player_not_found);
+                            }
                         } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_ADDBAN));
+                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
+                        break;
+
+                    case Config.CMD_PARDON:
+                        // !pardon <player1> [player2...] "reason"
+                        // Extract quoted reason from raw message content
+                        Matcher pardonMatcher = Pattern.compile("\"([^\"]+)\"").matcher(msg.getContent());
+                        if (pardonMatcher.find()) {
+                            String reason = pardonMatcher.group(1);
+                            // Get everything before the quote as player args
+                            String beforeQuote = msg.getContent().substring(0, pardonMatcher.start()).trim();
+                            String[] pardonArgs = beforeQuote.split("\\s+");
+                            // pardonArgs[0] is "!pardon", rest are players
+                            if (pardonArgs.length >= 2) {
+                                Player admin = Player.get(msg.getUser());
+                                if (admin == null) {
+                                    msg.reply("You are not registered");
+                                    break;
+                                }
+                                for (int i = 1; i < pardonArgs.length; i++) {
+                                    Player p;
+                                    DiscordUser u = discordService.getUserFromMention(pardonArgs[i]);
+                                    if (u != null) {
+                                        p = Player.get(u);
+                                    } else {
+                                        p = Player.get(pardonArgs[i].toLowerCase());
+                                    }
+                                    if (p != null) {
+                                        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, reason, admin);
+                                    } else {
+                                        msg.reply(Config.player_not_found + " (" + pardonArgs[i] + ")");
+                                    }
+                                }
+                            } else {
+                                msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                            }
+                        } else {
+                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_PARDON));
+                        }
                         break;
 
                     case Config.CMD_COUNTRY:
@@ -1146,6 +1118,30 @@ public class PickupBot {
                     case Config.CMD_DISABLEDYNSERVER:
                         logic.cmdDisableDynamicServer();
                         msg.reply(Config.admin_cmd_successful + msg.getContent());
+                        break;
+
+                    case Config.CMD_FORCEADD:
+                        handleForceAdd(data, msg);
+                        break;
+
+                    case Config.CMD_RESET:
+                        handleReset(data, msg);
+                        break;
+
+                    case Config.CMD_LOCK:
+                        handleLock(data, msg);
+                        break;
+
+                    case Config.CMD_UNLOCK:
+                        handleUnlock(data, msg);
+                        break;
+
+                    case Config.CMD_REMOVE:
+                        handleRemove(null, true, data, msg);
+                        break;
+
+                    case Config.CMD_BANINFO:
+                        handleBanInfo(null, data, msg);
                         break;
                 }
             }
@@ -1227,6 +1223,9 @@ public class PickupBot {
                                 break;
                             case Config.CMD_REMOVEBAN:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_REMOVEBAN));
+                                break;
+                            case Config.CMD_PARDON:
+                                msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_PARDON));
                                 break;
                             case Config.CMD_BANINFO:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_BANINFO));
@@ -1539,6 +1538,128 @@ public class PickupBot {
 //					break;
 //			}
 //			break;
+        }
+    }
+
+    private void handleForceAdd(String[] data, DiscordMessage msg) {
+        if (data.length >= 3) {
+            for (int i = 2; i < data.length; i++) {
+                if (data[i].trim().length() == 0) {
+                    continue;
+                }
+                DiscordUser u = discordService.getUserFromMention(data[i]);
+                Player playerToAdd = null;
+                if (u != null) {
+                    playerToAdd = Player.get(u);
+                } else {
+                    playerToAdd = Player.get(data[i]);
+                }
+                if (playerToAdd != null) {
+                    List<Gametype> gametypes = new ArrayList<Gametype>();
+                    String[] modes = Arrays.copyOfRange(data, 1, data.length);
+                    for (String mode : modes) {
+                        Gametype gt = logic.getGametypeByString(mode);
+                        if (gt != null) {
+                            gametypes.add(gt);
+                        }
+                    }
+                    if (gametypes.size() > 0) {
+                        for (Team activeTeam : logic.getActiveTeams()) {
+                            if (activeTeam.isInTeam(playerToAdd)) {
+                                logic.cmdAddTeam(playerToAdd, gametypes.get(0), true).replyTo(msg);
+                                return;
+                            }
+                        }
+                        logic.cmdAddPlayer(playerToAdd, gametypes, true).forEach(m -> m.replyTo(msg));
+                    } else {
+                        msg.reply(Config.no_gt_found);
+                    }
+                } else
+                    msg.reply(Config.other_user_not_registered.replace(".user.", data[i]));
+            }
+        } else
+            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_FORCEADD));
+    }
+
+    private void handleReset(String[] data, DiscordMessage msg) {
+        if (data.length == 1) {
+            logic.cmdReset("all");
+        } else if (data.length == 2) {
+            logic.cmdReset(data[1]);
+        } else
+            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_RESET));
+    }
+
+    private void handleLock(String[] data, DiscordMessage msg) {
+        if (data.length == 1) {
+            logic.cmdLock();
+        } else
+            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_LOCK));
+    }
+
+    private void handleUnlock(String[] data, DiscordMessage msg) {
+        if (data.length == 1) {
+            logic.cmdUnlock();
+        } else
+            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_UNLOCK));
+    }
+
+    private void handleBanInfo(Player senderPlayer, String[] data, DiscordMessage msg) {
+        if (data.length == 1) {
+            if (senderPlayer != null) {
+                msg.reply(logic.printBanInfo(senderPlayer));
+            } else {
+                msg.reply(Config.user_not_registered);
+            }
+        } else if (data.length == 2) {
+            if (senderPlayer == null && data[1] == null) {
+                msg.reply(Config.user_not_registered);
+                return;
+            }
+            Player pOther;
+            DiscordUser u = discordService.getUserFromMention(data[1]);
+            if (u != null) {
+                pOther = Player.get(u);
+            } else {
+                pOther = Player.get(data[1].toLowerCase());
+            }
+
+            if (pOther != null) {
+                msg.reply(logic.printBanInfo(pOther));
+            } else msg.reply(Config.player_not_found);
+        } else
+            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_BANINFO));
+    }
+
+    private void handleRemove(Player senderPlayer, boolean isAdmin, String[] data, DiscordMessage msg) {
+        Player player = senderPlayer;
+        int startindex = 1;
+        if (isAdmin && data.length > 1) {
+            DiscordUser u = discordService.getUserFromMention(data[1]);
+            if (u != null) {
+                player = Player.get(u);
+                if (data.length > 2) {
+                    startindex = 2;
+                } else {
+                    startindex = -1;
+                }
+            }
+        }
+
+        List<Gametype> gametypes = new ArrayList<Gametype>();
+        if (data.length == 1 || startindex == -1) {
+            gametypes = null;
+        } else {
+            String[] modes = Arrays.copyOfRange(data, startindex, data.length);
+            for (String mode : modes) {
+                Gametype gt = logic.getGametypeByString(mode);
+                if (gt != null) {
+                    gametypes.add(gt);
+                }
+            }
+        }
+        if (player != null) {
+            logic.cmdRemovePlayer(player, gametypes).replyTo(msg);
         }
     }
 

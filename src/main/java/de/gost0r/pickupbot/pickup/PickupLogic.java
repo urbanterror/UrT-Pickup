@@ -15,6 +15,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Consumer;
 
 @Slf4j
 public class PickupLogic {
@@ -46,7 +47,6 @@ public class PickupLogic {
     private boolean dynamicServers;
 
     private Map<BanReason, String[]> banDuration;
-    private Map<Gametype, GameMap> lastMapPlayed;
 
     public Season currentSeason;
 
@@ -80,11 +80,9 @@ public class PickupLogic {
         awaitingServer = new LinkedList<Match>();
         curMatch = new HashMap<Gametype, Match>();
         teamsQueued = new HashMap<Team, Gametype>();
-        lastMapPlayed = new HashMap<Gametype, GameMap>();
         for (Gametype gt : db.loadGametypes()) {
             if (gt.getActive()) {
                 curMatch.put(gt, null);
-                lastMapPlayed.put(getGametypeByString(gt.getName()), new GameMap("null"));
             }
         }
         mapList = db.loadMaps(); // needs current gamemode list
@@ -1022,7 +1020,7 @@ public class PickupLogic {
                 if (counter == 0) {
                     return new PickupReply(Config.map_not_found);
                 }
-                if (!gametype.getPrivate() && lastMapPlayed.get(gametype).name.equals(map.name)) {
+                if (!gametype.getPrivate() && isRecentlyPlayed(gametype, map)) {
                     return new PickupReply(Config.map_played_last_game);
                 }
                 if (map.bannedUntil >= System.currentTimeMillis()) {
@@ -1791,9 +1789,20 @@ public class PickupLogic {
     }
 
     public void pardonPlayer(DiscordSlashCommandInteraction command, Player pPardon, String reason, Player pAdmin) {
+        pardonPlayer(pPardon, reason, pAdmin, () -> command.deleteDeferredReply(),
+                notBannedMsg -> command.respondEphemeral(notBannedMsg));
+    }
+
+    public void pardonPlayer(List<DiscordChannel> replyChannels, Player pPardon, String reason, Player pAdmin) {
+        pardonPlayer(pPardon, reason, pAdmin, () -> {},
+                notBannedMsg -> bot.sendMsg(replyChannels, notBannedMsg));
+    }
+
+    private void pardonPlayer(Player pPardon, String reason, Player pAdmin,
+                               Runnable onSuccess, Consumer<String> onNotBanned) {
 
         if (pPardon.isBannedByBot()) {
-            command.deleteDeferredReply();
+            onSuccess.run();
 
             pPardon.forgiveBotBan();
 
@@ -1811,7 +1820,7 @@ public class PickupLogic {
             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), msg);
         } else {
             // Player is not banned
-            command.respondEphemeral(printPlayerNotBannedInfo(pPardon));
+            onNotBanned.accept(printPlayerNotBannedInfo(pPardon));
         }
     }
 
@@ -1879,7 +1888,12 @@ public class PickupLogic {
     }
 
     public String printPlayerNotBannedInfo(Player player) {
-        String msg = Config.is_notbanned;
+        String msg;
+        if (player.isBanned()) {
+            msg = Config.is_notbanned_but_manual;
+        } else {
+            msg = Config.is_notbanned;
+        }
         msg = msg.replace(".user.", player.getDiscordUser().getMentionString());
         msg = msg.replace(".urtauth.", player.getUrtauth());
         return msg;
@@ -2039,21 +2053,15 @@ public class PickupLogic {
         return null;
     }
 
-    public void setLastMapPlayed(Gametype gt, GameMap map) {
-        lastMapPlayed.remove(gt);
-        lastMapPlayed.put(gt, map);
-    }
-
-    public void removeLastMapPlayed(Gametype gt) {
-        lastMapPlayed.remove(gt);
-        lastMapPlayed.put(gt, new GameMap("null"));
-    }
-
-    public GameMap getLastMapPlayed(Gametype gt) {
-        if (gt.getPrivate()) {
-            return new GameMap("null");
+    public List<String> getRecentMapsPlayed(Gametype gt) {
+        if (gt.getPrivate() || gt.getRecentMapExclude() <= 0) {
+            return Collections.emptyList();
         }
-        return lastMapPlayed.get(gt);
+        return db.getRecentMapsPlayed(gt.getName(), gt.getRecentMapExclude());
+    }
+
+    public boolean isRecentlyPlayed(Gametype gt, GameMap map) {
+        return getRecentMapsPlayed(gt).contains(map.name);
     }
 
     public Server setupGTV() {

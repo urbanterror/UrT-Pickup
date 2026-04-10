@@ -93,6 +93,8 @@ class PickupLogicTest {
         // Clear all queues between tests so they don't bleed
         logic.cmdReset("cur");
         logic.cmdUnlock();
+        // Remove any test match records so recently-played state doesn't bleed between tests
+        cleanupTestMatches();
     }
 
     // ========== !status ==========
@@ -279,6 +281,207 @@ class PickupLogicTest {
         assertEquals(Config.bets_insufficient, r.getMessage());
     }
 
+    // ========== pardonPlayer (slash command) ==========
+
+    @Test void pardon_slashCommand_bannedByBot_pardons() {
+        var p = players.get("alpha");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        assertTrue(p.isBannedByBot(), "Player should be banned by bot before pardon");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("bravo");
+        logic.pardonPlayer(interaction, p, "forgiven", admin);
+
+        assertFalse(p.isBannedByBot(), "Player should no longer be banned by bot after pardon");
+        verify(interaction).deleteDeferredReply();
+        verify(interaction, never()).respondEphemeral(anyString());
+    }
+
+    @Test void pardon_slashCommand_notBanned_respondsEphemeral() {
+        var p = players.get("bravo");
+        assertFalse(p.isBannedByBot(), "Player should not be banned");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("charlie");
+        logic.pardonPlayer(interaction, p, "test", admin);
+
+        verify(interaction).respondEphemeral(contains("not banned"));
+        verify(interaction, never()).deleteDeferredReply();
+    }
+
+    @Test void pardon_slashCommand_manualBan_notPardoned() {
+        var p = players.get("charlie");
+        addBotBan(p, PlayerBan.BanReason.INSULT);
+        assertTrue(p.isBanned(), "Player should be banned");
+        assertFalse(p.isBannedByBot(), "INSULT ban is not a bot ban");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("delta");
+        logic.pardonPlayer(interaction, p, "test", admin);
+
+        assertTrue(p.isBanned(), "Manual ban should remain");
+        verify(interaction).respondEphemeral(contains("!unban"));
+        verify(interaction, never()).deleteDeferredReply();
+        // Clean up manual ban so it doesn't affect other tests
+        p.forgiveBan();
+    }
+
+    @Test void pardon_slashCommand_ragequitBan_pardons() {
+        var p = players.get("delta");
+        addBotBan(p, PlayerBan.BanReason.RAGEQUIT);
+        assertTrue(p.isBannedByBot(), "RAGEQUIT should count as bot ban");
+
+        var interaction = mock(DiscordSlashCommandInteraction.class);
+        var admin = players.get("echo");
+        logic.pardonPlayer(interaction, p, "cool down", admin);
+
+        assertFalse(p.isBannedByBot(), "RAGEQUIT ban should be pardoned");
+        verify(interaction).deleteDeferredReply();
+    }
+
+    // ========== pardonPlayer (text command / channel) ==========
+
+    @Test void pardon_channel_bannedByBot_pardons() {
+        var p = players.get("echo");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        assertTrue(p.isBannedByBot(), "Player should be banned by bot");
+
+        var admin = players.get("foxtrot");
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "text pardon", admin);
+
+        assertFalse(p.isBannedByBot(), "Player should be pardoned via text command");
+    }
+
+    @Test void pardon_channel_notBanned_sendsMessage() {
+        var p = players.get("foxtrot");
+        assertFalse(p.isBannedByBot(), "Player should not be banned");
+
+        var admin = players.get("alpha");
+        // Should not throw; sends "not banned" to admin channel
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "test", admin);
+
+        assertFalse(p.isBannedByBot(), "Player state unchanged");
+    }
+
+    @Test void pardon_channel_multiplePlayers_pardonsAll() {
+        var p1 = players.get("hotel");
+        var p2 = players.get("india");
+        addBotBan(p1, PlayerBan.BanReason.NOSHOW);
+        addBotBan(p2, PlayerBan.BanReason.RAGEQUIT);
+        assertTrue(p1.isBannedByBot(), "p1 should be banned");
+        assertTrue(p2.isBannedByBot(), "p2 should be banned");
+
+        var admin = players.get("juliet");
+        var channels = logic.getChannelByType(PickupChannelType.ADMIN);
+        logic.pardonPlayer(channels, p1, "batch pardon", admin);
+        logic.pardonPlayer(channels, p2, "batch pardon", admin);
+
+        assertFalse(p1.isBannedByBot(), "p1 should be pardoned");
+        assertFalse(p2.isBannedByBot(), "p2 should be pardoned");
+    }
+
+    @Test void pardon_channel_mixedBans_onlyBotBanPardoned() {
+        var p = players.get("juliet");
+        addBotBan(p, PlayerBan.BanReason.NOSHOW);
+        addBotBan(p, PlayerBan.BanReason.INSULT);
+        assertTrue(p.isBannedByBot(), "Should have bot ban");
+        assertTrue(p.isBanned(), "Should also have manual ban");
+
+        var admin = players.get("alpha");
+        logic.pardonPlayer(logic.getChannelByType(PickupChannelType.ADMIN), p, "partial pardon", admin);
+
+        assertFalse(p.isBannedByBot(), "Bot ban should be pardoned");
+        assertTrue(p.isBanned(), "Manual INSULT ban should remain");
+        // Clean up manual ban
+        p.forgiveBan();
+    }
+
+    // ========== pardon helpers ==========
+
+    /** Creates and persists an active ban for the given player. */
+    static void addBotBan(Player p, PlayerBan.BanReason reason) {
+        var ban = new PlayerBan();
+        ban.player = p;
+        ban.startTime = System.currentTimeMillis() - 1000;
+        ban.endTime = System.currentTimeMillis() + 3_600_000; // 1 hour from now
+        ban.reason = reason;
+        ban.forgiven = false;
+        p.addBan(ban);
+        db.createBan(ban);
+    }
+
+    // ========== Recent maps (DB-backed) ==========
+
+    @Test void recentMapsPlayed_returnsTwoMostRecentCompletedMaps() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("TS", "ut4_abbey", "Done");
+        insertCompletedMatch("TS", "ut4_casa", "Done");
+
+        var recent = logic.getRecentMapsPlayed(gt("TS"));
+        assertEquals(2, recent.size(), "Should return exactly 2 recent maps");
+        assertEquals("ut4_casa", recent.get(0), "Most recent map should be first");
+        assertEquals("ut4_abbey", recent.get(1), "Second most recent map should be second");
+        assertFalse(recent.contains("ut4_turnpike"), "Oldest map should fall out of the 2-map window");
+    }
+
+    @Test void recentMapsPlayed_excludesAbandonedMatches() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("TS", "ut4_abbey", "Abandon");
+
+        var recent = logic.getRecentMapsPlayed(gt("TS"));
+        assertEquals(1, recent.size(), "Abandoned match should not count");
+        assertEquals("ut4_turnpike", recent.get(0));
+    }
+
+    @Test void recentMapsPlayed_includesSurrenderAndMercy() {
+        insertCompletedMatch("TS", "ut4_uptown", "Surrender");
+        insertCompletedMatch("TS", "ut4_algiers", "Mercy");
+
+        var recent = logic.getRecentMapsPlayed(gt("TS"));
+        assertTrue(recent.contains("ut4_uptown"), "Surrendered match should count");
+        assertTrue(recent.contains("ut4_algiers"), "Mercy match should count");
+    }
+
+    @Test void mapVote_rejectsRecentlyPlayedMap() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        var alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("TS"), false);
+
+        var reply = logic.cmdMapVote(alpha, gt("TS"), "turnpike", 1);
+        assertEquals(Config.map_played_last_game, reply.getMessage());
+    }
+
+    @Test void mapVote_allowsMapAfterTwoNewerMaps() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("TS", "ut4_abbey", "Done");
+        insertCompletedMatch("TS", "ut4_algiers", "Done");
+        var alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("TS"), false);
+
+        var reply = logic.cmdMapVote(alpha, gt("TS"), "turnpike", 1);
+        assertNotEquals(Config.map_played_last_game, reply.getMessage(),
+                "Turnpike should be votable after 2 newer completed maps");
+    }
+
+    @Test void mapVote_rejectsMapStillInWindow() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("TS", "ut4_abbey", "Done");
+        var alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("TS"), false);
+
+        var reply = logic.cmdMapVote(alpha, gt("TS"), "turnpike", 1);
+        assertEquals(Config.map_played_last_game, reply.getMessage(),
+                "Turnpike should still be blocked with only 1 newer map");
+    }
+
+    @Test void recentMapsPlayed_separatePerGametype() {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("CTF", "ut4_riyadh", "Done");
+
+        assertTrue(logic.isRecentlyPlayed(gt("TS"), logic.getMapByName("ut4_turnpike")));
+        assertFalse(logic.isRecentlyPlayed(gt("CTF"), logic.getMapByName("ut4_turnpike")),
+                "TS map should not affect CTF recently-played list");
+    }
     // ========== Match captain selection ==========
 
     @Test void tsSortPlayers_prefersFtwRatingsForCaptainsWhenEnoughRatingsExist() throws Exception {
@@ -345,6 +548,37 @@ class PickupLogicTest {
 
     static Gametype gt(String name) { return logic.getGametypeByString(name); }
 
+    /** Inserts a minimal match record directly into the DB for testing recently-played maps. */
+    static void insertCompletedMatch(String gametype, String map, String state) {
+        try {
+            Field cField = Database.class.getDeclaredField("c");
+            cField.setAccessible(true);
+            Connection c = (Connection) cField.get(db);
+            PreparedStatement pstmt = c.prepareStatement(
+                    "INSERT INTO match (server, gametype, state, starttime, map, elo_red, elo_blue) VALUES (1, ?, ?, ?, ?, 1000, 1000)");
+            pstmt.setString(1, gametype);
+            pstmt.setString(2, state);
+            pstmt.setLong(3, System.currentTimeMillis());
+            pstmt.setString(4, map);
+            pstmt.executeUpdate();
+            pstmt.close();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to insert test match", e);
+        }
+    }
+
+    /** Removes all match records between tests to prevent bleed. */
+    static void cleanupTestMatches() {
+        try {
+            Field cField = Database.class.getDeclaredField("c");
+            cField.setAccessible(true);
+            Connection c = (Connection) cField.get(db);
+            c.createStatement().executeUpdate("DELETE FROM match");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to cleanup test matches", e);
+        }
+    }
+
     static Match buildTsCaptainMatch() throws Exception {
         Match match = new Match(logic, gt("TS"), List.of(logic.getMapByName("ut4_turnpike")), perms);
 
@@ -401,7 +635,7 @@ class PickupLogicTest {
         var s = c.createStatement();
         // Tables
         s.executeUpdate("CREATE TABLE IF NOT EXISTS player (userid TEXT,urtauth TEXT,elo INTEGER DEFAULT 1000,elochange INTEGER DEFAULT 0,active TEXT,country TEXT,enforce_ac TEXT DEFAULT 'true',coins INTEGER DEFAULT 1000,eloboost INTEGER DEFAULT 0,mapvote INTEGER DEFAULT 0,mapban INTEGER DEFAULT 0,proctf TEXT DEFAULT 'true',PRIMARY KEY(userid,urtauth))");
-        s.executeUpdate("CREATE TABLE IF NOT EXISTS gametype (gametype TEXT PRIMARY KEY,teamsize INTEGER,active TEXT)");
+        s.executeUpdate("CREATE TABLE IF NOT EXISTS gametype (gametype TEXT PRIMARY KEY,teamsize INTEGER,active TEXT,recent_map_exclude INTEGER DEFAULT 2)");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS map (map TEXT,gametype TEXT,active TEXT,banned_until INTEGER DEFAULT 0,PRIMARY KEY(map,gametype))");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS banlist (ID INTEGER PRIMARY KEY AUTOINCREMENT,player_userid TEXT,player_urtauth TEXT,reason TEXT,start INTEGER,end INTEGER,pardon TEXT,forgiven BOOLEAN)");
         s.executeUpdate("CREATE TABLE IF NOT EXISTS report (ID INTEGER PRIMARY KEY AUTOINCREMENT,player_userid TEXT,player_urtauth TEXT,reporter_userid TEXT,reporter_urtauth TEXT,reason TEXT,match INTEGER)");
@@ -420,8 +654,8 @@ class PickupLogicTest {
         s.executeUpdate("INSERT INTO season VALUES(1,1704067200000,1767225600000)");
 
         // Gametypes
-        s.executeUpdate("INSERT INTO gametype VALUES('TS',5,'true')");
-        s.executeUpdate("INSERT INTO gametype VALUES('CTF',5,'true')");
+        s.executeUpdate("INSERT INTO gametype VALUES('TS',5,'true',2)");
+        s.executeUpdate("INSERT INTO gametype VALUES('CTF',5,'true',2)");
 
         // Maps
         for (var m : new String[]{"ut4_turnpike","ut4_abbey","ut4_casa","ut4_uptown","ut4_algiers"})

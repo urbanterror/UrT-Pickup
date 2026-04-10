@@ -78,7 +78,8 @@ public class Database {
 
             sql = "CREATE TABLE IF NOT EXISTS gametype ( gametype TEXT PRIMARY KEY,"
                     + "teamsize INTEGER, "
-                    + "active TEXT )";
+                    + "active TEXT,"
+                    + "recent_map_exclude INTEGER DEFAULT 2 )";
             stmt.executeUpdate(sql);
 
             sql = "CREATE TABLE IF NOT EXISTS map ( map TEXT,"
@@ -125,6 +126,9 @@ public class Database {
                     + "FOREIGN KEY (server) REFERENCES server(id),"
                     + "FOREIGN KEY (map, gametype) REFERENCES map(map, gametype),"
                     + "FOREIGN KEY (gametype) REFERENCES gametype(gametype) )";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_match_gametype_state ON match (gametype, state, ID)";
             stmt.executeUpdate(sql);
 
             sql = "CREATE TABLE IF NOT EXISTS player_in_match ( ID INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -205,7 +209,36 @@ public class Database {
                     + "FOREIGN KEY (player_userid, player_urtauth) REFERENCES player(userid, urtauth) )";
             stmt.executeUpdate(sql);
 
+            sql = "CREATE INDEX IF NOT EXISTS idx_pim_matchid ON player_in_match (matchid)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_pim_urtauth_id ON player_in_match (player_urtauth, ID DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_match_start ON match (starttime)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_player_active_elo ON player (active, elo DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_banlist_urtauth ON banlist (player_urtauth)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_bets_urtauth ON bets (player_urtauth, ID DESC)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE INDEX IF NOT EXISTS idx_spree_urtauth_gametype ON spree (player_urtauth, gametype)";
+            stmt.executeUpdate(sql);
+
             stmt.close();
+
+            // Migrations: add columns that may not exist in older databases
+            if (!columnExists("gametype", "recent_map_exclude")) {
+                Statement mig = c.createStatement();
+                mig.executeUpdate("ALTER TABLE gametype ADD COLUMN recent_map_exclude INTEGER DEFAULT 2");
+                mig.close();
+            }
+
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -504,10 +537,10 @@ public class Database {
         List<Gametype> gametypeList = new ArrayList<Gametype>();
         try {
             Statement stmt = c.createStatement();
-            String sql = "SELECT gametype, teamsize, active FROM gametype";
+            String sql = "SELECT gametype, teamsize, active, recent_map_exclude FROM gametype";
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
-                Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")), false);
+                Gametype gametype = new Gametype(rs.getString("gametype"), rs.getInt("teamsize"), Boolean.parseBoolean(rs.getString("active")), false, rs.getInt("recent_map_exclude"));
                 log.debug("{} active={}", gametype.getName(), gametype.getActive());
                 gametypeList.add(gametype);
             }
@@ -703,6 +736,27 @@ public class Database {
         }
         return match;
 
+    }
+
+    public List<String> getRecentMapsPlayed(String gametype, int count) {
+        List<String> maps = new ArrayList<>();
+        try {
+            String sql = "SELECT map FROM match WHERE gametype = ? "
+                    + "AND state IN ('Done', 'Surrender', 'Mercy') "
+                    + "ORDER BY ID DESC LIMIT ?";
+            PreparedStatement pstmt = c.prepareStatement(sql);
+            pstmt.setString(1, gametype);
+            pstmt.setInt(2, count);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                maps.add(rs.getString("map"));
+            }
+            rs.close();
+            pstmt.close();
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return maps;
     }
 
     public Player loadPlayer(String urtauth) {
@@ -1717,5 +1771,21 @@ public class Database {
             log.warn("Exception: ", e);
         }
         return worstSpree;
+    }
+
+    private boolean columnExists(String table, String column) {
+        try {
+            ResultSet rs = c.createStatement().executeQuery("PRAGMA table_info(" + table + ")");
+            while (rs.next()) {
+                if (rs.getString("name").equals(column)) {
+                    rs.close();
+                    return true;
+                }
+            }
+            rs.close();
+        } catch (SQLException e) {
+            log.warn("Exception checking column existence: ", e);
+        }
+        return false;
     }
 }

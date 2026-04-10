@@ -83,6 +83,7 @@ public class Config {
 
     public static final String CMD_ADDBAN = "!ban";
     public static final String CMD_REMOVEBAN = "!unban";
+    public static final String CMD_PARDON = "!pardon";
     public static final String CMD_BANINFO = "!baninfo";
 
     public static final String CMD_SHOWSERVERS = "!showservers";
@@ -181,7 +182,8 @@ public class Config {
     //public static final String USE_CMD_REPORTLIST		= "!reportlist";
 
     public static final String USE_CMD_ADDBAN = "!ban <urtauth> <reason> <duration> (duration=1y1M1w1d1h1m1s)";
-    public static final String USE_CMD_REMOVEBAN = "!unban <urtauth>";
+    public static final String USE_CMD_REMOVEBAN = "!unban <urtauth> [urtauth2] [urtauth3] ...";
+    public static final String USE_CMD_PARDON = "!pardon </@User|urtauth/> [</@User|urtauth/> ...] \"<reason>\"";
     public static final String USE_CMD_BANINFO = "!baninfo </@User|urtauth/>";
 
     public static final String USE_CMD_SHOWSERVERS = "!showservers";
@@ -309,6 +311,7 @@ public class Config {
     public static final String is_pardonned_admin = ".user. (.urtauth.) has been pardonned by .userAdmin.. Reason: ``.reason.``";
     public static final String is_refunded = ".user. (.urtauth.) has been refunded **.amount.** pugcoins by .userAdmin.. Reason: ``.reason.``";
     public static final String is_notbanned = ".urtauth. is not banned (yet).";
+    public static final String is_notbanned_but_manual = ".urtauth. has no bot ban, but has an active manual ban. Use !unban instead.";
     public static final String not_banned = "No active bans found for .urtauth.";
     public static final String ban_history = "**__Ban history:__** (Past 2 months)";
     public static final String ban_history_item = "<t:.date.:d> .duration. .reason.";
@@ -316,7 +319,7 @@ public class Config {
     public static final String map_not_unique = "Mapstring not unique.";
     public static final String map_cannot_vote = "You cannot vote right now.";
     public static final String map_specify_gametype = "Please use: **!map <gametype> <map>**.";
-    public static final String map_played_last_game = "This map was played last game, please vote for a different map.";
+    public static final String map_played_last_game = "This map was played recently, please vote for a different map.";
     public static final String map_already_banned = "This map is already banned (Expires <t:.remaining.:R>).";
     public static final String map_banned = "This map is currently banned (Expires <t:.remaining.:R>).";
     public static final String no_additonal_vote = "You currently don't have any additional vote to spend. Buy some by sending ``/buy``.";
