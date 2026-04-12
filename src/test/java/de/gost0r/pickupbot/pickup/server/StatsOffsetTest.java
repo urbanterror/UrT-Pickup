@@ -313,4 +313,231 @@ class StatsOffsetTest {
         assertEquals(1, sp.statsOffset.stop_caps + sp.ctfstats.stop_caps);
         assertEquals(5, sp.statsOffset.protect_flag + sp.ctfstats.protect_flag);
     }
+
+    // ========== CTF_Stats.hasTrackedStats() ==========
+
+    @Test
+    void hasTrackedStats_allZeros_returnsFalse() {
+        CTF_Stats stats = new CTF_Stats();
+        assertFalse(stats.hasTrackedStats());
+    }
+
+    @Test
+    void hasTrackedStats_withScore_returnsTrue() {
+        CTF_Stats stats = new CTF_Stats();
+        stats.score = 1;
+        assertTrue(stats.hasTrackedStats());
+    }
+
+    @Test
+    void hasTrackedStats_withDeaths_returnsTrue() {
+        CTF_Stats stats = new CTF_Stats();
+        stats.deaths = 1;
+        assertTrue(stats.hasTrackedStats());
+    }
+
+    @Test
+    void hasTrackedStats_withAssists_returnsTrue() {
+        CTF_Stats stats = new CTF_Stats();
+        stats.assists = 1;
+        assertTrue(stats.hasTrackedStats());
+    }
+
+    @Test
+    void hasTrackedStats_withCaps_returnsTrue() {
+        CTF_Stats stats = new CTF_Stats();
+        stats.caps = 1;
+        assertTrue(stats.hasTrackedStats());
+    }
+
+    // ========== CTF_Stats.totalsEqual() ==========
+
+    @Test
+    void totalsEqual_identicalStats_returnsTrue() {
+        CTF_Stats a = new CTF_Stats();
+        a.score = 10;
+        a.deaths = 5;
+        a.assists = 3;
+        a.caps = 2;
+        a.returns = 1;
+        a.fc_kills = 1;
+        a.stop_caps = 0;
+        a.protect_flag = 1;
+
+        CTF_Stats b = new CTF_Stats();
+        b.score = 10;
+        b.deaths = 5;
+        b.assists = 3;
+        b.caps = 2;
+        b.returns = 1;
+        b.fc_kills = 1;
+        b.stop_caps = 0;
+        b.protect_flag = 1;
+
+        assertTrue(a.totalsEqual(b));
+        assertTrue(b.totalsEqual(a));
+    }
+
+    @Test
+    void totalsEqual_differentScore_returnsFalse() {
+        CTF_Stats a = new CTF_Stats();
+        a.score = 10;
+
+        CTF_Stats b = new CTF_Stats();
+        b.score = 11;
+
+        assertFalse(a.totalsEqual(b));
+    }
+
+    @Test
+    void totalsEqual_null_returnsFalse() {
+        CTF_Stats a = new CTF_Stats();
+        a.score = 10;
+
+        assertFalse(a.totalsEqual(null));
+    }
+
+    // ========== CTF_Stats.atLeastAs() ==========
+
+    @Test
+    void atLeastAs_equalStats_returnsTrue() {
+        CTF_Stats server = new CTF_Stats();
+        server.score = 38;
+        server.deaths = 25;
+        server.assists = 7;
+
+        CTF_Stats offset = new CTF_Stats();
+        offset.score = 38;
+        offset.deaths = 25;
+        offset.assists = 7;
+
+        assertTrue(server.atLeastAs(offset));
+    }
+
+    @Test
+    void atLeastAs_serverHigher_returnsTrue() {
+        CTF_Stats server = new CTF_Stats();
+        server.score = 40;
+        server.deaths = 26;
+        server.assists = 8;
+
+        CTF_Stats offset = new CTF_Stats();
+        offset.score = 38;
+        offset.deaths = 25;
+        offset.assists = 7;
+
+        assertTrue(server.atLeastAs(offset));
+    }
+
+    @Test
+    void atLeastAs_serverLower_returnsFalse() {
+        CTF_Stats server = new CTF_Stats();
+        server.score = 0;
+        server.deaths = 0;
+        server.assists = 0;
+
+        CTF_Stats offset = new CTF_Stats();
+        offset.score = 38;
+        offset.deaths = 25;
+        offset.assists = 7;
+
+        assertFalse(server.atLeastAs(offset));
+    }
+
+    @Test
+    void atLeastAs_partiallyLower_returnsFalse() {
+        CTF_Stats server = new CTF_Stats();
+        server.score = 40;  // higher
+        server.deaths = 20; // lower
+        server.assists = 8;
+
+        CTF_Stats offset = new CTF_Stats();
+        offset.score = 38;
+        offset.deaths = 25;
+        offset.assists = 7;
+
+        assertFalse(server.atLeastAs(offset));
+    }
+
+    @Test
+    void atLeastAs_null_returnsTrue() {
+        CTF_Stats server = new CTF_Stats();
+        server.score = 10;
+
+        assertTrue(server.atLeastAs(null));
+    }
+
+    // ========== ServerPlayer.clearStatsOffsetIfServerSnapshotMatchesOffset() ==========
+
+    @Test
+    void clearOffset_serverStatsEqualOffset_clearsOffset() {
+        ServerPlayer sp = new ServerPlayer();
+        sp.statsOffset.score = 38;
+        sp.statsOffset.deaths = 25;
+        sp.statsOffset.assists = 7;
+
+        sp.ctfstats.score = 38;
+        sp.ctfstats.deaths = 25;
+        sp.ctfstats.assists = 7;
+
+        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+
+        assertEquals(0, sp.statsOffset.score);
+        assertEquals(0, sp.statsOffset.deaths);
+        assertEquals(0, sp.statsOffset.assists);
+    }
+
+    @Test
+    void clearOffset_serverStatsHigherThanOffset_clearsOffset() {
+        ServerPlayer sp = new ServerPlayer();
+        sp.statsOffset.score = 38;
+        sp.statsOffset.deaths = 25;
+        sp.statsOffset.assists = 7;
+
+        // Server stats higher (player got more kills during RCON blip)
+        sp.ctfstats.score = 40;
+        sp.ctfstats.deaths = 26;
+        sp.ctfstats.assists = 8;
+
+        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+
+        // Offset should be cleared because server kept cumulative stats
+        assertEquals(0, sp.statsOffset.score);
+        assertEquals(0, sp.statsOffset.deaths);
+        assertEquals(0, sp.statsOffset.assists);
+    }
+
+    @Test
+    void clearOffset_serverStatsLowerThanOffset_preservesOffset() {
+        ServerPlayer sp = new ServerPlayer();
+        sp.statsOffset.score = 38;
+        sp.statsOffset.deaths = 25;
+        sp.statsOffset.assists = 7;
+
+        // Server reset stats to 0 on reconnect
+        sp.ctfstats.score = 0;
+        sp.ctfstats.deaths = 0;
+        sp.ctfstats.assists = 0;
+
+        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+
+        // Offset should be preserved because server reset stats
+        assertEquals(38, sp.statsOffset.score);
+        assertEquals(25, sp.statsOffset.deaths);
+        assertEquals(7, sp.statsOffset.assists);
+    }
+
+    @Test
+    void clearOffset_noTrackedStats_doesNothing() {
+        ServerPlayer sp = new ServerPlayer();
+        // statsOffset is all zeros (no tracked stats)
+
+        sp.ctfstats.score = 10;
+        sp.ctfstats.deaths = 5;
+
+        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+
+        // Should not throw, offset remains zero
+        assertEquals(0, sp.statsOffset.score);
+    }
 }
