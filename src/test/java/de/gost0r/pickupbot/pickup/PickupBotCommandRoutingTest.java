@@ -10,6 +10,7 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.Executor;
 
 import static org.mockito.Mockito.*;
 
@@ -72,7 +73,8 @@ class PickupBotCommandRoutingTest {
         }
 
         // -- Wire up bot + logic --
-        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache);
+        Executor directExecutor = Runnable::run; // Execute tasks synchronously for testing
+        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor);
         logic = new PickupLogic(bot, ftw, discord, perms, roleCache);
         logic.init();
 
