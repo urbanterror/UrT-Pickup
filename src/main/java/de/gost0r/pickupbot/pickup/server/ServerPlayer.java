@@ -43,19 +43,20 @@ public class ServerPlayer {
     }
 
     /**
-     * Call after merging a fresh RCON {@link #ctfstats} snapshot. If the game kept cumulative
-     * totals across reconnect, live stats are >= {@link #statsOffset} and summing both in
-     * {@code saveStats} would double-count K/D/A.
+     * Call BEFORE updating ctfstats with fresh server data during LIVE state.
+     * If the new stats are lower than current (player reconnected and server reset stats),
+     * persist current stats to offset so they aren't lost.
      *
-     * Uses >= comparison instead of exact equality to handle the case where the player
-     * got a few more kills between disconnect detection and reconnect (race condition).
-     * If server stats >= offset, the server preserved cumulative stats and we clear offset.
-     * If server stats < offset, the server reset stats to 0 and we keep offset.
+     * @param serverStats the fresh stats from RCON
+     * @return true if stats were reset (and preserved to offset), false otherwise
      */
-    public void clearStatsOffsetIfServerSnapshotMatchesOffset() {
-        if (statsOffset.hasTrackedStats() && ctfstats.atLeastAs(statsOffset)) {
-            statsOffset = new CTF_Stats();
+    public boolean preserveStatsIfReset(CTF_Stats serverStats) {
+        // If new stats are lower than current, player's stats were reset (reconnect)
+        if (ctfstats.hasTrackedStats() && !serverStats.atLeastAs(ctfstats)) {
+            statsOffset.add(ctfstats);
+            return true;
         }
+        return false;
     }
 
     @Override

@@ -3,7 +3,7 @@ package de.gost0r.pickupbot.pickup.server;
 import de.gost0r.pickupbot.pickup.Score;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Regression for statsOffset + RCON merge when the game server keeps cumulative
@@ -32,26 +32,26 @@ class PreservedServerStatsDoubleCountTest {
     }
 
     @Test
-    void disconnect_thenRconShowsPreservedTotals_mustNotDoubleKdaInMatchStats() {
+    void serverPreservesStats_noDoubling() {
         ServerPlayer sp = new ServerPlayer();
         sp.auth = "wickedd";
 
-        // In-game totals before a disconnect is observed
+        // Player has stats from playing
         sp.ctfstats.score = WICKEDD_KILLS;
         sp.ctfstats.deaths = WICKEDD_DEATHS;
         sp.ctfstats.assists = WICKEDD_ASSISTS;
 
-        // Same as ServerMonitor.updatePlayers when the player drops off RCON for a tick (#34)
-        sp.statsOffset.add(sp.ctfstats);
+        // Player "disconnects" (disappears from RCON) then reconnects
+        // Server kept cumulative scores — stats are same or higher
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = WICKEDD_KILLS;
+        serverStats.deaths = WICKEDD_DEATHS;
+        serverStats.assists = WICKEDD_ASSISTS;
 
-        // Reconnect path: Urban Terror sometimes keeps cumulative scores — next "players" output
-        // still shows the same match totals (not reset to 0)
-        sp.ctfstats.score = WICKEDD_KILLS;
-        sp.ctfstats.deaths = WICKEDD_DEATHS;
-        sp.ctfstats.assists = WICKEDD_ASSISTS;
-
-        // Same hook ServerMonitor runs after each successful RCON merge for a tracked player
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+        // preserveStatsIfReset should NOT add to offset (no reset detected)
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
+        assertFalse(wasReset, "Should detect server preserved stats");
+        sp.ctfstats = serverStats; // simulate copy
 
         Score half = new Score();
         applySaveStatsMerge(sp, half);
@@ -61,66 +61,56 @@ class PreservedServerStatsDoubleCountTest {
         assertEquals(WICKEDD_ASSISTS, half.assists, "assists must match FTW / demo, not 2×");
     }
 
-    /**
-     * Regression test for race condition: player gets a few more kills between
-     * disconnect detection and reconnect. Server kept cumulative stats but they're
-     * now higher than the offset. Should still clear offset to prevent doubling.
-     */
     @Test
-    void disconnect_thenPlayerGetsMoreKillsBeforeReconnect_mustNotDoubleKda() {
+    void serverPreservesStats_playerGotMoreKills_noDoubling() {
         ServerPlayer sp = new ServerPlayer();
         sp.auth = "wickedd";
 
-        // In-game totals before a disconnect is observed
+        // Player has stats from playing
         sp.ctfstats.score = WICKEDD_KILLS;
         sp.ctfstats.deaths = WICKEDD_DEATHS;
         sp.ctfstats.assists = WICKEDD_ASSISTS;
 
-        // Player drops off RCON for a tick - bot thinks they disconnected
-        sp.statsOffset.add(sp.ctfstats);
+        // Player "disconnects" then reconnects with MORE kills (server kept cumulative stats)
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = WICKEDD_KILLS + 2;
+        serverStats.deaths = WICKEDD_DEATHS + 1;
+        serverStats.assists = WICKEDD_ASSISTS;
 
-        // Reconnect path: player got 2 more kills while "disconnected" (RCON blip)
-        // Server kept cumulative stats, now higher than what we stored
-        sp.ctfstats.score = WICKEDD_KILLS + 2;
-        sp.ctfstats.deaths = WICKEDD_DEATHS + 1;
-        sp.ctfstats.assists = WICKEDD_ASSISTS;
-
-        // This should detect server kept stats and clear offset
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+        // preserveStatsIfReset should NOT add to offset
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
+        assertFalse(wasReset, "Should detect server preserved stats");
+        sp.ctfstats = serverStats;
 
         Score half = new Score();
         applySaveStatsMerge(sp, half);
 
-        // Final stats should be server's current stats (40/26/7), not doubled (78/51/14)
+        // Final stats should be server's current stats
         assertEquals(WICKEDD_KILLS + 2, half.score, "kills must reflect server stats, not doubled");
         assertEquals(WICKEDD_DEATHS + 1, half.deaths, "deaths must reflect server stats, not doubled");
         assertEquals(WICKEDD_ASSISTS, half.assists, "assists must reflect server stats, not doubled");
     }
 
-    /**
-     * When server actually resets stats to 0 on reconnect (original assumption),
-     * the offset should be preserved so pre-disconnect stats aren't lost.
-     */
     @Test
-    void disconnect_thenServerResetsStatsToZero_mustPreserveOffset() {
+    void serverResetsStats_preservedToOffset() {
         ServerPlayer sp = new ServerPlayer();
         sp.auth = "wickedd";
 
-        // In-game totals before a disconnect is observed
+        // Player has stats from playing
         sp.ctfstats.score = WICKEDD_KILLS;
         sp.ctfstats.deaths = WICKEDD_DEATHS;
         sp.ctfstats.assists = WICKEDD_ASSISTS;
 
-        // Player disconnects - stats saved to offset
-        sp.statsOffset.add(sp.ctfstats);
+        // Player reconnects and server reset stats to 0
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = 0;
+        serverStats.deaths = 0;
+        serverStats.assists = 0;
 
-        // Server resets stats to 0 on reconnect
-        sp.ctfstats.score = 0;
-        sp.ctfstats.deaths = 0;
-        sp.ctfstats.assists = 0;
-
-        // Server stats < offset, so offset should NOT be cleared
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+        // preserveStatsIfReset should detect reset and preserve to offset
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
+        assertTrue(wasReset, "Should detect stats were reset");
+        sp.ctfstats = serverStats; // simulate copy
 
         Score half = new Score();
         applySaveStatsMerge(sp, half);

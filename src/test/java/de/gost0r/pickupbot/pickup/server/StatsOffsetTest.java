@@ -467,77 +467,115 @@ class StatsOffsetTest {
         assertTrue(server.atLeastAs(null));
     }
 
-    // ========== ServerPlayer.clearStatsOffsetIfServerSnapshotMatchesOffset() ==========
+    // ========== ServerPlayer.preserveStatsIfReset() ==========
 
     @Test
-    void clearOffset_serverStatsEqualOffset_clearsOffset() {
+    void preserveStatsIfReset_serverStatsReset_addsToOffset() {
         ServerPlayer sp = new ServerPlayer();
-        sp.statsOffset.score = 38;
-        sp.statsOffset.deaths = 25;
-        sp.statsOffset.assists = 7;
-
+        // Player has stats from playing
         sp.ctfstats.score = 38;
         sp.ctfstats.deaths = 25;
         sp.ctfstats.assists = 7;
 
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+        // Server sends reset stats (player reconnected)
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = 0;
+        serverStats.deaths = 0;
+        serverStats.assists = 0;
 
-        assertEquals(0, sp.statsOffset.score);
-        assertEquals(0, sp.statsOffset.deaths);
-        assertEquals(0, sp.statsOffset.assists);
-    }
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
 
-    @Test
-    void clearOffset_serverStatsHigherThanOffset_clearsOffset() {
-        ServerPlayer sp = new ServerPlayer();
-        sp.statsOffset.score = 38;
-        sp.statsOffset.deaths = 25;
-        sp.statsOffset.assists = 7;
-
-        // Server stats higher (player got more kills during RCON blip)
-        sp.ctfstats.score = 40;
-        sp.ctfstats.deaths = 26;
-        sp.ctfstats.assists = 8;
-
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
-
-        // Offset should be cleared because server kept cumulative stats
-        assertEquals(0, sp.statsOffset.score);
-        assertEquals(0, sp.statsOffset.deaths);
-        assertEquals(0, sp.statsOffset.assists);
-    }
-
-    @Test
-    void clearOffset_serverStatsLowerThanOffset_preservesOffset() {
-        ServerPlayer sp = new ServerPlayer();
-        sp.statsOffset.score = 38;
-        sp.statsOffset.deaths = 25;
-        sp.statsOffset.assists = 7;
-
-        // Server reset stats to 0 on reconnect
-        sp.ctfstats.score = 0;
-        sp.ctfstats.deaths = 0;
-        sp.ctfstats.assists = 0;
-
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
-
-        // Offset should be preserved because server reset stats
+        assertTrue(wasReset);
+        // Current stats should be preserved to offset
         assertEquals(38, sp.statsOffset.score);
         assertEquals(25, sp.statsOffset.deaths);
         assertEquals(7, sp.statsOffset.assists);
     }
 
     @Test
-    void clearOffset_noTrackedStats_doesNothing() {
+    void preserveStatsIfReset_serverStatsEqual_noChange() {
         ServerPlayer sp = new ServerPlayer();
-        // statsOffset is all zeros (no tracked stats)
+        // Player has stats from playing
+        sp.ctfstats.score = 38;
+        sp.ctfstats.deaths = 25;
+        sp.ctfstats.assists = 7;
 
-        sp.ctfstats.score = 10;
-        sp.ctfstats.deaths = 5;
+        // Server sends same stats (no reset, normal update)
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = 38;
+        serverStats.deaths = 25;
+        serverStats.assists = 7;
 
-        sp.clearStatsOffsetIfServerSnapshotMatchesOffset();
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
 
-        // Should not throw, offset remains zero
+        assertFalse(wasReset);
+        // Offset should remain zero
         assertEquals(0, sp.statsOffset.score);
+    }
+
+    @Test
+    void preserveStatsIfReset_serverStatsHigher_noChange() {
+        ServerPlayer sp = new ServerPlayer();
+        // Player has stats from playing
+        sp.ctfstats.score = 38;
+        sp.ctfstats.deaths = 25;
+        sp.ctfstats.assists = 7;
+
+        // Server sends higher stats (player got more kills)
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = 40;
+        serverStats.deaths = 26;
+        serverStats.assists = 8;
+
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
+
+        assertFalse(wasReset);
+        // Offset should remain zero
+        assertEquals(0, sp.statsOffset.score);
+    }
+
+    @Test
+    void preserveStatsIfReset_noCurrentStats_noChange() {
+        ServerPlayer sp = new ServerPlayer();
+        // Player has no stats yet (just connected)
+
+        CTF_Stats serverStats = new CTF_Stats();
+        serverStats.score = 10;
+        serverStats.deaths = 5;
+
+        boolean wasReset = sp.preserveStatsIfReset(serverStats);
+
+        assertFalse(wasReset);
+        assertEquals(0, sp.statsOffset.score);
+    }
+
+    @Test
+    void preserveStatsIfReset_accumulates_onMultipleReconnects() {
+        ServerPlayer sp = new ServerPlayer();
+
+        // First session: 10 kills
+        sp.ctfstats.score = 10;
+        sp.ctfstats.deaths = 3;
+
+        // First reconnect - stats reset
+        CTF_Stats reset1 = new CTF_Stats();
+        assertTrue(sp.preserveStatsIfReset(reset1));
+        sp.ctfstats = reset1; // simulate copy
+
+        assertEquals(10, sp.statsOffset.score);
+        assertEquals(3, sp.statsOffset.deaths);
+
+        // Second session: 7 more kills
+        sp.ctfstats.score = 7;
+        sp.ctfstats.deaths = 2;
+
+        // Second reconnect - stats reset again
+        CTF_Stats reset2 = new CTF_Stats();
+        assertTrue(sp.preserveStatsIfReset(reset2));
+        sp.ctfstats = reset2;
+
+        // Offset should now have both sessions
+        assertEquals(17, sp.statsOffset.score);
+        assertEquals(5, sp.statsOffset.deaths);
     }
 }
