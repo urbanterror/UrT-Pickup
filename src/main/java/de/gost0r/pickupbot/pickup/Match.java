@@ -814,7 +814,7 @@ public class Match implements Runnable {
             buttons.add(buttonBetBlue);
         }
 
-        logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), fullmsg.toString(), null, buttons);
+        List<DiscordMessage> pubAnnounceMsgs = logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), fullmsg.toString(), null, buttons);
 
         if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
             logic.ftwglApi.queryAndUpdateServerIp(server);
@@ -832,12 +832,14 @@ public class Match implements Runnable {
         buttons.add(button);
 
         msg = Config.pkup_go_player;
+        msg = msg.replace(".gamenumber.", String.valueOf(id));
         msg = msg.replace(".server.", server.getAddress());
         msg = msg.replace(".password.", server.password);
         for (String team : teamList.keySet()) {
             for (Player player : teamList.get(team)) {
                 if (player.getEnforceAC()) {
-                    player.getDiscordUser().sendPrivateMessage(Config.pkup_go_player_ac, null, buttons);
+                    String acMsg = Config.pkup_go_player_ac.replace(".gamenumber.", String.valueOf(id));
+                    player.getDiscordUser().sendPrivateMessage(acMsg, null, buttons);
                     continue;
                 }
                 String msg_t = msg.replace(".team.", team.toUpperCase());
@@ -848,8 +850,11 @@ public class Match implements Runnable {
         serverReadyTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
+        msg = msg.replace(".gamenumber.", String.valueOf(id));
         msg = msg.replace(".gametype.", gametype.getName());
-        logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), msg, null, buttons);
+        for (DiscordMessage announceMsg : pubAnnounceMsgs) {
+            announceMsg.reply(msg, null, buttons);
+        }
 
         // set server data
         server.sendRcon("kick allbots");
