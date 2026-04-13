@@ -280,13 +280,16 @@ public class ServerMonitor implements Runnable {
         score[half] = scorex;
         backupScore = score;
 
-        // reset matchstats to previous
+        // Update tracked players with fresh stats from RCON
         for (ServerPlayer sp : rpp.players) {
             for (ServerPlayer player : players) {
                 if (sp.equals(player)) {
+                    // If stats were reset (player reconnected), preserve current stats to offset
+                    if (player.preserveStatsIfReset(sp.ctfstats)) {
+                        log.info("Player {} stats reset detected during LIVE - preserved to offset (score={}, deaths={}, assists={})",
+                                player.name, player.statsOffset.score, player.statsOffset.deaths, player.statsOffset.assists);
+                    }
                     player.copy(sp);
-                    // Clear statsOffset if server kept cumulative stats to prevent double-counting
-                    player.clearStatsOffsetIfServerSnapshotMatchesOffset();
                     continue;
                 }
             }
@@ -480,12 +483,19 @@ public class ServerMonitor implements Runnable {
             for (ServerPlayer player_x : players) {
                 if (player.equals(player_x)) {
                     boolean wasDisconnected = player_x.state == ServerPlayerState.Disconnected;
+                    // Check if stats were reset (reconnect) before copying
+                    boolean statsReset = player_x.preserveStatsIfReset(player.ctfstats);
                     player_x.copy(player);
                     found = player_x;
-                    found.clearStatsOffsetIfServerSnapshotMatchesOffset();
                     if (wasDisconnected) {
                         found.state = ServerPlayerState.Reconnected;
-                        log.info("Player {} ({}) reconnected.", found.name, found.auth);
+                        if (statsReset) {
+                            log.info("Player {} ({}) reconnected (stats reset, preserved to offset: score={}, deaths={}, assists={}).",
+                                    found.name, found.auth,
+                                    found.statsOffset.score, found.statsOffset.deaths, found.statsOffset.assists);
+                        } else {
+                            log.info("Player {} ({}) reconnected (stats preserved by server).", found.name, found.auth);
+                        }
                         found.timeDisconnect = -1L;
                     }
                     break;
@@ -502,13 +512,11 @@ public class ServerMonitor implements Runnable {
 
         for (ServerPlayer player : oldPlayers) {
             if (player.state != ServerPlayerState.Disconnected) {
-                // Save current stats into offset before disconnect so they survive a reconnect
-                player.statsOffset.add(player.ctfstats);
+                // Mark as disconnected - stats will be preserved if/when they reconnect
+                // and we detect their server stats were reset (in saveStats)
                 player.state = ServerPlayerState.Disconnected;
                 player.timeDisconnect = System.currentTimeMillis();
-                log.info("Player {} ({}) disconnected. Stats preserved in offset (score={}, deaths={}, assists={}).",
-                        player.name, player.auth,
-                        player.statsOffset.score, player.statsOffset.deaths, player.statsOffset.assists);
+                log.info("Player {} ({}) disconnected.", player.name, player.auth);
             }
         }
 
