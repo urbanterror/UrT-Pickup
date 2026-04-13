@@ -285,6 +285,8 @@ public class ServerMonitor implements Runnable {
             for (ServerPlayer player : players) {
                 if (sp.equals(player)) {
                     player.copy(sp);
+                    // Clear statsOffset if server kept cumulative stats to prevent double-counting
+                    player.clearStatsOffsetIfServerSnapshotMatchesOffset();
                     continue;
                 }
             }
@@ -477,18 +479,20 @@ public class ServerMonitor implements Runnable {
             ServerPlayer found = null;
             for (ServerPlayer player_x : players) {
                 if (player.equals(player_x)) {
+                    boolean wasDisconnected = player_x.state == ServerPlayerState.Disconnected;
                     player_x.copy(player);
                     found = player_x;
+                    found.clearStatsOffsetIfServerSnapshotMatchesOffset();
+                    if (wasDisconnected) {
+                        found.state = ServerPlayerState.Reconnected;
+                        log.info("Player {} ({}) reconnected.", found.name, found.auth);
+                        found.timeDisconnect = -1L;
+                    }
                     break;
                 }
             }
 
             if (found != null) {
-                if (found.state == ServerPlayerState.Disconnected) {
-                    found.state = ServerPlayerState.Reconnected;
-                    log.info("Player {} ({}) reconnected.", found.name, found.auth);
-                    found.timeDisconnect = -1L;
-                }
                 oldPlayers.remove(found);
             } else {
                 log.info("Player {} ({}) connected.", player.name, player.auth);

@@ -82,27 +82,37 @@ public class Server {
             DatagramPacket recvPacket = new DatagramPacket(recvBuffer, recvBuffer.length);
             this.socket.send(sendPacket);
 
-            String string = "";
+            StringBuilder response = new StringBuilder();
+            boolean firstPacket = true;
             while (true) {
                 try {
                     this.socket.receive(recvPacket);
-                    String newString = new String(recvPacket.getData());
+                    // Use actual packet length, not full buffer
+                    String newString = new String(recvPacket.getData(), 0, recvPacket.getLength());
 
-                    newString = newString.substring(4); // remove the goddamn first 4 chars
+                    newString = newString.substring(4); // remove the 0xFFFFFFFF header
 
-                    string += newString;
+                    response.append(newString);
 
-                    recvBuffer = new byte[2048]; // empty buffer
+                    // After first packet, use shorter timeout for subsequent packets
+                    // Q3 sends multi-packet responses in quick succession
+                    // Use 350ms to account for network jitter on high-latency connections
+                    if (firstPacket) {
+                        this.socket.setSoTimeout(350);
+                        firstPacket = false;
+                    }
+
+                    recvBuffer = new byte[2048];
                     recvPacket = new DatagramPacket(recvBuffer, recvBuffer.length);
                 } catch (SocketTimeoutException e) {
                     break;
                 }
             }
 
-            string = string.replace("" + (char) 0, "");
+            // Restore original timeout for next command
+            this.socket.setSoTimeout(1000);
 
-            // Thread.sleep(100);
-            return string;
+            return response.toString();
         } catch (IOException e) {
             log.warn("Exception: ", e);
         }
