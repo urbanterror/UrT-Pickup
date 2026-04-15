@@ -578,4 +578,222 @@ class StatsOffsetTest {
         assertEquals(17, sp.statsOffset.score);
         assertEquals(5, sp.statsOffset.deaths);
     }
+
+    // ========== Bug documentation: stats doubled in non-swaproles games (NOW FIXED) ==========
+
+    /**
+     * Documents the bug where stats were doubled in non-swaproles games.
+     *
+     * The issue WAS: When a player disconnects/reconnects between prevRPP capture and handleScoreTransition:
+     * 1. prevRPP is captured with player's pre-reconnect stats (score=10)
+     * 2. Player reconnects - updatePlayers preserves stats to offset (offset=10), ctfstats reset to 0
+     * 3. handleScoreTransition calls saveStats(prevRPP)
+     * 4. Old code used prevRPP.ctfstats (10) + offset (10) = 20 (DOUBLED!)
+     *
+     * The fix: saveStats now checks if player has statsOffset values (indicating reconnect).
+     * If so, it uses the tracked player's current ctfstats (post-reconnect) instead of
+     * prevRPP.ctfstats (which might have stale pre-reconnect data).
+     *
+     * This test simulates the OLD buggy flow to document what was happening.
+     */
+    @Test
+    void bug_statsDoubled_whenSaveStatsUsesStaleRppAfterReconnect_DOCUMENTED() {
+        // Setup: tracked player with accumulated stats
+        ServerPlayer tracked = new ServerPlayer();
+        tracked.auth = "bugPlayer";
+        tracked.ctfstats.score = 10;
+        tracked.ctfstats.deaths = 5;
+        tracked.ctfstats.assists = 3;
+
+        // prevRPP: server data from PREVIOUS poll (before reconnect), has old stats
+        ServerPlayer prevRppPlayer = new ServerPlayer();
+        prevRppPlayer.auth = "bugPlayer";
+        prevRppPlayer.ctfstats = new CTF_Stats();
+        prevRppPlayer.ctfstats.score = 10;
+        prevRppPlayer.ctfstats.deaths = 5;
+        prevRppPlayer.ctfstats.assists = 3;
+
+        // currentRpp: server data from CURRENT poll (after reconnect), stats reset to 0
+        ServerPlayer currentRppPlayer = new ServerPlayer();
+        currentRppPlayer.auth = "bugPlayer";
+        currentRppPlayer.ctfstats = new CTF_Stats();
+        currentRppPlayer.ctfstats.score = 0;
+        currentRppPlayer.ctfstats.deaths = 0;
+        currentRppPlayer.ctfstats.assists = 0;
+
+        // === Step 1: updatePlayers processes currentRpp ===
+        // Detects reconnect (stats reset), preserves to offset
+        boolean resetDetected = tracked.preserveStatsIfReset(currentRppPlayer.ctfstats);
+        assertTrue(resetDetected, "Should detect stats were reset");
+        assertEquals(10, tracked.statsOffset.score, "Stats should be preserved to offset");
+
+        // updatePlayers then calls copy() with current (reset) data
+        tracked.copy(currentRppPlayer);
+        assertEquals(0, tracked.ctfstats.score, "ctfstats should be 0 after copy from current");
+
+        // At this point: statsOffset=10, ctfstats=0, correct total would be 10
+
+        // === OLD BUGGY BEHAVIOR: using prevRPP.ctfstats directly ===
+        // The old code would add: offset (10) + prevRPP.ctfstats (10) = 20 (DOUBLED!)
+        int buggyScore = tracked.statsOffset.score + prevRppPlayer.ctfstats.score;
+        assertEquals(20, buggyScore, "OLD BUG: Score doubled when using stale prevRPP.ctfstats");
+
+        // === NEW FIXED BEHAVIOR: if offset has values, use tracked.ctfstats ===
+        // The fix checks: if statsOffset.hasTrackedStats(), use player.ctfstats instead of rpp.ctfstats
+        CTF_Stats ctfstatsToUse = tracked.statsOffset.hasTrackedStats() ? tracked.ctfstats : prevRppPlayer.ctfstats;
+        int fixedScore = tracked.statsOffset.score + ctfstatsToUse.score;
+        assertEquals(10, fixedScore, "FIXED: Score correct when using tracked.ctfstats for reconnected player");
+    }
+
+    /**
+     * Shows that non-reconnected players still use rpp.ctfstats correctly.
+     * This ensures the fix doesn't break normal (non-reconnect) stat saving.
+     */
+    @Test
+    void fixed_nonReconnectedPlayer_usesRppStats() {
+        // Setup: tracked player with NO reconnect (statsOffset is empty)
+        ServerPlayer tracked = new ServerPlayer();
+        tracked.auth = "normalPlayer";
+        tracked.ctfstats.score = 15;  // Current tracked stats (might be warmup data)
+        tracked.ctfstats.deaths = 7;
+        tracked.ctfstats.assists = 4;
+        // statsOffset is 0 (no reconnects)
+
+        // prevRPP: has the final LIVE stats we want to save
+        ServerPlayer prevRppPlayer = new ServerPlayer();
+        prevRppPlayer.auth = "normalPlayer";
+        prevRppPlayer.ctfstats = new CTF_Stats();
+        prevRppPlayer.ctfstats.score = 20;  // Final LIVE score
+        prevRppPlayer.ctfstats.deaths = 10;
+        prevRppPlayer.ctfstats.assists = 5;
+
+        // Since statsOffset is empty, we should use prevRPP.ctfstats (final LIVE stats)
+        assertFalse(tracked.statsOffset.hasTrackedStats(), "No reconnect, offset should be empty");
+
+        CTF_Stats ctfstatsToUse = tracked.statsOffset.hasTrackedStats() ? tracked.ctfstats : prevRppPlayer.ctfstats;
+        int finalScore = tracked.statsOffset.score + ctfstatsToUse.score;
+
+        // Should use prevRPP stats (20), not tracked stats (15)
+        assertEquals(20, finalScore, "Non-reconnected player should use prevRPP.ctfstats");
+    }
+
+    /**
+     * Shows correct behavior for a reconnected player who continued playing after reconnect.
+     */
+    @Test
+    void fixed_reconnectedPlayer_accumulatesPostReconnectStats() {
+        // Setup: player who had 10 kills, reconnected, then got 5 more
+        ServerPlayer tracked = new ServerPlayer();
+        tracked.auth = "activePlayer";
+
+        // Pre-reconnect stats that were preserved
+        tracked.statsOffset.score = 10;
+        tracked.statsOffset.deaths = 5;
+
+        // Post-reconnect stats (player continued playing)
+        tracked.ctfstats.score = 5;
+        tracked.ctfstats.deaths = 2;
+
+        assertTrue(tracked.statsOffset.hasTrackedStats(), "Player reconnected, should have offset");
+
+        // Even if prevRPP has old stats, we use tracked.ctfstats for reconnected players
+        ServerPlayer prevRppPlayer = new ServerPlayer();
+        prevRppPlayer.ctfstats = new CTF_Stats();
+        prevRppPlayer.ctfstats.score = 10;  // Stale pre-reconnect stats
+
+        CTF_Stats ctfstatsToUse = tracked.statsOffset.hasTrackedStats() ? tracked.ctfstats : prevRppPlayer.ctfstats;
+        int finalScore = tracked.statsOffset.score + ctfstatsToUse.score;
+        int finalDeaths = tracked.statsOffset.deaths + ctfstatsToUse.deaths;
+
+        // offset (10) + current ctfstats (5) = 15 total
+        assertEquals(15, finalScore, "Total should be pre-reconnect (10) + post-reconnect (5)");
+        assertEquals(7, finalDeaths, "Total deaths should be pre-reconnect (5) + post-reconnect (2)");
+    }
+
+    // ========== Mid-play stat penalties must not look like a reset (match #39664) ==========
+
+    @Test
+    void teamKill_doesNotInflateOffset() {
+        // TK drops score by 1 but leaves deaths/assists alone.
+        ServerPlayer sp = new ServerPlayer();
+        sp.ctfstats.score = 10;
+        sp.ctfstats.deaths = 8;
+        sp.ctfstats.assists = 3;
+
+        CTF_Stats afterTK = new CTF_Stats();
+        afterTK.score = 9;
+        afterTK.deaths = 8;
+        afterTK.assists = 3;
+
+        assertFalse(sp.preserveStatsIfReset(afterTK), "TK must not be treated as a reset");
+        assertEquals(0, sp.statsOffset.score);
+        assertEquals(0, sp.statsOffset.deaths);
+        assertEquals(0, sp.statsOffset.assists);
+    }
+
+    @Test
+    void suicide_doesNotInflateOffset() {
+        // Suicide bumps deaths by 1 and drops score by 1.
+        ServerPlayer sp = new ServerPlayer();
+        sp.ctfstats.score = 10;
+        sp.ctfstats.deaths = 8;
+        sp.ctfstats.assists = 3;
+
+        CTF_Stats afterSuicide = new CTF_Stats();
+        afterSuicide.score = 9;
+        afterSuicide.deaths = 9;
+        afterSuicide.assists = 3;
+
+        assertFalse(sp.preserveStatsIfReset(afterSuicide), "Suicide must not be treated as a reset");
+        assertEquals(0, sp.statsOffset.score);
+    }
+
+    @Test
+    void multipleTKs_overFullGame_doNotInflate() {
+        // Match #39664 endriuurt shape: 2 TKs during play. Old !atLeastAs
+        // check dumped current ctfstats into offset on each TK, inflating the
+        // final total by the sum of per-TK ctfstats snapshots.
+        ServerPlayer sp = new ServerPlayer();
+
+        sp.ctfstats.score = 5;
+        sp.ctfstats.deaths = 3;
+        CTF_Stats tk1 = new CTF_Stats();
+        tk1.score = 4;
+        tk1.deaths = 3;
+        assertFalse(sp.preserveStatsIfReset(tk1));
+        sp.ctfstats = tk1;
+
+        sp.ctfstats.score = 15;
+        sp.ctfstats.deaths = 18;
+        CTF_Stats tk2 = new CTF_Stats();
+        tk2.score = 14;
+        tk2.deaths = 18;
+        assertFalse(sp.preserveStatsIfReset(tk2));
+        sp.ctfstats = tk2;
+
+        sp.ctfstats.score = 20;
+        sp.ctfstats.deaths = 27;
+
+        assertEquals(0, sp.statsOffset.score);
+        assertEquals(0, sp.statsOffset.deaths);
+        assertEquals(20, sp.statsOffset.score + sp.ctfstats.score);
+        assertEquals(27, sp.statsOffset.deaths + sp.ctfstats.deaths);
+    }
+
+    @Test
+    void fastReconnect_detectedViaDeathsDecrease() {
+        // A /reconnect that completes inside one 1s poll never shows the
+        // Disconnected state — we rely on deaths dropping to detect it.
+        ServerPlayer sp = new ServerPlayer();
+        sp.ctfstats.score = 15;
+        sp.ctfstats.deaths = 8;
+        sp.ctfstats.assists = 4;
+
+        CTF_Stats afterFastReconnect = new CTF_Stats();
+
+        assertTrue(sp.preserveStatsIfReset(afterFastReconnect), "Fast reconnect must still be detected");
+        assertEquals(15, sp.statsOffset.score);
+        assertEquals(8, sp.statsOffset.deaths);
+        assertEquals(4, sp.statsOffset.assists);
+    }
 }
