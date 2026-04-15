@@ -43,16 +43,17 @@ public class ServerPlayer {
     }
 
     /**
-     * Call BEFORE updating ctfstats with fresh server data during LIVE state.
-     * If the new stats are lower than current (player reconnected and server reset stats),
-     * persist current stats to offset so they aren't lost.
+     * Call BEFORE updating ctfstats with fresh server data.
+     * Deaths never decrease in normal play: a TK only reduces score, a suicide
+     * bumps deaths. A drop in deaths therefore signals that the server wiped the
+     * player's tracker (reconnect). We key the check on deaths alone so that
+     * TKs and suicides don't masquerade as resets and inflate the offset.
      *
      * @param serverStats the fresh stats from RCON
      * @return true if stats were reset (and preserved to offset), false otherwise
      */
     public boolean preserveStatsIfReset(CTF_Stats serverStats) {
-        // If new stats are lower than current, player's stats were reset (reconnect)
-        if (ctfstats.hasTrackedStats() && !serverStats.atLeastAs(ctfstats)) {
+        if (ctfstats.hasTrackedStats() && serverStats.deaths < ctfstats.deaths) {
             statsOffset.add(ctfstats);
             return true;
         }

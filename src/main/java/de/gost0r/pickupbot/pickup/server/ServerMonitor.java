@@ -280,33 +280,63 @@ public class ServerMonitor implements Runnable {
         score[half] = scorex;
         backupScore = score;
 
-        // Update tracked players with fresh stats from RCON
-        for (ServerPlayer sp : rpp.players) {
-            for (ServerPlayer player : players) {
-                if (sp.equals(player)) {
-                    // If stats were reset (player reconnected), preserve current stats to offset
-                    if (player.preserveStatsIfReset(sp.ctfstats)) {
-                        log.info("Player {} stats reset detected during LIVE - preserved to offset (score={}, deaths={}, assists={})",
-                                player.name, player.statsOffset.score, player.statsOffset.deaths, player.statsOffset.assists);
-                    }
-                    player.copy(sp);
-                    continue;
-                }
-            }
-        }
-
-        // save playerscores (statsOffset holds accumulated stats from previous connections before disconnects)
+        // Save player scores by combining:
+        // - statsOffset: accumulated stats from disconnect/reconnect cycles (preserved by updatePlayers)
+        // - ctfstats: current server stats
+        //
+        // Key insight: If a player has statsOffset values, they reconnected during LIVE state.
+        // In that case, the rpp snapshot (especially prevRPP) might have STALE pre-reconnect stats
+        // that overlap with what's already in statsOffset. Using both would cause doubling.
+        //
+        // Solution:
+        // - If statsOffset is empty (no reconnects): use rpp.ctfstats (snapshot from this rpp)
+        // - If statsOffset has values (player reconnected): use tracked player.ctfstats (current post-reconnect stats)
+        //   This avoids doubling because statsOffset already has pre-reconnect stats.
         for (ServerPlayer player : players) {
             try {
-                if (player.player != null && match.isInMatch(player.player) && rpp.players.contains(player)) {
-                    match.getStats(player.player).score[half].score = player.statsOffset.score + player.ctfstats.score;
-                    match.getStats(player.player).score[half].deaths = player.statsOffset.deaths + player.ctfstats.deaths;
-                    match.getStats(player.player).score[half].assists = player.statsOffset.assists + player.ctfstats.assists;
-                    match.getStats(player.player).score[half].caps = player.statsOffset.caps + player.ctfstats.caps;
-                    match.getStats(player.player).score[half].returns = player.statsOffset.returns + player.ctfstats.returns;
-                    match.getStats(player.player).score[half].fc_kills = player.statsOffset.fc_kills + player.ctfstats.fc_kills;
-                    match.getStats(player.player).score[half].stop_caps = player.statsOffset.stop_caps + player.ctfstats.stop_caps;
-                    match.getStats(player.player).score[half].protect_flag = player.statsOffset.protect_flag + player.ctfstats.protect_flag;
+                if (player.player != null && match.isInMatch(player.player)) {
+                    // Find this player's stats in the rpp snapshot
+                    ServerPlayer rppPlayer = null;
+                    for (ServerPlayer sp : rpp.players) {
+                        if (sp.equals(player)) {
+                            rppPlayer = sp;
+                            break;
+                        }
+                    }
+                    
+                    if (rppPlayer != null) {
+                        // Determine which ctfstats to use
+                        CTF_Stats ctfstatsToUse;
+                        if (player.statsOffset.hasTrackedStats()) {
+                            // Player reconnected - use current ctfstats to avoid double-counting
+                            // with stale rpp data that might have pre-reconnect stats
+                            ctfstatsToUse = player.ctfstats;
+                            log.debug("saveStats {} ({}): using tracked ctfstats (player has offset)",
+                                    player.name, player.auth);
+                        } else {
+                            // No reconnect - safe to use rpp snapshot
+                            ctfstatsToUse = rppPlayer.ctfstats;
+                        }
+                        
+                        int finalScore = player.statsOffset.score + ctfstatsToUse.score;
+                        int finalDeaths = player.statsOffset.deaths + ctfstatsToUse.deaths;
+                        int finalAssists = player.statsOffset.assists + ctfstatsToUse.assists;
+                        
+                        log.debug("saveStats {} ({}): offset(score={},deaths={},assists={}) + ctfstats(score={},deaths={},assists={}) = final(score={},deaths={},assists={})",
+                                player.name, player.auth,
+                                player.statsOffset.score, player.statsOffset.deaths, player.statsOffset.assists,
+                                ctfstatsToUse.score, ctfstatsToUse.deaths, ctfstatsToUse.assists,
+                                finalScore, finalDeaths, finalAssists);
+                        
+                        match.getStats(player.player).score[half].score = finalScore;
+                        match.getStats(player.player).score[half].deaths = finalDeaths;
+                        match.getStats(player.player).score[half].assists = finalAssists;
+                        match.getStats(player.player).score[half].caps = player.statsOffset.caps + ctfstatsToUse.caps;
+                        match.getStats(player.player).score[half].returns = player.statsOffset.returns + ctfstatsToUse.returns;
+                        match.getStats(player.player).score[half].fc_kills = player.statsOffset.fc_kills + ctfstatsToUse.fc_kills;
+                        match.getStats(player.player).score[half].stop_caps = player.statsOffset.stop_caps + ctfstatsToUse.stop_caps;
+                        match.getStats(player.player).score[half].protect_flag = player.statsOffset.protect_flag + ctfstatsToUse.protect_flag;
+                    }
                 }
             } catch (NumberFormatException e) {
                 log.warn("Exception: ", e);
@@ -450,12 +480,14 @@ public class ServerMonitor implements Runnable {
             endGame();
         } else {
             firstHalf = false;
-            // Reset statsOffset for all players at halftime so first-half disconnect
-            // offsets don't carry into second-half stats (server resets scores for new half)
+            // Server resets scoreboard for the new half. Clear both offset and
+            // ctfstats so the first second-half poll doesn't look like a reset
+            // (deaths dropping from first-half total to 0).
             for (ServerPlayer sp : players) {
                 sp.statsOffset = new CTF_Stats();
+                sp.ctfstats = new CTF_Stats();
             }
-            log.info("Halftime: reset statsOffset for all players");
+            log.info("Halftime: reset statsOffset and ctfstats for all players");
         }
     }
 
