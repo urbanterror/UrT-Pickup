@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -68,7 +69,7 @@ public class Server {
             }
             String rcon = "xxxxrcon " + rconpassword + " " + rconString;
 
-            byte[] recvBuffer = new byte[2048];
+            byte[] recvBuffer = new byte[4096];
             byte[] sendBuffer = rcon.getBytes();
 
             sendBuffer[0] = (byte) 0xff;
@@ -83,21 +84,18 @@ public class Server {
             this.socket.send(sendPacket);
 
             StringBuilder response = new StringBuilder();
-            boolean firstPacket = true;
             while (true) {
                 try {
                     this.socket.receive(recvPacket);
-                    String newString = new String(recvPacket.getData(), 0, recvPacket.getLength());
+                    // Use ISO-8859-1 for a lossless byte->char round-trip; Q3 console
+                    // output is byte-oriented and may include Latin-1 / non-UTF-8 bytes
+                    // (player names, color codes) that the platform default charset
+                    // would silently replace with U+FFFD.
+                    String newString = new String(recvPacket.getData(), 0, recvPacket.getLength(), StandardCharsets.ISO_8859_1);
                     newString = newString.substring(4); // remove 0xFFFFFFFF header
                     response.append(newString);
 
-                    // Shorter timeout after first packet - Q3 sends multi-packet responses quickly
-                    if (firstPacket) {
-                        this.socket.setSoTimeout(350);
-                        firstPacket = false;
-                    }
-
-                    recvBuffer = new byte[2048];
+                    recvBuffer = new byte[4096];
                     recvPacket = new DatagramPacket(recvBuffer, recvBuffer.length);
                 } catch (SocketTimeoutException e) {
                     break;
