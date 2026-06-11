@@ -31,9 +31,9 @@ jobs:
           name: PickupBot
           path: build/libs/PickupBot.jar
 
-      - name: Install sshpass
-        run: sudo apt-get update && sudo apt-get install -y sshpass
+      # - name: Install sshpass
+      #   run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      - name: Deploy jar to server
-        run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no build/libs/PickupBot.jar ${{ secrets.SSH_USER }}@${{ secrets.HOST }}:/home/pug/PickupDiscord/
+      # - name: Deploy jar to server
+      #   run: |
+      #     sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no build/libs/PickupBot.jar ${{ secrets.SSH_USER }}@${{ secrets.HOST }}:/home/pug/PickupDiscord/
