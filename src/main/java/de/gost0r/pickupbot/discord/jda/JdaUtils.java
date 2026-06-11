@@ -8,11 +8,12 @@ import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
-import net.dv8tion.jda.api.interactions.components.ItemComponent;
-import net.dv8tion.jda.api.interactions.components.buttons.Button;
-import net.dv8tion.jda.api.interactions.components.buttons.ButtonStyle;
-import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
-import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.actionrow.ActionRowChildComponent;
+import net.dv8tion.jda.api.components.buttons.Button;
+import net.dv8tion.jda.api.components.buttons.ButtonStyle;
+import net.dv8tion.jda.api.components.selections.SelectOption;
+import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -34,7 +35,7 @@ public class JdaUtils {
         return embedBuilder.build();
     }
 
-    public static ItemComponent mapToItemComponent(DiscordComponent component) {
+    public static ActionRowChildComponent mapToActionRowChildComponent(DiscordComponent component) {
         if (component instanceof DiscordButton button) {
             Button btn = Button.of(mapToButtonStyle(button.getStyle()), button.getCustomId(), button.getLabel());
             if (button.getEmoji() != null) {
@@ -55,18 +56,18 @@ public class JdaUtils {
         return null;
     }
 
-    public static List<List<ItemComponent>> mapToActionRows(List<DiscordComponent> components) {
-        List<List<ItemComponent>> rows = new ArrayList<>();
-        List<ItemComponent> componentList = new ArrayList<>();
+    public static List<ActionRow> mapToActionRows(List<DiscordComponent> components) {
+        List<ActionRow> rows = new ArrayList<>();
+        List<ActionRowChildComponent> componentList = new ArrayList<>();
         for (DiscordComponent component : components) {
-            componentList.add(JdaUtils.mapToItemComponent(component));
+            componentList.add(JdaUtils.mapToActionRowChildComponent(component));
             if (componentList.size() == 5) {
-                rows.add(new ArrayList<>(componentList));
-                componentList.clear();
+                rows.add(ActionRow.of(componentList));
+                componentList = new ArrayList<>();
             }
         }
         if (!componentList.isEmpty()) {
-            rows.add(new ArrayList<>(componentList));
+            rows.add(ActionRow.of(componentList));
         }
         return rows;
     }

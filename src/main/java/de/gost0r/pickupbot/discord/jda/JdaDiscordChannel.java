@@ -95,7 +95,7 @@ public class JdaDiscordChannel implements DiscordChannel {
             builder.addEmbeds(mapToMessageEmbed(embed));
         }
         if (components != null) {
-            JdaUtils.mapToActionRows(components).forEach(builder::addActionRow);
+            builder.addComponents(JdaUtils.mapToActionRows(components));
         }
         return new JdaDiscordMessage(channel.sendMessage(builder.build()).complete());
     }

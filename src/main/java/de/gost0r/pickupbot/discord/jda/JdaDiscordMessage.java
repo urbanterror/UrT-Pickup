@@ -3,7 +3,6 @@ package de.gost0r.pickupbot.discord.jda;
 import de.gost0r.pickupbot.discord.*;
 import lombok.Getter;
 import net.dv8tion.jda.api.entities.Message;
-import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import net.dv8tion.jda.api.utils.messages.MessageEditData;
 import org.jetbrains.annotations.NotNull;
@@ -69,14 +68,14 @@ public class JdaDiscordMessage implements DiscordMessage {
             if (embed != null) {
                 action.setEmbeds(mapToMessageEmbed(embed));
             }
-            JdaUtils.mapToActionRows(components).forEach(action::addActionRow);
+            action.addComponents(JdaUtils.mapToActionRows(components));
             action.queue();
         } else if (embed != null) {
             MessageCreateAction action = message.replyEmbeds(mapToMessageEmbed(embed));
-            JdaUtils.mapToActionRows(components).forEach(action::addActionRow);
+            action.addComponents(JdaUtils.mapToActionRows(components));
             action.queue();
         } else {
-            message.replyComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList())
+            message.replyComponents(JdaUtils.mapToActionRows(components))
                     .queue();
         }
     }
