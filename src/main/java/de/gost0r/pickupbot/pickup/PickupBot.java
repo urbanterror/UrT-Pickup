@@ -8,13 +8,18 @@ import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,6 +31,8 @@ public class PickupBot {
     private final DiscordService discordService;
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
+    private final Executor commandExecutor;
+    private final Executor queueExecutor;
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -37,13 +44,26 @@ public class PickupBot {
             FtwglApi ftwglApi,
             DiscordService discordService,
             PermissionService permissionService,
-            PickupRoleCache pickupRoleCache
+            PickupRoleCache pickupRoleCache,
+            @Qualifier("commandExecutor") Executor commandExecutor,
+            @Qualifier("queueExecutor") Executor queueExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
         this.discordService = discordService;
         this.permissionService = permissionService;
         this.pickupRoleCache = pickupRoleCache;
+        this.commandExecutor = commandExecutor;
+        this.queueExecutor = queueExecutor;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Shutting down bot...");
+        if (logic != null && logic.db != null) {
+            logic.db.disconnect();
+        }
+        log.info("Bot shutdown complete");
     }
 
     public void init() {
@@ -74,6 +94,19 @@ public class PickupBot {
         }
     }
 
+    private static final Set<String> QUEUE_COMMANDS = Set.of(
+            Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
+            Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
+            Config.CMD_SKEET, Config.CMD_AIM, Config.CMD_PROMOD,
+            Config.CMD_REMOVE, Config.CMD_FORCEADD,
+            Config.CMD_MAP, Config.CMD_ADDVOTE, Config.CMD_BANMAP,
+            Config.CMD_SURRENDER, Config.CMD_RESET, Config.CMD_LOCK, Config.CMD_UNLOCK,
+            Config.CMD_TEAM, Config.CMD_LEAVETEAM, Config.CMD_SCRIM,
+            Config.CMD_REMOVETEAM, Config.CMD_PRIVATE,
+            Config.CMD_CREATE_PRIVATE, Config.CMD_ADD_PLAYER_PRIVATE,
+            Config.CMD_REMOVE_PLAYER_PRIVATE, Config.CMD_LEAVE_PRIVATE
+    );
+
     public void recvMessage(DiscordMessage msg) {
         log.info("RECV #{} {}: {}",
                 (msg.getChannel() == null || msg.getChannel().getName() == null) ? "null" : msg.getChannel().getName(),
@@ -81,21 +114,29 @@ public class PickupBot {
                 msg.getContent()
         );
 
-        if (msg.getUser().getId().equals(self.getId()) || logic == null) {
+        if (self == null || msg.getUser().getId().equals(self.getId()) || logic == null) {
             return;
         }
 
         String[] data = msg.getContent().split(" ");
 
-        if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
-            Player p = Player.get(msg.getUser());
+        // Pick the right executor: queue-mutating commands go through the single-threaded
+        // queueExecutor so they are processed in order; read-only / other commands go
+        // through the multi-threaded commandExecutor so they never block.
+        Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
 
-            if (p != null) {
-                p.afkCheck();
-            }
+        executor.execute(() -> {
 
-            // Execute code according to cmd
-            switch (data[0].toLowerCase()) {
+            if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
+                Player p = Player.get(msg.getUser());
+
+                if (p != null) {
+                    p.afkCheck();
+                }
+
+                // Execute code according to cmd
+                switch (data[0].toLowerCase()) {
                 case Config.CMD_ADD:
                     if (data.length > 1) {
                         if (p != null) {
@@ -1463,7 +1504,14 @@ public class PickupBot {
                     break;
             }
         }
+        });
     }
+
+    private static final Set<String> QUEUE_INTERACTIONS = Set.of(
+            Config.INT_PICK, Config.INT_LAUNCHAC,
+            Config.INT_TEAMINVITE, Config.INT_TEAMREMOVE,
+            Config.INT_BET
+    );
 
     public void recvInteraction(DiscordInteraction interaction) {
         log.info("RECV #{} {}: {}",
@@ -1473,15 +1521,19 @@ public class PickupBot {
         );
         interaction.deferReply();
 
-        Player p = Player.get(interaction.getUser());
-        if (p == null) {
-            interaction.respondEphemeral(Config.user_not_registered);
-            return;
-        }
-
         String[] data = interaction.getComponentId().split("_");
 
-        switch (data[0].toLowerCase()) {
+        Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
+
+        executor.execute(() -> {
+            Player p = Player.get(interaction.getUser());
+            if (p == null) {
+                interaction.respondEphemeral(Config.user_not_registered);
+                return;
+            }
+
+            switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
                 logic.cmdPick(interaction, p, Integer.parseInt(data[1]));
                 break;
@@ -1538,7 +1590,8 @@ public class PickupBot {
 //					break;
 //			}
 //			break;
-        }
+            }
+        });
     }
 
     private void handleForceAdd(String[] data, DiscordMessage msg) {
