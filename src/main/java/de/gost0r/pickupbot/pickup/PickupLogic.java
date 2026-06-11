@@ -2054,10 +2054,29 @@ public class PickupLogic {
     }
 
     public List<String> getRecentMapsPlayed(Gametype gt) {
-        if (gt.getPrivate() || gt.getRecentMapExclude() <= 0) {
+        if (!usesRecentMapExclusion(gt)) {
             return Collections.emptyList();
         }
         return db.getRecentMapsPlayed(gt.getName(), gt.getRecentMapExclude());
+    }
+
+    private boolean usesRecentMapExclusion(Gametype gt) {
+        if (gt.getPrivate() || gt.getRecentMapExclude() <= 0) {
+            return false;
+        }
+        if (!gt.getName().equalsIgnoreCase("TS") && !gt.getName().equalsIgnoreCase("DIV1")) {
+            return false;
+        }
+        int activeMaps = 0;
+        for (GameMap map : mapList) {
+            if (map.isActiveForGametype(gt)) {
+                activeMaps++;
+                if (activeMaps > 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public boolean isRecentlyPlayed(Gametype gt, GameMap map) {

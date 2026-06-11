@@ -711,7 +711,7 @@ public class Match implements Runnable {
             cancelStart();
             return;
         }
-        this.map = mapList.size() == 1 ? mapList.get(0) : mapList.get(rand.nextInt(mapList.size() - 1));
+        this.map = mapList.size() == 1 ? mapList.get(0) : mapList.get(rand.nextInt(mapList.size()));
         log.info("Map: {}", this.map.name);
 
         // avg elo
@@ -903,9 +903,20 @@ public class Match implements Runnable {
     }
 
     List<GameMap> getMostMapVotes() {
+        List<GameMap> mapList = getMostMapVotes(false);
+        if (mapList.isEmpty()) {
+            mapList = getMostMapVotes(true);
+        }
+        return mapList;
+    }
+
+    private List<GameMap> getMostMapVotes(boolean allowRecentlyPlayed) {
         List<GameMap> mapList = new ArrayList<GameMap>();
         int currentVotes = -1;
         for (GameMap map : mapVotes.keySet()) {
+            if (!isMapSelectable(map, allowRecentlyPlayed)) {
+                continue;
+            }
             if (currentVotes == -1) {
                 mapList.add(map);
                 currentVotes = mapVotes.get(map);
@@ -916,11 +927,15 @@ public class Match implements Runnable {
                 mapList.clear();
                 mapList.add(map);
                 currentVotes = mapVotes.get(map);
-            } else if (mapVotes.get(map) == currentVotes && !logic.isRecentlyPlayed(gametype, map) && map.bannedUntil < System.currentTimeMillis()) {
+            } else if (mapVotes.get(map) == currentVotes) {
                 mapList.add(map);
             }
         }
         return mapList;
+    }
+
+    private boolean isMapSelectable(GameMap map, boolean allowRecentlyPlayed) {
+        return (allowRecentlyPlayed || !logic.isRecentlyPlayed(gametype, map)) && map.bannedUntil < System.currentTimeMillis();
     }
 
     public String getMapVotes(boolean skipNull) {

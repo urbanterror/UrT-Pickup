@@ -474,13 +474,64 @@ class PickupLogicTest {
                 "Turnpike should still be blocked with only 1 newer map");
     }
 
+    @Test void mapVote_allowsRecentlyPlayedMapForNonTsOrDiv1Queue() {
+        insertCompletedMatch("CTF", "ut4_riyadh", "Done");
+        var alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("CTF"), false);
+
+        var reply = logic.cmdMapVote(alpha, gt("CTF"), "riyadh", 1);
+        assertNotEquals(Config.map_played_last_game, reply.getMessage(),
+                "Recent-map exclusions should only apply to TS and DIV1 queues");
+    }
+
+    @Test void mapVote_allowsRecentlyPlayedMapWhenQueueHasOneActiveMap() {
+        insertCompletedMatch("DIV1", "ut4_turnpike", "Done");
+        var alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("DIV1"), false);
+
+        var reply = logic.cmdMapVote(alpha, gt("DIV1"), "turnpike", 1);
+        assertNotEquals(Config.map_played_last_game, reply.getMessage(),
+                "Recent-map exclusions should not apply when the queue has only one active map");
+    }
+
+    @Test void mostMapVotes_excludesRecentlyPlayedMapEvenWithMoreVotes() throws Exception {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        Match match = new Match(logic, gt("TS"), List.of(
+                logic.getMapByName("ut4_turnpike"),
+                logic.getMapByName("ut4_abbey")), perms);
+
+        Map<GameMap, Integer> mapVotes = new LinkedHashMap<>();
+        mapVotes.put(logic.getMapByName("ut4_turnpike"), 5);
+        mapVotes.put(logic.getMapByName("ut4_abbey"), 1);
+        setField(match, "mapVotes", mapVotes);
+
+        assertEquals(List.of(logic.getMapByName("ut4_abbey")), match.getMostMapVotes(),
+                "Recently played maps must not be selectable even if they have the most votes");
+    }
+
+    @Test void mostMapVotes_fallsBackToRecentMapsWhenAllMapsAreExcluded() throws Exception {
+        insertCompletedMatch("TS", "ut4_turnpike", "Done");
+        insertCompletedMatch("TS", "ut4_abbey", "Done");
+        Match match = new Match(logic, gt("TS"), List.of(
+                logic.getMapByName("ut4_turnpike"),
+                logic.getMapByName("ut4_abbey")), perms);
+
+        Map<GameMap, Integer> mapVotes = new LinkedHashMap<>();
+        mapVotes.put(logic.getMapByName("ut4_turnpike"), 0);
+        mapVotes.put(logic.getMapByName("ut4_abbey"), 0);
+        setField(match, "mapVotes", mapVotes);
+
+        assertEquals(List.of(logic.getMapByName("ut4_turnpike"), logic.getMapByName("ut4_abbey")), match.getMostMapVotes(),
+                "The bot should still be able to pick a map when every map is recent-excluded");
+    }
+
     @Test void recentMapsPlayed_separatePerGametype() {
         insertCompletedMatch("TS", "ut4_turnpike", "Done");
         insertCompletedMatch("CTF", "ut4_riyadh", "Done");
 
         assertTrue(logic.isRecentlyPlayed(gt("TS"), logic.getMapByName("ut4_turnpike")));
-        assertFalse(logic.isRecentlyPlayed(gt("CTF"), logic.getMapByName("ut4_turnpike")),
-                "TS map should not affect CTF recently-played list");
+        assertFalse(logic.isRecentlyPlayed(gt("CTF"), logic.getMapByName("ut4_riyadh")),
+                "Recent-map exclusions should not apply to CTF");
     }
     // ========== Match captain selection ==========
 
@@ -656,12 +707,14 @@ class PickupLogicTest {
         // Gametypes
         s.executeUpdate("INSERT INTO gametype VALUES('TS',5,'true',2)");
         s.executeUpdate("INSERT INTO gametype VALUES('CTF',5,'true',2)");
+        s.executeUpdate("INSERT INTO gametype VALUES('DIV1',5,'true',2)");
 
         // Maps
         for (var m : new String[]{"ut4_turnpike","ut4_abbey","ut4_casa","ut4_uptown","ut4_algiers"})
             s.executeUpdate("INSERT INTO map VALUES('" + m + "','TS','true',0)");
         for (var m : new String[]{"ut4_riyadh","ut4_sanchez","ut4_tohunga_b8"})
             s.executeUpdate("INSERT INTO map VALUES('" + m + "','CTF','true',0)");
+        s.executeUpdate("INSERT INTO map VALUES('ut4_turnpike','DIV1','true',0)");
 
         // Servers
         s.executeUpdate("INSERT INTO server VALUES(1,'192.168.1.1',27960,'rcon1','pw1','true','EU')");
