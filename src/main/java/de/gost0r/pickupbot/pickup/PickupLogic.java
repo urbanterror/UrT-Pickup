@@ -48,7 +48,6 @@ public class PickupLogic {
     private boolean dynamicServers;
 
     private Map<BanReason, String[]> banDuration;
-    private Map<Gametype, GameMap> lastMapPlayed;
 
     public Season currentSeason;
 
@@ -82,11 +81,9 @@ public class PickupLogic {
         awaitingServer = new LinkedList<Match>();
         curMatch = new HashMap<Gametype, Match>();
         teamsQueued = new HashMap<Team, Gametype>();
-        lastMapPlayed = new HashMap<Gametype, GameMap>();
         for (Gametype gt : db.loadGametypes()) {
             if (gt.getActive()) {
                 curMatch.put(gt, null);
-                lastMapPlayed.put(getGametypeByString(gt.getName()), new GameMap("null"));
             }
         }
         mapList = db.loadMaps(); // needs current gamemode list
@@ -1024,7 +1021,7 @@ public class PickupLogic {
                 if (counter == 0) {
                     return new PickupReply(Config.map_not_found);
                 }
-                if (!gametype.getPrivate() && lastMapPlayed.get(gametype).name.equals(map.name)) {
+                if (!gametype.getPrivate() && isRecentlyPlayed(gametype, map)) {
                     return new PickupReply(Config.map_played_last_game);
                 }
                 if (map.bannedUntil >= System.currentTimeMillis()) {
@@ -2099,21 +2096,34 @@ public class PickupLogic {
         return null;
     }
 
-    public void setLastMapPlayed(Gametype gt, GameMap map) {
-        lastMapPlayed.remove(gt);
-        lastMapPlayed.put(gt, map);
-    }
-
-    public void removeLastMapPlayed(Gametype gt) {
-        lastMapPlayed.remove(gt);
-        lastMapPlayed.put(gt, new GameMap("null"));
-    }
-
-    public GameMap getLastMapPlayed(Gametype gt) {
-        if (gt.getPrivate()) {
-            return new GameMap("null");
+    public List<String> getRecentMapsPlayed(Gametype gt) {
+        if (!usesRecentMapExclusion(gt)) {
+            return Collections.emptyList();
         }
-        return lastMapPlayed.get(gt);
+        return db.getRecentMapsPlayed(gt.getName(), gt.getRecentMapExclude());
+    }
+
+    private boolean usesRecentMapExclusion(Gametype gt) {
+        if (gt.getPrivate() || gt.getRecentMapExclude() <= 0) {
+            return false;
+        }
+        if (!gt.getName().equalsIgnoreCase("TS") && !gt.getName().equalsIgnoreCase("DIV1")) {
+            return false;
+        }
+        int activeMaps = 0;
+        for (GameMap map : mapList) {
+            if (map.isActiveForGametype(gt)) {
+                activeMaps++;
+                if (activeMaps > 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public boolean isRecentlyPlayed(Gametype gt, GameMap map) {
+        return getRecentMapsPlayed(gt).contains(map.name);
     }
 
     public Server setupGTV() {

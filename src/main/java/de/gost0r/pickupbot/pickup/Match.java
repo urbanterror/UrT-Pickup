@@ -711,7 +711,7 @@ public class Match implements Runnable {
             cancelStart();
             return;
         }
-        this.map = mapList.size() == 1 ? mapList.get(0) : mapList.get(rand.nextInt(mapList.size() - 1));
+        this.map = mapList.size() == 1 ? mapList.get(0) : mapList.get(rand.nextInt(mapList.size()));
         log.info("Map: {}", this.map.name);
 
         // avg elo
@@ -814,7 +814,7 @@ public class Match implements Runnable {
             buttons.add(buttonBetBlue);
         }
 
-        logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), fullmsg.toString(), null, buttons);
+        List<DiscordMessage> pubAnnounceMsgs = logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), fullmsg.toString(), null, buttons);
 
         if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
             logic.ftwglApi.queryAndUpdateServerIp(server);
@@ -832,12 +832,14 @@ public class Match implements Runnable {
         buttons.add(button);
 
         msg = Config.pkup_go_player;
+        msg = msg.replace(".gamenumber.", String.valueOf(id));
         msg = msg.replace(".server.", server.getAddress());
         msg = msg.replace(".password.", server.password);
         for (String team : teamList.keySet()) {
             for (Player player : teamList.get(team)) {
                 if (player.getEnforceAC()) {
-                    player.getDiscordUser().sendPrivateMessage(Config.pkup_go_player_ac, null, buttons);
+                    String acMsg = Config.pkup_go_player_ac.replace(".gamenumber.", String.valueOf(id));
+                    player.getDiscordUser().sendPrivateMessage(acMsg, null, buttons);
                     continue;
                 }
                 String msg_t = msg.replace(".team.", team.toUpperCase());
@@ -848,19 +850,48 @@ public class Match implements Runnable {
         serverReadyTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
+        msg = msg.replace(".gamenumber.", String.valueOf(id));
         msg = msg.replace(".gametype.", gametype.getName());
-        logic.bot.sendMsgToEdit(logic.getChannelByType(PickupChannelType.PUBLIC), msg, null, buttons);
+        for (DiscordMessage announceMsg : pubAnnounceMsgs) {
+            announceMsg.reply(msg, null, buttons);
+        }
 
         // set server data
         server.sendRcon("kick allbots");
-        server.sendRcon("g_password " + server.password);
-        for (String s : this.gametype.getConfig()) {
-            server.sendRcon(s);
+        
+        // Batch all config commands including map for faster server setup
+        // Uses vstr technique (defines temp cvar with semicolon-joined commands, then executes)
+        List<String> configBatch = new ArrayList<>();
+        configBatch.add("g_password " + server.password);
+        configBatch.addAll(this.gametype.getConfig());
+        configBatch.add("g_warmup 10");
+        configBatch.add("map " + this.map.name);
+        
+        // Send batch with retry logic - UDP packets can be lost
+        final int MAX_RETRIES = 3;
+        final int RETRY_DELAY_MS = 10000;
+        
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            server.sendRconBatch(configBatch);
+            
+            // Wait for map to load and verify
+            try { Thread.sleep(RETRY_DELAY_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            
+            // Check if map loaded correctly by querying mapname
+            String mapCheck = server.sendRcon("mapname");
+            if (mapCheck != null && mapCheck.toLowerCase().contains(this.map.name.toLowerCase())) {
+                log.info("Server config applied successfully on attempt {}", attempt);
+                break;
+            }
+            
+            if (attempt < MAX_RETRIES) {
+                log.warn("Map {} not detected after attempt {}, retrying...", this.map.name, attempt);
+            } else {
+                log.error("Failed to apply server config after {} attempts", MAX_RETRIES);
+            }
         }
-        server.sendRcon("map " + this.map.name);
-        server.sendRcon("g_warmup 10");
 
-        //logic.setLastMapPlayed(gametype, map);
+        // Recently-played map exclusion is now DB-backed (no in-memory tracking needed)
 
         if (gtvServer != null) {
             gtvServer.sendRcon("gtv_connect " + server.getAddress() + "  " + server.password);
@@ -872,9 +903,20 @@ public class Match implements Runnable {
     }
 
     List<GameMap> getMostMapVotes() {
+        List<GameMap> mapList = getMostMapVotes(false);
+        if (mapList.isEmpty()) {
+            mapList = getMostMapVotes(true);
+        }
+        return mapList;
+    }
+
+    private List<GameMap> getMostMapVotes(boolean allowRecentlyPlayed) {
         List<GameMap> mapList = new ArrayList<GameMap>();
         int currentVotes = -1;
         for (GameMap map : mapVotes.keySet()) {
+            if (!isMapSelectable(map, allowRecentlyPlayed)) {
+                continue;
+            }
             if (currentVotes == -1) {
                 mapList.add(map);
                 currentVotes = mapVotes.get(map);
@@ -885,11 +927,15 @@ public class Match implements Runnable {
                 mapList.clear();
                 mapList.add(map);
                 currentVotes = mapVotes.get(map);
-            } else if (mapVotes.get(map) == currentVotes && !map.equals(logic.getLastMapPlayed(gametype)) && map.bannedUntil < System.currentTimeMillis()) {
+            } else if (mapVotes.get(map) == currentVotes) {
                 mapList.add(map);
             }
         }
         return mapList;
+    }
+
+    private boolean isMapSelectable(GameMap map, boolean allowRecentlyPlayed) {
+        return (allowRecentlyPlayed || !logic.isRecentlyPlayed(gametype, map)) && map.bannedUntil < System.currentTimeMillis();
     }
 
     public String getMapVotes(boolean skipNull) {
@@ -897,15 +943,15 @@ public class Match implements Runnable {
         List<GameMap> mostMapVotes = getMostMapVotes();
         StringBuilder msg = new StringBuilder("None");
         for (GameMap map : mapVotes.keySet()) {
-            if (skipNull && mapVotes.get(map) == 0 && !logic.getLastMapPlayed(gametype).name.equals(map.name) && map.bannedUntil < System.currentTimeMillis())
+            if (skipNull && mapVotes.get(map) == 0 && !logic.isRecentlyPlayed(gametype, map) && map.bannedUntil < System.currentTimeMillis())
                 continue;
             if (msg.toString().equals("None")) {
                 msg = new StringBuilder();
             } else {
                 msg.append(" - ");
             }
-            log.info("{} {}", logic.getLastMapPlayed(gametype).name, map.name);
-            if (logic.getLastMapPlayed(gametype).name.equals(map.name)) {
+            log.info("recentMaps={} current={}", logic.getRecentMapsPlayed(gametype), map.name);
+            if (logic.isRecentlyPlayed(gametype, map)) {
                 String mapString = "~~" + map.name + "~~";
                 msg.append(mapString);
             } else if (map.bannedUntil >= System.currentTimeMillis()) {
@@ -1476,6 +1522,11 @@ public class Match implements Runnable {
         embed.addField("Players", lobby_players_string.toString(), true);
         embed.addField("Rating | Win%", rating_wdl_string.toString(), true);
         embed.addField("Ping", ping_string.toString(), true);
+
+        String compareUrl = logic.ftwglApi.getComparePageUrl(sortedPlayers);
+        if (compareUrl != null) {
+            embed.addField("\u200b", "[Compare on FTW](" + compareUrl + ")", false);
+        }
 
         return embed;
     }

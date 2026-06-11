@@ -272,15 +272,15 @@ public class Config {
 
     public static final String pkup_match_print_info = "**.gametype. #.gamenumber.**: **[**.map.**] [**.ingame.**] [**.redteam.**]** VS **[**.blueteam.**]**";
 
-    public static final String pkup_go_player = "**Pickup starts now! Connect, choose positions and ready up!**\n ```/connect .server. ; password .password. ```\n :bulb: The **AC** will soon be **mandatory** for all players, forcing you to press the **Connect to server** button to join games.\n\n This enhancement is made to ensure matches remain fair and fun. Thank you for your continued involvement and activity in Urban Terror. Happy fragging!\n\n Check out: <https://discord.com/channels/117622053061787657/1067227082372952084/1067227082372952084>";
-    public static final String pkup_go_player_ac = "Pickup starts now! Click the button below to join the server, choose positions and ready up!.";
+    public static final String pkup_go_player = "**Match #.gamenumber.** — **Pickup starts now! Connect, choose positions and ready up!**\n ```/connect .server. ; password .password. ```\n :bulb: The **AC** will soon be **mandatory** for all players, forcing you to press the **Connect to server** button to join games.\n\n This enhancement is made to ensure matches remain fair and fun. Thank you for your continued involvement and activity in Urban Terror. Happy fragging!\n\n Check out: <https://discord.com/channels/117622053061787657/1067227082372952084/1067227082372952084>";
+    public static final String pkup_go_player_ac = "**Match #.gamenumber.** — Pickup starts now! Click the button below to join the server, choose positions and ready up!";
     public static final String pkup_go_captains = "Pickup is about to start and you are **captain**! Please pick players in the recently created discord thread.";
     public static final String pkup_go_pub_head = "**.gametype.: Match #.gamenumber.** .region. (avg ELO: .elo.)";
     public static final String pkup_go_pub_team = "**.team.**  .playerlist.";
     public static final String pkup_go_pub_map = "Map: .map.";
     public static final String pkup_go_pub_calm = "**GTV**: connect gtv.b00bs-clan.com:709; password SevenAndJehar"; // temporarily hard coded
     public static final String pkup_go_pub_calm_notavi = "GTV: not available";
-    public static final String pkup_go_pub_sent = "**.gametype.**: Server info has been sent.";
+    public static final String pkup_go_pub_sent = "**Match #.gamenumber.** — **.gametype.**: Server info has been sent.";
     public static final String pkup_go_pub_threadtitle = "Match .ID.";
     public static final String pkup_go_pub_captains = "The captains are .captain1. (**red**) and .captain2. (**blue**). Player stats:";
     public static final String pkup_go_pub_pick = ".captain. pick a player:";
@@ -319,7 +319,7 @@ public class Config {
     public static final String map_not_unique = "Mapstring not unique.";
     public static final String map_cannot_vote = "You cannot vote right now.";
     public static final String map_specify_gametype = "Please use: **!map <gametype> <map>**.";
-    public static final String map_played_last_game = "This map was played last game, please vote for a different map.";
+    public static final String map_played_last_game = "This map was played recently, please vote for a different map.";
     public static final String map_already_banned = "This map is already banned (Expires <t:.remaining.:R>).";
     public static final String map_banned = "This map is currently banned (Expires <t:.remaining.:R>).";
     public static final String no_additonal_vote = "You currently don't have any additional vote to spend. Buy some by sending ``/buy``.";

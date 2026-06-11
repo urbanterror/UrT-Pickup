@@ -12,7 +12,9 @@ public class PlayerBan {
         AFK,
         CHEAT,
         DEMO,
-        FAKE
+        FAKE,
+        TK,
+        RACISM
     }
 
     public Player player;

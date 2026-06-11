@@ -66,7 +66,7 @@ public class JdaDiscordUser implements DiscordUser {
         }
 
         if (components != null && !components.isEmpty()) {
-            JdaUtils.mapToActionRows(components).forEach(builder::addActionRow);
+            builder.addComponents(JdaUtils.mapToActionRows(components));
         }
 
         MessageCreateData messageData = builder.build();

@@ -41,7 +41,7 @@ dependencies {
     implementation 'org.json:json:20250517'
     implementation 'org.xerial:sqlite-jdbc:3.50.2.0'
 
-    implementation("net.dv8tion:JDA:5.6.1") {
+    implementation("net.dv8tion:JDA:6.4.1") {
         exclude module: 'opus-java'
         exclude module: 'tink'
     }

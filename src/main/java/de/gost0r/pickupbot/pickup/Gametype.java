@@ -18,14 +18,20 @@ public class Gametype {
     private boolean pv; // Private gametype
 
     private int teamSize;
+    private int recentMapExclude;
 
     private List<String> config;
 
     public Gametype(String name, int teamSize, boolean active, boolean pv) {
+        this(name, teamSize, active, pv, 2);
+    }
+
+    public Gametype(String name, int teamSize, boolean active, boolean pv, int recentMapExclude) {
         this.setName(name);
         this.setActive(active);
         this.setTeamSize(teamSize);
         this.setPrivate(pv);
+        this.recentMapExclude = recentMapExclude;
 
         config = new ArrayList<String>();
         this.loadGameConfig();
@@ -61,6 +67,14 @@ public class Gametype {
 
     public void setPrivate(boolean pv) {
         this.pv = pv;
+    }
+
+    public int getRecentMapExclude() {
+        return recentMapExclude;
+    }
+
+    public void setRecentMapExclude(int recentMapExclude) {
+        this.recentMapExclude = recentMapExclude;
     }
 
     public List<String> getConfig() {

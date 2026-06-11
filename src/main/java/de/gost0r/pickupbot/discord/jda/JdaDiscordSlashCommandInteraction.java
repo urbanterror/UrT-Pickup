@@ -8,7 +8,6 @@ import lombok.Getter;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
-import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.requests.restaction.WebhookMessageEditAction;
 
 import java.util.ArrayList;
@@ -74,17 +73,17 @@ public class JdaDiscordSlashCommandInteraction implements DiscordSlashCommandInt
                 callback.setEmbeds(JdaUtils.mapToMessageEmbed(embed));
             }
             if (components != null) {
-                callback.setComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList());
+                callback.setComponents(JdaUtils.mapToActionRows(components));
             }
             callback.queue();
         } else if (embed != null) {
             WebhookMessageEditAction<Message> callback = event.getHook().editOriginalEmbeds(JdaUtils.mapToMessageEmbed(embed));
             if (components != null) {
-                callback.setComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList());
+                callback.setComponents(JdaUtils.mapToActionRows(components));
             }
             callback.queue();
         } else if (components != null) {
-            event.getHook().editOriginalComponents(JdaUtils.mapToActionRows(components).stream().map(ActionRow::of).toList())
+            event.getHook().editOriginalComponents(JdaUtils.mapToActionRows(components))
                     .queue();
         }
     }
