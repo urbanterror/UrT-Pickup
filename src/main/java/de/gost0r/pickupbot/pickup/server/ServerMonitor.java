@@ -496,6 +496,11 @@ public class ServerMonitor implements Runnable {
         timeLimit = getTimeLimit();
         maxRounds = getMaxRounds();
         scoreLimit = getScoreLimit();
+        for (ServerPlayer sp : players) {
+            sp.statsOffset = new CTF_Stats();
+            sp.ctfstats = new CTF_Stats();
+        }
+        log.info("Match went LIVE: reset statsOffset and ctfstats for all players");
     }
 
     private void updatePlayers(RconPlayersParsed rpp) throws Exception {

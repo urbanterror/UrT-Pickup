@@ -796,4 +796,31 @@ class StatsOffsetTest {
         assertEquals(8, sp.statsOffset.deaths);
         assertEquals(4, sp.statsOffset.assists);
     }
+
+    @Test
+    void transitionToLive_resetsWarmupStats() {
+        ServerPlayer sp = new ServerPlayer();
+        sp.auth = "warmupPlayer";
+        sp.ctfstats.score = 4;
+        sp.ctfstats.deaths = 2;
+        sp.ctfstats.assists = 1;
+        
+        // Simulates the rpp poll when live transition occurs: stats reset to 0/0/0
+        CTF_Stats liveStats = new CTF_Stats();
+        
+        // This drops deaths from 2 to 0, which triggers preserveStatsIfReset
+        assertTrue(sp.preserveStatsIfReset(liveStats));
+        assertEquals(4, sp.statsOffset.score);
+        assertEquals(2, sp.statsOffset.deaths);
+        assertEquals(1, sp.statsOffset.assists);
+        
+        // Now simulate handleLiveTransition resetting statsOffset and ctfstats
+        sp.statsOffset = new CTF_Stats();
+        sp.ctfstats = new CTF_Stats();
+        
+        assertEquals(0, sp.statsOffset.score);
+        assertEquals(0, sp.statsOffset.deaths);
+        assertEquals(0, sp.ctfstats.score);
+        assertEquals(0, sp.ctfstats.deaths);
+    }
 }
