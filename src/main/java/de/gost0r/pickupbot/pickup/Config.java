@@ -29,7 +29,6 @@ public class Config {
     public static final String CMD_ADDVOTE = "!addvote";
     public static final String CMD_BANMAP = "!banmap";
     public static final String CMD_WALLET = "!wallet";
-    public static final String CMD_DONATE = "!donate";
     public static final String CMD_BETHISTORY = "!bethistory";
 
     public static final String CMD_LOCK = "!lock";
@@ -113,7 +112,7 @@ public class Config {
             + " " + CMD_MAPS + " " + CMD_MAP + " " + CMD_MATCH + " " + CMD_LAST + " " + CMD_LIVE + " " + CMD_STATUS + " " + CMD_HELP
             + " " + CMD_GETELO + " " + CMD_GETSTATS + " " + CMD_TOP_PLAYERS + " " + CMD_TOP_COUNTRIES + " " + CMD_TOP_KDR + " " + CMD_TOP_WDL
             + " " + CMD_SURRENDER + " " + CMD_BANINFO + " " + CMD_VOTES + " " + CMD_LAST + " " + CMD_TEAM + " " + CMD_LEAVETEAM + " " + CMD_SCRIM
-            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH
+            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH
             + " " + CMD_CREATE_PRIVATE + " " + CMD_PRIVATE + " " + CMD_ADD_PLAYER_PRIVATE + " " + CMD_REMOVE_PLAYER_PRIVATE + " " + CMD_LEAVE_PRIVATE
             + " " + CMD_SHOW_PRIVATE;
 
@@ -207,8 +206,6 @@ public class Config {
     public static final String USE_CMD_TEAM = "!team <@user1> <@user2> <...>";
     public static final String USE_CMD_LEAVETEAM = "!leaveteam removes you from your current team";
     public static final String USE_CMD_TEAMS = "!teams lists the active teams";
-
-    public static final String USE_CMD_DONATE = "!donate <player> <amount>";
 
     public static final String USE_CMD_CREATE_PRIVATE = "!createprivate <gamemode> <players (optional)>";
     public static final String USE_CMD_ADD_PLAYER_PRIVATE = "!addprivate <players>";

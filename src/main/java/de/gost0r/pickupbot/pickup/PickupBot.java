@@ -627,32 +627,6 @@ public class PickupBot {
 
                     } else msg.reply(Config.user_not_registered);
                     break;
-                case Config.CMD_DONATE:
-                    if (p != null) {
-                        if (data.length == 3) {
-
-                            Player pOther;
-                            DiscordUser u = discordService.getUserFromMention(data[1]);
-                            if (u != null) {
-                                pOther = Player.get(u);
-                            } else {
-                                pOther = Player.get(data[1].toLowerCase());
-                            }
-
-                            if (pOther != null) {
-                                int amount;
-                                try {
-                                    amount = Integer.parseInt(data[2]);
-                                    logic.cmdDonate(p, pOther, amount).replyTo(msg);
-                                } catch (NumberFormatException nfe) {
-                                    msg.reply(Config.donate_incorrect_amount);
-                                }
-                            } else msg.reply(Config.player_not_found);
-                        } else
-                            msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_DONATE));
-
-                    } else msg.reply(Config.user_not_registered);
-                    break;
                 case Config.CMD_BETHISTORY:
                     if (p != null) {
                         if (data.length == 1) {
