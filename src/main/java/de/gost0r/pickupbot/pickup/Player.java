@@ -47,7 +47,9 @@ public class Player {
     public Player(DiscordUser user, String urtauth) {
         this.user = user;
         this.setUrtauth(urtauth);
-        playerList.add(this);
+        synchronized (Player.class) {
+            playerList.add(this);
+        }
     }
 
     public void voteMap(Gametype gametype, GameMap map) {
@@ -254,7 +256,7 @@ public class Player {
 
     private static List<Player> playerList = new ArrayList<Player>();
 
-    public static Player get(String urtauth) {
+    public static synchronized Player get(String urtauth) {
         for (Player player : playerList) {
             if (player.getUrtauth().equals(urtauth) && player.getActive())
                 return player;
@@ -263,7 +265,7 @@ public class Player {
         return p;
     }
 
-    public static Player get(DiscordUser user) {
+    public static synchronized Player get(DiscordUser user) {
         for (Player player : playerList) {
             if (player.getDiscordUser().equals(user) && player.getActive())
                 return player;
@@ -272,7 +274,7 @@ public class Player {
         return p;
     }
 
-    public static Player get(DiscordUser user, String urtauth) {
+    public static synchronized Player get(DiscordUser user, String urtauth) {
         for (Player player : playerList) {
             if (player.getUrtauth().equals(urtauth) && player.getDiscordUser().equals(user))
                 return player;
@@ -313,10 +315,12 @@ public class Player {
         this.country = country;
     }
 
-    public static void remove(Player player) {
-        if (playerList.contains(player)) {
-            playerList.remove(player);
-        }
+    public static synchronized void remove(Player player) {
+        player.setActive(false);
+        playerList.removeIf(candidate ->
+                candidate.getDiscordUser().getId().equals(player.getDiscordUser().getId())
+                        && candidate.getUrtauth().equals(player.getUrtauth())
+        );
     }
 
     public boolean getEnforceAC() {

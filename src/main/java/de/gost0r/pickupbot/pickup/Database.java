@@ -976,11 +976,17 @@ public class Database {
                 banstmt.setString(2, player.getUrtauth());
                 ResultSet banSet = banstmt.executeQuery();
                 while (banSet.next()) {
+                    BanReason reason = BanReason.fromStorage(banSet.getString("reason"));
+                    if (reason == null) {
+                        log.warn("Skipping ban with unknown reason '{}' for player {}", banSet.getString("reason"), player.getUrtauth());
+                        continue;
+                    }
+
                     PlayerBan ban = new PlayerBan();
                     ban.player = player;
                     ban.startTime = banSet.getLong("start");
                     ban.endTime = banSet.getLong("end");
-                    ban.reason = BanReason.valueOf(banSet.getString("reason"));
+                    ban.reason = reason;
                     ban.pardon = banSet.getString("pardon").matches("^[0-9]*$") ? discordService.getUserById(banSet.getString("pardon")) : null;
                     ban.forgiven = banSet.getBoolean("forgiven");
                     player.addBan(ban);
@@ -1201,17 +1207,19 @@ public class Database {
         }
     }
 
-    public void removePlayer(Player player) {
+    public boolean removePlayer(Player player) {
         try {
             String sql = "UPDATE player SET active=? WHERE userid=? AND urtauth=?";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, String.valueOf(false));
             pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
-            pstmt.executeUpdate();
+            int updatedRows = pstmt.executeUpdate();
             pstmt.close();
+            return updatedRows > 0;
         } catch (SQLException e) {
             log.warn("Exception: ", e);
+            return false;
         }
     }
 

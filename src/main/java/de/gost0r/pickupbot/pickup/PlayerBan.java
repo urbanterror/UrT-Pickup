@@ -2,6 +2,8 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordUser;
 
+import java.util.Locale;
+
 public class PlayerBan {
 
     public enum BanReason {
@@ -14,7 +16,19 @@ public class PlayerBan {
         DEMO,
         FAKE,
         TK,
-        RACISM
+        RACISM;
+
+        public static BanReason fromStorage(String reason) {
+            if (reason == null) {
+                return null;
+            }
+
+            try {
+                return valueOf(reason.trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
     }
 
     public Player player;
