@@ -13,11 +13,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -30,13 +32,20 @@ public class FtwglApi {
 
     public FtwglApi(
             @Value("${app.ftw.url}") String apiUrl,
-            @Value("${app.ftw.key}") String apiKey
+            @Value("${app.ftw.key}") String apiKey,
+            @Value("${app.ftw.connect-timeout:2s}") Duration connectTimeout,
+            @Value("${app.ftw.read-timeout:5s}") Duration readTimeout
     ) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(connectTimeout);
+        requestFactory.setReadTimeout(readTimeout);
+
         restClient = RestClient
                 .builder()
                 .baseUrl(apiUrl)
                 .defaultHeader("Authorization", apiKey)
                 .defaultHeader("User-Agent", "Bot")
+                .requestFactory(requestFactory)
                 .build();
     }
 

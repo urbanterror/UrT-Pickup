@@ -6,6 +6,8 @@ app:
   ftw:
     url: ${FTW_URL}
     key: ${FTW_KEY}
+    connect-timeout: ${FTW_CONNECT_TIMEOUT:2s}
+    read-timeout: ${FTW_READ_TIMEOUT:5s}
 
 logging:
   level:
