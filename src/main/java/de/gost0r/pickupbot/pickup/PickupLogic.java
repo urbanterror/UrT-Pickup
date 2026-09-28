@@ -15,6 +15,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -107,10 +108,19 @@ public class PickupLogic {
     }
 
     public PickupReply cmdAddPlayer(Player player, Gametype gt, boolean forced) {
-        if ((dynamicServers || gt.getTeamSize() == 0) && !ftwglApi.checkIfPingStored(player)) {
+        boolean requiresPing = dynamicServers || gt.getTeamSize() == 0;
+        CompletableFuture<Boolean> pingStored = requiresPing
+                ? CompletableFuture.supplyAsync(() -> ftwglApi.checkIfPingStored(player))
+                : CompletableFuture.completedFuture(true);
+        CompletableFuture<Boolean> launcherOn = player.getEnforceAC()
+                ? CompletableFuture.supplyAsync(() -> ftwglApi.hasLauncherOn(player))
+                : CompletableFuture.completedFuture(true);
+
+        CompletableFuture.allOf(pingStored, launcherOn).join();
+        if (!pingStored.join()) {
             return cmdGetPingURL(player);
         }
-        if (player.getEnforceAC() && !ftwglApi.hasLauncherOn(player)) {
+        if (!launcherOn.join()) {
             return new PickupReply(Config.pkup_launcheroff);
         }
 
@@ -252,7 +262,9 @@ public class PickupLogic {
         for (Match m : matches) {
             m.removePlayer(player, true);
         }
-        db.removePlayer(player);
+        if (!db.removePlayer(player)) {
+            return false;
+        }
         Player.remove(player);
         return true;
     }
@@ -1723,6 +1735,9 @@ public class PickupLogic {
     public void afkCheck() {
         Set<Player> playerList = new HashSet<Player>();
         for (Match m : curMatch.values()) {
+            if (m == null) {
+                continue;
+            }
             playerList.addAll(m.getPlayerList());
         }
 
@@ -1748,6 +1763,9 @@ public class PickupLogic {
         }
 
         for (Match m : ongoingMatches) {
+            if (m == null) {
+                continue;
+            }
             if (m.getMatchState() != MatchState.AwaitingServer) {
                 continue;
             }
@@ -1883,6 +1901,10 @@ public class PickupLogic {
 
 
     public String printBanInfo(Player player) {
+        return printBanInfo(player, false);
+    }
+
+    public String printBanInfo(Player player, boolean extendedHistory) {
         PlayerBan ban = player.getLatestBan();
 
         String msg = Config.not_banned;
@@ -1899,13 +1921,24 @@ public class PickupLogic {
             msg = msg.replace(".time.", time);
         }
 
-        ArrayList<PlayerBan> past_bans = player.getPlayerBanListSince(System.currentTimeMillis() - parseDurationFromString("2M"));
+        ArrayList<PlayerBan> allBans = player.getPlayerBanListSince(0);
+        long totalBanDuration = 0;
+        for (PlayerBan pastBan : allBans) {
+            totalBanDuration += Math.max(0, pastBan.endTime - pastBan.startTime);
+        }
+        String totalDuration = totalBanDuration == 0 ? "0s" : parseStringFromDuration(totalBanDuration);
+        msg += "\n" + Config.ban_history_totals
+                .replace(".count.", String.valueOf(allBans.size()))
+                .replace(".duration.", totalDuration);
+
+        long historyDuration = parseDurationFromString(extendedHistory ? "6M" : "2M");
+        ArrayList<PlayerBan> past_bans = player.getPlayerBanListSince(System.currentTimeMillis() - historyDuration);
         if (past_bans.size() == 0) {
             return msg;
         }
 
         msg = msg + "\n\n";
-        msg = msg + Config.ban_history;
+        msg = msg + (extendedHistory ? Config.ban_history_extended : Config.ban_history);
         String ban_item;
         for (PlayerBan past_ban : past_bans) {
             ban_item = '\n' + Config.ban_history_item;
@@ -2051,6 +2084,9 @@ public class PickupLogic {
 
     public Match playerInActiveMatch(Player player) {
         for (Match m : ongoingMatches) {
+            if (m == null) {
+                continue;
+            }
             if (m.isInMatch(player)) {
                 return m;
             }
@@ -2060,8 +2096,9 @@ public class PickupLogic {
 
     public Match playerInMatch(Gametype gametype, Player player) {
         if (curMatch.containsKey(gametype)) {
-            if (curMatch.get(gametype).isInMatch(player)) {
-                return curMatch.get(gametype);
+            Match match = curMatch.get(gametype);
+            if (match != null && match.isInMatch(player)) {
+                return match;
             }
         }
         return null;

@@ -71,8 +71,9 @@ public class PickupBot {
         this.self = discordService.getMe();
         log.info("Bot user: {} (ID: {})", self.getUsername(), self.getId());
 
-        logic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
-        logic.init();
+        PickupLogic initializedLogic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
+        initializedLogic.init();
+        logic = initializedLogic;
 
         var publicChannels = logic.getChannelByType(PickupChannelType.PUBLIC);
         log.info("Attempting to send startup message to {} PUBLIC channels", publicChannels.size());
@@ -98,6 +99,7 @@ public class PickupBot {
             Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
             Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
             Config.CMD_SKEET, Config.CMD_AIM, Config.CMD_PROMOD,
+            Config.CMD_REGISTER, Config.CMD_UNREGISTER,
             Config.CMD_REMOVE, Config.CMD_FORCEADD,
             Config.CMD_MAP, Config.CMD_ADDVOTE, Config.CMD_BANMAP,
             Config.CMD_SURRENDER, Config.CMD_RESET, Config.CMD_LOCK, Config.CMD_UNLOCK,
@@ -1658,9 +1660,10 @@ public class PickupBot {
     }
 
     private void handleBanInfo(Player senderPlayer, String[] data, DiscordMessage msg) {
+        boolean extendedHistory = isChannel(PickupChannelType.ADMIN, msg.getChannel());
         if (data.length == 1) {
             if (senderPlayer != null) {
-                msg.reply(logic.printBanInfo(senderPlayer));
+                msg.reply(logic.printBanInfo(senderPlayer, extendedHistory));
             } else {
                 msg.reply(Config.user_not_registered);
             }
@@ -1678,7 +1681,7 @@ public class PickupBot {
             }
 
             if (pOther != null) {
-                msg.reply(logic.printBanInfo(pOther));
+                msg.reply(logic.printBanInfo(pOther, extendedHistory));
             } else msg.reply(Config.player_not_found);
         } else
             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_BANINFO));

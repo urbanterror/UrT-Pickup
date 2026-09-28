@@ -380,7 +380,7 @@ class PickupBotCommandRoutingTest {
         DiscordMessage msg = mockMessage("!baninfo <@1003>", users.get("alpha"), admChannel);
         bot.recvMessage(msg);
 
-        verify(msg).reply(logic.printBanInfo(players.get("charlie")));
+        verify(msg).reply(logic.printBanInfo(players.get("charlie"), true));
     }
 
     @Test void baninfo_fromAdminChannel_lookupByUrtauth() {
@@ -388,7 +388,27 @@ class PickupBotCommandRoutingTest {
         DiscordMessage msg = mockMessage("!baninfo delta", users.get("alpha"), admChannel);
         bot.recvMessage(msg);
 
-        verify(msg).reply(logic.printBanInfo(players.get("delta")));
+        verify(msg).reply(logic.printBanInfo(players.get("delta"), true));
+    }
+
+    @Test void baninfo_adminChannelShowsOlderHistoryHiddenInPublicChannel() {
+        PlayerBan oldBan = new PlayerBan();
+        oldBan.player = players.get("juliet");
+        oldBan.startTime = System.currentTimeMillis() - PickupLogic.parseDurationFromString("3M");
+        oldBan.endTime = oldBan.startTime + PickupLogic.parseDurationFromString("1d");
+        oldBan.reason = PlayerBan.BanReason.NOSHOW;
+        players.get("juliet").addBan(oldBan);
+
+        when(perms.hasAdminRights(users.get("alpha"))).thenReturn(true);
+        DiscordMessage adminMsg = mockMessage("!baninfo juliet", users.get("alpha"), admChannel);
+        bot.recvMessage(adminMsg);
+        verify(adminMsg).reply(argThat(reply ->
+                reply.contains("Past 6 months") && reply.contains("NOSHOW")));
+
+        DiscordMessage publicMsg = mockMessage("!baninfo juliet", users.get("alpha"), pubChannel);
+        bot.recvMessage(publicMsg);
+        verify(publicMsg).reply(argThat(reply ->
+                reply.contains("**Total bans:** 1") && !reply.contains("NOSHOW")));
     }
 
     @Test void baninfo_fromSuperAdminDM_works() {

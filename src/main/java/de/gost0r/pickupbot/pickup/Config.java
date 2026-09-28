@@ -314,6 +314,8 @@ public class Config {
     public static final String is_notbanned_but_manual = ".urtauth. has no bot ban, but has an active manual ban. Use !unban instead.";
     public static final String not_banned = "No active bans found for .urtauth.";
     public static final String ban_history = "**__Ban history:__** (Past 2 months)";
+    public static final String ban_history_extended = "**__Ban history:__** (Past 6 months)";
+    public static final String ban_history_totals = "**Total bans:** .count. | **Total duration:** .duration.";
     public static final String ban_history_item = "<t:.date.:d> .duration. .reason.";
     public static final String map_not_found = "Map not found.";
     public static final String map_not_unique = "Mapstring not unique.";
