@@ -74,7 +74,7 @@ class PickupBotCommandRoutingTest {
 
         // -- Wire up bot + logic --
         Executor directExecutor = Runnable::run; // Execute tasks synchronously for testing
-        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor);
+        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor, directExecutor, directExecutor);
         logic = new PickupLogic(bot, ftw, discord, perms, roleCache);
         logic.init();
 
@@ -446,6 +446,127 @@ class PickupBotCommandRoutingTest {
         bot.recvMessage(msg);
 
         verify(msg).reply(Config.user_not_registered);
+    }
+
+    @Test void privateJoinVotesForMapAfterAsyncValidation() throws Exception {
+        Player alpha = players.get("alpha");
+        PrivateGroup group = logic.createPrivateGroup(alpha, gt("TS"));
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+
+        try {
+            DiscordMessage msg = mockMessage("!private ut4_turnpike", users.get("alpha"), pubChannel);
+            asyncBot.recvMessage(msg);
+
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+            org.junit.jupiter.api.Assertions.assertNull(alpha.getVotedMap(group.gt));
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(group.gt, alpha));
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(group.gt, alpha));
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_turnpike", alpha.getVotedMap(group.gt).name);
+        } finally {
+            logic.dissolveGroup(group);
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void newerDirectMapVoteWinsOverDelayedJoinVote() throws Exception {
+        Player alpha = players.get("alpha");
+        Gametype ts = gt("TS");
+        logic.cmdAddPlayer(alpha, ts, false);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+
+            asyncBot.recvMessage(mockMessage("!map TS ut4_casa", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void newerAsyncMapVoteWinsWhenValidationsCompleteOutOfOrder() throws Exception {
+        Player alpha = players.get("alpha");
+        Gametype ts = gt("TS");
+        logic.cmdAddPlayer(alpha, ts, false);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!ts ut4_casa", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(2, ioTasks.size());
+
+            ioTasks.get(1).run();
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void removeTsDuringPendingMultiModeJoinStillJoinsCtf() throws Exception {
+        Player alpha = players.get("alpha");
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!add TS CTF", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!remove TS", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void resetTsDuringPendingMultiModeJoinStillJoinsCtf() throws Exception {
+        Player alpha = players.get("alpha");
+        when(perms.hasAdminRights(users.get("alpha"))).thenReturn(true);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!add TS CTF", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!reset TS", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    private PickupBot botWithDelayedIo(List<Runnable> ioTasks) throws Exception {
+        Executor direct = Runnable::run;
+        PickupBot asyncBot = new PickupBot(bot.env, logic.ftwglApi, discord, perms,
+                new PickupRoleCache(), direct, direct, ioTasks::add, direct);
+        Field self = PickupBot.class.getDeclaredField("self");
+        self.setAccessible(true);
+        self.set(asyncBot, discord.getMe());
+        Field botLogic = PickupBot.class.getDeclaredField("logic");
+        botLogic.setAccessible(true);
+        botLogic.set(asyncBot, logic);
+        logic.bot = asyncBot;
+        return asyncBot;
     }
 
     // ========== Helpers ==========

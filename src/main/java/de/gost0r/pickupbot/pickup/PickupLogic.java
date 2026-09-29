@@ -39,9 +39,24 @@ public class PickupLogic {
     private List<Team> activeTeams;
 
     private Queue<Match> awaitingServer;
+    private final Map<Match, ServerRequest> pendingServerRequests = new IdentityHashMap<>();
+
+    private static final class ServerRequest {
+        final Match match;
+        final List<Player> players;
+        volatile boolean cancelled;
+
+        ServerRequest(Match match, List<Player> players) {
+            this.match = match;
+            this.players = players;
+        }
+    }
 
     private Map<Gametype, Match> curMatch;
     private Map<Team, Gametype> teamsQueued;
+    private final Map<String, Long> pendingJoins = new HashMap<>();
+    private final Map<Gametype, Long> resetVersions = new IdentityHashMap<>();
+    private final Map<String, Long> mapVoteVersions = new HashMap<>();
 
     private List<PrivateGroup> privateGroups;
 
@@ -124,6 +139,90 @@ public class PickupLogic {
             return new PickupReply(Config.pkup_launcheroff);
         }
 
+        return addValidatedPlayer(player, gt, forced);
+    }
+
+    // Called on the queue executor. Network validation happens separately so a slow
+    // FTW response cannot hold up other queue mutations.
+    public void queueAddPlayer(Player player, List<Gametype> modes, boolean forced, Consumer<PickupReply> reply) {
+        if (locked && !forced) {
+            modes.forEach(gt -> reply.accept(new PickupReply(Config.pkup_lock)));
+            return;
+        }
+        if (player.isBanned() && !forced) {
+            PickupReply ban = new PickupReply(printBanInfo(player));
+            modes.forEach(gt -> reply.accept(ban));
+            return;
+        }
+        Map<Gametype, Long> versions = new HashMap<>();
+        Map<Gametype, Long> resetAtJoin = new HashMap<>();
+        for (Gametype gt : modes) {
+            String key = joinKey(player, gt);
+            pendingJoins.putIfAbsent(key, 0L);
+            versions.put(gt, pendingJoins.get(key));
+            resetAtJoin.put(gt, resetVersions.getOrDefault(gt, 0L));
+        }
+
+        bot.pickupIoExecutor.execute(() -> {
+            PickupReply error;
+            try {
+                boolean needsPing = modes.stream().anyMatch(gt -> dynamicServers || gt.getTeamSize() == 0);
+                CompletableFuture<Boolean> launcher = player.getEnforceAC()
+                        ? CompletableFuture.supplyAsync(() -> ftwglApi.hasLauncherOn(player))
+                        : CompletableFuture.completedFuture(true);
+                error = needsPing && !ftwglApi.checkIfPingStored(player) ? cmdGetPingURL(player) : PickupReply.NONE;
+                if (!launcher.join() && error == PickupReply.NONE) {
+                    error = new PickupReply(Config.pkup_launcheroff);
+                }
+            } catch (Exception e) {
+                log.warn("Unable to validate queue join", e);
+                error = new PickupReply(Config.ftw_error);
+            }
+            PickupReply validation = error;
+            bot.queueExecutor.execute(() -> {
+                for (Gametype gt : modes) {
+                    if (pendingJoins.getOrDefault(joinKey(player, gt), 0L) != versions.get(gt)
+                            || resetVersions.getOrDefault(gt, 0L) != resetAtJoin.get(gt)
+                            || curMatch.get(gt) == null) {
+                        continue;
+                    }
+                    reply.accept(validation == PickupReply.NONE ? addValidatedPlayer(player, gt, forced) : validation);
+                }
+            });
+        });
+    }
+
+    private String joinKey(Player player, Gametype gt) {
+        return player.getDiscordUser().getId() + ":" + player.getUrtauth() + ":" + gt.getName();
+    }
+
+    public long mapVoteVersion(Player player, Gametype gt) {
+        return mapVoteVersions.getOrDefault(joinKey(player, gt), 0L);
+    }
+
+    public void recordMapVote(Player player, Gametype gt) {
+        mapVoteVersions.merge(joinKey(player, gt), 1L, Long::sum);
+    }
+
+    private void invalidateMode(Gametype gt) {
+        resetVersions.merge(gt, 1L, Long::sum);
+    }
+
+    private void cancelPendingJoins(Player player, List<Gametype> modes) {
+        if (modes == null) {
+            String prefix = player.getDiscordUser().getId() + ":" + player.getUrtauth() + ":";
+            pendingJoins.replaceAll((key, version) -> key.startsWith(prefix) ? version + 1 : version);
+        } else {
+            for (Gametype gt : modes) {
+                if (gt != null) {
+                    pendingJoins.computeIfPresent(joinKey(player, gt), (key, version) -> version + 1);
+                }
+            }
+        }
+    }
+
+    private PickupReply addValidatedPlayer(Player player, Gametype gt, boolean forced) {
+
         if (locked && !forced) {
             return new PickupReply(Config.pkup_lock);
         }
@@ -183,6 +282,8 @@ public class PickupLogic {
 
     public PickupReply cmdRemovePlayer(Player player, List<Gametype> modes) {
 
+        cancelPendingJoins(player, modes);
+
         if (playerInActiveMatch(player) != null) {
             return new PickupReply(Config.player_already_match);
         }
@@ -207,15 +308,25 @@ public class PickupLogic {
         return reply;
     }
 
-    public void cmdPick(DiscordInteraction interaction, Player player, int pick) {
+    public void cmdPick(DiscordInteraction interaction, Player player, String draftToken, int generation, int pick) {
+        boolean draftFound = false;
         for (Match match : ongoingMatches) {
+            if (!match.hasDraftToken(draftToken)) {
+                continue;
+            }
+            draftFound = true;
             if (!match.hasSquads() && match.isCaptainTurn(player)) {
+                if (!match.canPick(draftToken, generation, pick)) {
+                    interaction.respondEphemeral("This pick is no longer available. Use the latest buttons.");
+                    return;
+                }
                 interaction.deleteDeferredReply();
                 match.pick(player, pick);
                 return;
             }
         }
-        interaction.respondEphemeral(Config.player_not_captain);
+        interaction.respondEphemeral(draftFound ? Config.player_not_captain
+                : "This pick is no longer available. Use the latest buttons.");
     }
 
     public void cmdLock() {
@@ -258,6 +369,7 @@ public class PickupLogic {
     }
 
     public boolean cmdUnregisterPlayer(Player player) {
+        cancelPendingJoins(player, null);
         List<Match> matches = playerInMatch(player);
         for (Match m : matches) {
             m.removePlayer(player, true);
@@ -1156,6 +1268,7 @@ public class PickupLogic {
                 toRemove.add(match);
             }
             ongoingMatches.removeAll(toRemove);
+            curMatch.keySet().forEach(this::invalidateMode);
             for (Match m : curMatch.values()) {
                 m.reset();
                 createCurrentMatches();
@@ -1164,9 +1277,11 @@ public class PickupLogic {
         } else if (cmd.equals("cur")) {
             Gametype gt = getGametypeByString(mode);
             if (gt != null) {
+                invalidateMode(gt);
                 curMatch.get(gt).reset();
                 createMatch(gt);
             } else {
+                curMatch.keySet().forEach(this::invalidateMode);
                 for (Match m : curMatch.values()) {
                     m.reset();
                 }
@@ -1176,6 +1291,7 @@ public class PickupLogic {
         } else {
             Gametype gt = getGametypeByString(cmd);
             if (gt != null) {
+                invalidateMode(gt);
                 curMatch.get(gt).reset();
                 createMatch(gt);
                 bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.pkup_reset_type.replace(".gametype.", gt.getName()));
@@ -1262,6 +1378,7 @@ public class PickupLogic {
             // checking whether this was active before
             Gametype tmp = getGametypeByString(gametype);
             if (tmp != null) {
+                invalidateMode(tmp);
                 curMatch.get(tmp).reset();
             }
             createMatch(gt);
@@ -1278,6 +1395,7 @@ public class PickupLogic {
 
         gt.setActive(false);
         db.updateGametype(gt);
+        invalidateMode(gt);
         curMatch.get(gt).reset();
         curMatch.remove(gt);
         return true;
@@ -1601,7 +1719,7 @@ public class PickupLogic {
     }
 
     public void requestServer(Match match) {
-        if (!awaitingServer.contains(match)) {
+        if (!pendingServerRequests.containsKey(match) && !awaitingServer.contains(match)) {
             awaitingServer.add(match);
             checkServer();
         }
@@ -1609,6 +1727,8 @@ public class PickupLogic {
 
     public void cancelRequestServer(Match match) {
         awaitingServer.remove(match);
+        ServerRequest request = pendingServerRequests.remove(match);
+        if (request != null) request.cancelled = true;
         if (match.getServer() != null && match.getServer().isTaken()) {
             match.getServer().free();
         }
@@ -1628,66 +1748,73 @@ public class PickupLogic {
         ongoingMatches.remove(match);
     }
 
+    public boolean isOngoingMatch(Match match) {
+        return ongoingMatches.contains(match);
+    }
+
     private void checkServer() {
         if (!awaitingServer.isEmpty()) {
             Match m = awaitingServer.poll();
+            if (m == null || pendingServerRequests.containsKey(m)) return;
 
-            if (m != null) {
-                Server bs;
-                if (dynamicServers || m.getGametype().getTeamSize() == 0) {
-                    bs = ftwglApi.spawnDynamicServer(m.getPlayerList());
-                    if (bs != null) {
-                        String spawnMsg = Config.pkup_go_pub_servspawn;
-                        spawnMsg = spawnMsg.replace(".flag.", Country.getCountryFlag(bs.country));
-                        spawnMsg = spawnMsg.replace(".city.", bs.city);
+            ServerRequest request = new ServerRequest(m, List.copyOf(m.getPlayerList()));
+            pendingServerRequests.put(m, request);
+            boolean dynamic = dynamicServers || m.getGametype().getTeamSize() == 0;
+            Region preferred = dynamic ? null : m.getPreferredServerRegion();
+            List<Server> servers = dynamic ? List.of() : List.copyOf(serverList);
+            bot.pickupIoExecutor.execute(() -> {
+                if (request.cancelled) return;
+                Server selected = null;
+                try {
+                    if (dynamic) {
+                        selected = ftwglApi.spawnDynamicServer(request.players);
+                    } else {
+                        selected = servers.stream().filter(s -> s.region == preferred && s.active && !s.isTaken() && s.isOnline()).findFirst().orElse(null);
+                        if (selected == null) {
+                            selected = servers.stream().filter(s -> s.active && !s.isTaken() && s.region == Region.NAE && s.isOnline()).findFirst().orElse(null);
+                        }
+                        if (selected == null) {
+                            selected = servers.stream().filter(s -> s.active && !s.isTaken() && s.isOnline()).findFirst().orElse(null);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Unable to request match server", e);
+                }
+                Server server = selected;
+                bot.queueExecutor.execute(() -> {
+                    if (!pendingServerRequests.remove(request.match, request) || curMatch.get(m.getGametype()) != m
+                            || m.getMatchState() != MatchState.AwaitingServer
+                            || !new HashSet<>(m.getPlayerList()).equals(new HashSet<>(request.players))
+                            || m.getPlayerCount() != request.players.size()) {
+                        if (server != null && dynamic) server.free();
+                        return;
+                    }
+                    if (server == null) {
+                        if (dynamic) {
+                            bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.pkup_go_pub_noserv);
+                            m.reset();
+                        } else {
+                            awaitingServer.add(m);
+                        }
+                        return;
+                    }
+                    if (!dynamic && server.isTaken()) {
+                        awaitingServer.add(m);
+                        checkServer();
+                        return;
+                    }
+                    if (dynamic) {
+                        String spawnMsg = Config.pkup_go_pub_servspawn.replace(".flag.", Country.getCountryFlag(server.country)).replace(".city.", server.city);
                         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), spawnMsg);
                     } else {
-                        bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.pkup_go_pub_noserv);
-                        m.reset();
-                    }
-                } else {
-                    bs = getBestServer(m.getPreferredServerRegion());
-                    if (bs != null) {
-                        String spawnMsg = Config.pkup_go_pub_requestserver;
-                        spawnMsg = spawnMsg.replace(".flag.", bs.getRegionFlag(false, false));
-                        spawnMsg = spawnMsg.replace(".region.", bs.region.name());
+                        String spawnMsg = Config.pkup_go_pub_requestserver.replace(".flag.", server.getRegionFlag(false, false)).replace(".region.", server.region.name());
                         bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), spawnMsg);
                     }
-                }
-
-                if (bs != null && m.getMatchState() == MatchState.AwaitingServer) {
-                    m.launch(bs);
-                } else {
-                    for (Server server : serverList) { // Use NAE server by default when the best region is not avi
-                        if (server.active && !server.isTaken() && server.isOnline() && m.getMatchState() == MatchState.AwaitingServer && server.region == Region.NAE) {
-                            m.launch(server);
-                            return;
-                        }
-                    }
-                    for (Server server : serverList) { // If no NAE servers are avi take the first avi
-                        if (server.active && !server.isTaken() && server.isOnline() && m.getMatchState() == MatchState.AwaitingServer) {
-                            m.launch(server);
-                            return;
-                        }
-                    }
-                }
-            }
+                    m.launch(server);
+                });
+            });
         }
     }
-
-    private Server getBestServer(Region r) {
-        Server bestServer = null;
-
-        for (Server server : serverList) {
-            if (server.region == r && server.active && !server.isTaken() && server.isOnline()) {
-                bestServer = server;
-                break;
-            }
-        }
-
-        return bestServer;
-    }
-
 
     // ROLES & CHANNEL
 
@@ -1766,7 +1893,7 @@ public class PickupLogic {
             if (m == null) {
                 continue;
             }
-            if (m.getMatchState() != MatchState.AwaitingServer) {
+            if (m.getMatchState() != MatchState.AwaitingServer || m.getCaptainsTurn() == null) {
                 continue;
             }
 

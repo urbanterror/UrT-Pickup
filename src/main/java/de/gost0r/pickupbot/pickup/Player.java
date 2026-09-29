@@ -45,11 +45,23 @@ public class Player {
     private int mapBans = 0;
 
     public Player(DiscordUser user, String urtauth) {
+        this(user, urtauth, true);
+    }
+
+    private Player(DiscordUser user, String urtauth, boolean register) {
         this.user = user;
         this.setUrtauth(urtauth);
-        synchronized (Player.class) {
-            playerList.add(this);
+        if (register) {
+            synchronized (Player.class) {
+                invalidatedAt.put(identity(), ++lifecycleSequence);
+                playerList.add(this);
+            }
         }
+    }
+
+    // Database hydration must finish before this instance becomes cache-visible.
+    static Player detached(DiscordUser user, String urtauth) {
+        return new Player(user, urtauth, false);
     }
 
     public void voteMap(Gametype gametype, GameMap map) {
@@ -256,31 +268,68 @@ public class Player {
 
     private static List<Player> playerList = new ArrayList<Player>();
 
-    public static synchronized Player get(String urtauth) {
-        for (Player player : playerList) {
-            if (player.getUrtauth().equals(urtauth) && player.getActive())
-                return player;
-        }
-        Player p = db.loadPlayer(urtauth); // can be valid or null
-        return p;
+    private record Identity(String discordId, String auth) {}
+
+    // Guarded by Player.class. Only lifecycle changes advance the sequence; loading
+    // an unrelated identity cannot invalidate a successful in-flight load.
+    private static long lifecycleSequence;
+    private static final Map<Identity, Long> invalidatedAt = new HashMap<>();
+
+    private Identity identity() {
+        return new Identity(user.getId(), urtauth);
     }
 
-    public static synchronized Player get(DiscordUser user) {
-        for (Player player : playerList) {
-            if (player.getDiscordUser().equals(user) && player.getActive())
-                return player;
-        }
-        Player p = db.loadPlayer(user); // can be valid or null
-        return p;
+    static synchronized long beginLoad() {
+        return lifecycleSequence;
     }
 
-    public static synchronized Player get(DiscordUser user, String urtauth) {
-        for (Player player : playerList) {
-            if (player.getUrtauth().equals(urtauth) && player.getDiscordUser().equals(user))
-                return player;
+    /** Atomically canonicalize a fully hydrated snapshot, or reject an obsolete one. */
+    static synchronized Player publishLoaded(Player loaded, long startedAt, boolean onlyActive) {
+        Identity identity = loaded.identity();
+        // Prefer the newest public registration, retaining the constructor's
+        // historical behavior of allowing duplicate entries.
+        for (int i = playerList.size() - 1; i >= 0; i--) {
+            Player cached = playerList.get(i);
+            if (identity.equals(cached.identity())) {
+                return !onlyActive || cached.getActive() ? cached : null;
+            }
         }
-        Player p = db.loadPlayer(user, urtauth, false); // can be valid or null
-        return p;
+        if (invalidatedAt.getOrDefault(identity, 0L) > startedAt
+                || (onlyActive && !loaded.getActive())) {
+            return null;
+        }
+        playerList.add(loaded);
+        return loaded;
+    }
+
+    public static Player get(String urtauth) {
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getUrtauth().equals(urtauth) && player.getActive())
+                    return player;
+            }
+        }
+        return db.loadPlayer(urtauth);
+    }
+
+    public static Player get(DiscordUser user) {
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getDiscordUser().getId().equals(user.getId()) && player.getActive())
+                    return player;
+            }
+        }
+        return db.loadPlayer(user);
+    }
+
+    public static Player get(DiscordUser user, String urtauth) {
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getUrtauth().equals(urtauth) && player.getDiscordUser().getId().equals(user.getId()))
+                    return player;
+            }
+        }
+        return db.loadPlayer(user, urtauth, false);
     }
 
     @Override
@@ -316,11 +365,16 @@ public class Player {
     }
 
     public static synchronized void remove(Player player) {
+        Identity identity = player.identity();
+        invalidatedAt.put(identity, ++lifecycleSequence);
         player.setActive(false);
-        playerList.removeIf(candidate ->
-                candidate.getDiscordUser().getId().equals(player.getDiscordUser().getId())
-                        && candidate.getUrtauth().equals(player.getUrtauth())
-        );
+        playerList.removeIf(candidate -> {
+            if (!identity.equals(candidate.identity())) {
+                return false;
+            }
+            candidate.setActive(false);
+            return true;
+        });
     }
 
     public boolean getEnforceAC() {
@@ -402,6 +456,13 @@ public class Player {
     public void setEloBoost(long eloBoost) {
         this.eloBoost = eloBoost;
         db.updatePlayerBoost(this);
+    }
+
+    // Loading stored values is not a wallet mutation and must never write them back.
+    void hydrateBoost(long eloBoost, int mapVotes, int mapBans) {
+        this.eloBoost = eloBoost;
+        this.additionalMapVotes = mapVotes;
+        this.mapBans = mapBans;
     }
 
     public boolean hasBoostActive() {

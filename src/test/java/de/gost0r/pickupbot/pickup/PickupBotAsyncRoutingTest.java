@@ -16,6 +16,7 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PickupBotAsyncRoutingTest {
@@ -34,7 +35,9 @@ class PickupBotAsyncRoutingTest {
                 mock(PermissionService.class),
                 mock(PickupRoleCache.class),
                 commandExecutor,
-                queueExecutor
+                queueExecutor,
+                Runnable::run,
+                Runnable::run
         );
         setField(bot, "self", self);
         setField(bot, "logic", mock(PickupLogic.class));
@@ -46,6 +49,23 @@ class PickupBotAsyncRoutingTest {
 
         assertEquals(3, queueExecutor.tasks.size());
         assertEquals(1, commandExecutor.tasks.size());
+    }
+
+    @Test
+    void scheduledChecksRunOnTheQueueExecutor() throws Exception {
+        RecordingExecutor queueExecutor = new RecordingExecutor();
+        PickupBot bot = new PickupBot("test", mock(FtwglApi.class), mock(DiscordService.class),
+                mock(PermissionService.class), mock(PickupRoleCache.class), Runnable::run,
+                queueExecutor, Runnable::run, Runnable::run);
+        PickupLogic logic = mock(PickupLogic.class);
+        setField(bot, "logic", logic);
+
+        bot.tick();
+
+        assertEquals(1, queueExecutor.tasks.size());
+        queueExecutor.tasks.get(0).run();
+        verify(logic).afkCheck();
+        verify(logic).checkPrivateGroups();
     }
 
     private static DiscordMessage message(String content, DiscordUser sender) {

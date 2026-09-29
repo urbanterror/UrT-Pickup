@@ -70,7 +70,7 @@ class PickupLogicTest {
 
         // -- Wire up bot + logic --
         Executor directExecutor = Runnable::run; // Execute tasks synchronously for testing
-        PickupBot bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor);
+        PickupBot bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor, directExecutor, directExecutor);
         logic = new PickupLogic(bot, ftw, discord, perms, roleCache);
         logic.init();
         db = logic.db;
@@ -557,7 +557,7 @@ class PickupLogicTest {
         });
 
         Match match = buildTsCaptainMatch();
-        match.sortPlayers();
+        match.sortPlayers(ftw.getPlayerRatings(match.getPlayerList()), null);
 
         assertTrue(match.getPlayerList().contains(hotel), "Match should include unrated players");
         assertTrue(match.getPlayerList().contains(charlie), "Match should include unrated players");
@@ -589,7 +589,7 @@ class PickupLogicTest {
         });
 
         Match match = buildTsCaptainMatch();
-        match.sortPlayers();
+        match.sortPlayers(ftw.getPlayerRatings(match.getPlayerList()), null);
 
         assertEquals(hotel, match.getTeamRed().get(0), "Fallback captain selection should use local captain score");
         assertEquals(charlie, match.getTeamBlue().get(0), "Fallback captain selection should ignore a lone FTW rating");

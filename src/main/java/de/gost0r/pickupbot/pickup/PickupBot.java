@@ -32,7 +32,9 @@ public class PickupBot {
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
     private final Executor commandExecutor;
-    private final Executor queueExecutor;
+    final Executor queueExecutor;
+    final Executor pickupIoExecutor;
+    final Executor pickIoExecutor;
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -46,7 +48,9 @@ public class PickupBot {
             PermissionService permissionService,
             PickupRoleCache pickupRoleCache,
             @Qualifier("commandExecutor") Executor commandExecutor,
-            @Qualifier("queueExecutor") Executor queueExecutor
+            @Qualifier("queueExecutor") Executor queueExecutor,
+            @Qualifier("pickupIoExecutor") Executor pickupIoExecutor,
+            @Qualifier("pickIoExecutor") Executor pickIoExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
@@ -55,6 +59,8 @@ public class PickupBot {
         this.pickupRoleCache = pickupRoleCache;
         this.commandExecutor = commandExecutor;
         this.queueExecutor = queueExecutor;
+        this.pickupIoExecutor = pickupIoExecutor;
+        this.pickIoExecutor = pickIoExecutor;
     }
 
     @PreDestroy
@@ -90,8 +96,10 @@ public class PickupBot {
 
     public void tick() {
         if (logic != null) {
-            logic.afkCheck();
-            logic.checkPrivateGroups();
+            queueExecutor.execute(() -> {
+                logic.afkCheck();
+                logic.checkPrivateGroups();
+            });
         }
     }
 
@@ -151,7 +159,7 @@ public class PickupBot {
                                 }
                             }
                             if (gametypes.size() > 0) {
-                                logic.cmdAddPlayer(p, gametypes, false).forEach(m -> m.replyTo(msg));
+                                queueAddPlayer(p, gametypes, msg, null);
                             } else {
                                 msg.reply(Config.no_gt_found);
                             }
@@ -163,11 +171,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("TS");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -178,11 +182,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("CTF");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -193,11 +193,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("BM");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -208,11 +204,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("1v1");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -223,11 +215,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("2v2");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -238,11 +226,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("div1");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -252,11 +236,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("proctf");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -267,7 +247,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("SKEET");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -278,7 +258,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("aim");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -289,7 +269,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("PROMOD");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -832,12 +812,8 @@ public class PickupBot {
                     if (p != null) {
                         if (logic.playerInPrivateGroup(p)) {
                             PrivateGroup pvGroup = logic.getPrivateGroupMember(p);
-                            logic.cmdAddPlayer(p, pvGroup.gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(pvGroup.gt), msg, data.length > 1 ? data[1] : null);
                             pvGroup.updateTimestamp();
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, pvGroup.gt, data[1], 1);
-                            }
                         } else msg.reply(Config.player_no_group);
                     } else msg.reply(Config.user_not_registered);
                     break;
@@ -1515,6 +1491,16 @@ public class PickupBot {
             Config.INT_BET
     );
 
+    private void queueAddPlayer(Player player, List<Gametype> modes, DiscordMessage message, String map) {
+        long voteVersion = map == null ? 0 : logic.mapVoteVersion(player, modes.get(0));
+        logic.queueAddPlayer(player, modes, false, result -> {
+            result.replyTo(message);
+            if (map != null && logic.mapVoteVersion(player, modes.get(0)) == voteVersion) {
+                logic.cmdMapVote(player, modes.get(0), map, 1).replyTo(message);
+            }
+        });
+    }
+
     public void recvInteraction(DiscordInteraction interaction) {
         log.info("RECV #{} {}: {}",
                 (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
@@ -1537,7 +1523,11 @@ public class PickupBot {
 
             switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
-                logic.cmdPick(interaction, p, Integer.parseInt(data[1]));
+                if (data.length != 4) {
+                    interaction.respondEphemeral("This pick is no longer available. Use the latest buttons.");
+                    break;
+                }
+                logic.cmdPick(interaction, p, data[1], Integer.parseInt(data[2]), Integer.parseInt(data[3]));
                 break;
 
             case Config.INT_LAUNCHAC:
@@ -1625,7 +1615,7 @@ public class PickupBot {
                                 return;
                             }
                         }
-                        logic.cmdAddPlayer(playerToAdd, gametypes, true).forEach(m -> m.replyTo(msg));
+                        logic.queueAddPlayer(playerToAdd, gametypes, true, result -> result.replyTo(msg));
                     } else {
                         msg.reply(Config.no_gt_found);
                     }

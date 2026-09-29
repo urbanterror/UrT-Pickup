@@ -44,6 +44,9 @@ public class Match implements Runnable {
     private long timeLastPick;
     private boolean pickReminderSent;
     private List<DiscordMessage> pickMessages = new ArrayList<DiscordMessage>();
+    private int pickPromptGeneration;
+    private boolean pickPromptPending = true;
+    private final String draftToken = UUID.randomUUID().toString();
 
     private PickupLogic logic;
     private PermissionService permissionService;
@@ -191,6 +194,7 @@ public class Match implements Runnable {
                     player.voteMap(gametype, null);
                 }
             }
+            logic.recordMapVote(player, gametype);
             mapVotes.put(map, mapVotes.get(map) + number);
             player.voteMap(gametype, map);
             String msg = Config.pkup_map;
@@ -467,19 +471,46 @@ public class Match implements Runnable {
 
             String threadTitle = Config.pkup_go_pub_threadtitle;
             threadTitle = threadTitle.replace(".ID.", String.valueOf(logic.db.getLastMatchID() + 1));
-
-            for (DiscordChannel publicChannel : logic.getChannelByType(PickupChannelType.PUBLIC)) {
-                threadChannels.add(publicChannel.createThread(threadTitle, true));
-            }
+            String draftThreadTitle = threadTitle;
 
             logic.matchStarted(this);
-            timeLastPick = System.currentTimeMillis();
-            sortPlayers();
+            List<Player> players = List.copyOf(getPlayerList());
+            logic.bot.pickupIoExecutor.execute(() -> {
+                List<DiscordChannel> threads = new ArrayList<>();
+                Map<Player, Float> ratings = Map.of();
+                String compareUrl = null;
+                boolean success = false;
+                try {
+                    for (DiscordChannel channel : logic.getChannelByType(PickupChannelType.PUBLIC)) {
+                        threads.add(channel.createThread(draftThreadTitle, true));
+                    }
+                    ratings = logic.ftwglApi.getPlayerRatings(players);
+                    compareUrl = logic.ftwglApi.getComparePageUrl(players);
+                    success = true;
+                } catch (Exception e) {
+                    log.warn("Unable to start match draft", e);
+                }
+                Map<Player, Float> loadedRatings = ratings;
+                String loadedCompareUrl = compareUrl;
+                boolean ready = success;
+                logic.bot.queueExecutor.execute(() -> {
+                    if (!ready || state != MatchState.AwaitingServer || !logic.isOngoingMatch(this)) {
+                        threads.forEach(DiscordChannel::delete);
+                        if (state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+                            reset();
+                            logic.matchRemove(this);
+                        }
+                        return;
+                    }
+                    threadChannels.addAll(threads);
+                    sortPlayers(loadedRatings, loadedCompareUrl);
+                });
+            });
 
         }
     }
 
-    public void sortPlayers() {
+    public void sortPlayers(Map<Player, Float> playerRatings, String compareUrl) {
         // Sort players by elo
         List<Player> playerList = new ArrayList<Player>(playerStats.keySet());
 
@@ -497,8 +528,9 @@ public class Match implements Runnable {
             return;
         }
 
-        // Fetch FTWGL ratings for all players to use in captain selection
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(playerList);
+        // Keep the original ratings for the lobby even when captain selection falls back to local scores.
+        Map<Player, Float> lobbyRatings = playerRatings;
+        playerRatings = new HashMap<>(playerRatings);
         boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
         if (!useFtwOnly) playerRatings.clear();
 
@@ -536,7 +568,10 @@ public class Match implements Runnable {
             } else {
                 captainAnnouncement += "\n**Server:** " + server.getRegionFlag(false, false) + "``" + server.region.name() + "``";
             }
-            logic.bot.sendMsg(threadChannels, captainAnnouncement, getLobbyEmbed());
+            String announcement = captainAnnouncement;
+            DiscordEmbed lobby = getLobbyEmbed(List.copyOf(sortedPlayers), lobbyRatings, compareUrl);
+            List<DiscordChannel> destinations = List.copyOf(threadChannels);
+            logic.bot.pickupIoExecutor.execute(() -> logic.bot.sendMsg(destinations, announcement, lobby));
 
             String captainDm = Config.pkup_go_captains;
             captains[0].getDiscordUser().sendPrivateMessage(captainDm);
@@ -597,39 +632,72 @@ public class Match implements Runnable {
 
     public void checkTeams() {
         if (sortedPlayers.isEmpty() && state == MatchState.AwaitingServer) {
+            pickPromptGeneration++;
             state = MatchState.Live;
             new Thread(this).start(); // do important changes that affect possibly other matches/servers/playerlists outside the thread!
         } else {
-            List<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
-            int choiceNumber = 10;
-            if (sortedPlayers.size() < choiceNumber) {
-                choiceNumber = sortedPlayers.size();
-            }
-            for (int i = 0; i < choiceNumber; i++) {
-                DiscordButton button = new DiscordButton(DiscordButtonStyle.PURPLE);
-                button.setCustomId(Config.INT_PICK + "_" + i);
-                button.setLabel(sortedPlayers.get(i).getUrtauth() + " (" + sortedPlayers.get(i).getElo() + ")");
-                button.setEmoji(sortedPlayers.get(i).getRank().getEmoji());
+            int generation = ++pickPromptGeneration;
+            pickPromptPending = true;
+            List<Player> choices = List.copyOf(sortedPlayers);
+            List<DiscordChannel> destinations = List.copyOf(threadChannels);
+            Player captain = captains[captainTurn];
+            logic.bot.pickIoExecutor.execute(() -> sendPickPrompt(generation, choices, destinations, captain));
+        }
+    }
+
+    private void sendPickPrompt(int generation, List<Player> choices, List<DiscordChannel> destinations, Player captain) {
+        List<DiscordComponent> buttons = new ArrayList<>();
+        int choiceNumber = Math.min(10, choices.size());
+        for (int i = 0; i < choiceNumber; i++) {
+            DiscordButton button = new DiscordButton(DiscordButtonStyle.PURPLE);
+            button.setCustomId(Config.INT_PICK + "_" + draftToken + "_" + generation + "_" + i);
+            button.setLabel(choices.get(i).getUrtauth() + " (" + choices.get(i).getElo() + ")");
+            button.setEmoji(choices.get(i).getRank().getEmoji());
+            buttons.add(button);
+        }
+
+        // Include new players beyond the first ten as additional choices.
+        for (int i = choiceNumber; i < choices.size(); i++) {
+            if (logic.db.getNumberOfGames(choices.get(i)) < 30) {
+                DiscordButton button = new DiscordButton(DiscordButtonStyle.GREY);
+                button.setCustomId(Config.INT_PICK + "_" + draftToken + "_" + generation + "_" + i);
+                button.setLabel(choices.get(i).getUrtauth());
+                button.setEmoji(new DiscordEmoji(null, "\u2753"));
                 buttons.add(button);
             }
+        }
 
-            // Include in the choices players that played less than 10 games to allow for new player skill uncertainty
-            if (choiceNumber < sortedPlayers.size()) {
-                for (int i = choiceNumber; i < sortedPlayers.size(); i++) {
-                    int matchPlayed = logic.db.getNumberOfGames(sortedPlayers.get(i));
-                    if (matchPlayed < 30) {
-                        DiscordButton button = new DiscordButton(DiscordButtonStyle.GREY);
-                        button.setCustomId(Config.INT_PICK + "_" + i);
-                        button.setLabel(sortedPlayers.get(i).getUrtauth());
-                        button.setEmoji(new DiscordEmoji(null, "\u2753"));
-                        buttons.add(button);
-                    }
+        String prompt = Config.pkup_go_pub_pick.replace(".captain.", captain.getDiscordUser().getMentionString());
+        List<DiscordMessage> sent;
+        try {
+            sent = logic.bot.sendMsgToEdit(destinations, prompt, null, buttons);
+        } catch (Exception e) {
+            log.warn("Unable to send pick prompt", e);
+            logic.bot.queueExecutor.execute(() -> failPickPrompt(generation));
+            return;
+        }
+        logic.bot.queueExecutor.execute(() -> {
+            if (generation == pickPromptGeneration && state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+                if (sent.isEmpty()) {
+                    failPickPrompt(generation);
+                } else {
+                    pickMessages = sent;
+                    timeLastPick = System.currentTimeMillis();
+                    pickReminderSent = false;
+                    pickPromptPending = false;
                 }
+            } else {
+                sent.forEach(DiscordMessage::delete);
             }
+        });
+    }
 
-            String pickPromptMsg = Config.pkup_go_pub_pick;
-            pickPromptMsg = pickPromptMsg.replace(".captain.", captains[captainTurn].getDiscordUser().getMentionString());
-            pickMessages = logic.bot.sendMsgToEdit(threadChannels, pickPromptMsg, null, buttons);
+    private void failPickPrompt(int generation) {
+        if (generation == pickPromptGeneration && state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+            reset();
+            logic.matchRemove(this);
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC),
+                    "Draft canceled: unable to send pick buttons.");
         }
     }
 
@@ -638,6 +706,15 @@ public class Match implements Runnable {
             return false;
         }
         return captains[captainTurn].getUrtauth().equals(player.getUrtauth());
+    }
+
+    public boolean hasDraftToken(String token) {
+        return draftToken.equals(token);
+    }
+
+    public boolean canPick(String token, int generation, int pick) {
+        return hasDraftToken(token) && state == MatchState.AwaitingServer && generation == pickPromptGeneration
+                && pick >= 0 && pick < sortedPlayers.size();
     }
 
     public Player getCaptainsTurn() {
@@ -680,7 +757,8 @@ public class Match implements Runnable {
     }
 
     public long getTimeLastPick() {
-        return timeLastPick;
+        // No captain can be timed out before their current buttons are available.
+        return pickPromptPending ? System.currentTimeMillis() : timeLastPick;
     }
 
     public boolean getPickReminderSent() {
@@ -1480,7 +1558,7 @@ public class Match implements Runnable {
         }
     }
 
-    private DiscordEmbed getLobbyEmbed() {
+    private DiscordEmbed getLobbyEmbed(List<Player> lobbyPlayers, Map<Player, Float> playerRatings, String compareUrl) {
         DiscordEmbed embed = new DiscordEmbed();
         embed.setTitle("Lobby");
         embed.setColor(7056881);
@@ -1489,9 +1567,7 @@ public class Match implements Runnable {
         StringBuilder rating_wdl_string = new StringBuilder();
         StringBuilder ping_string = new StringBuilder();
 
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(sortedPlayers);
-
-        for (Player p : sortedPlayers) {
+        for (Player p : lobbyPlayers) {
             StringBuilder player_string = new StringBuilder();
             player_string.append(p.getRank().getEmoji().getMentionString());
             if (p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
@@ -1523,7 +1599,6 @@ public class Match implements Runnable {
         embed.addField("Rating | Win%", rating_wdl_string.toString(), true);
         embed.addField("Ping", ping_string.toString(), true);
 
-        String compareUrl = logic.ftwglApi.getComparePageUrl(sortedPlayers);
         if (compareUrl != null) {
             embed.addField("\u200b", "[Compare on FTW](" + compareUrl + ")", false);
         }

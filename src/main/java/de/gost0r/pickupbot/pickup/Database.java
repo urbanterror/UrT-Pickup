@@ -946,62 +946,67 @@ public class Database {
         return loadPlayer(user, null, true);
     }
 
-    // can load inactive users
+    // Can load inactive users. The snapshot stays detached through all reads and
+    // resource closes; only a fully successful load may enter the shared cache.
     public Player loadPlayer(DiscordUser user, String urtauth, boolean onlyActive) {
-        Player player = null;
-        try {
-            String sql = "SELECT * FROM player WHERE userid LIKE ? AND urtauth LIKE ? AND active LIKE ?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
+        long startedAt = Player.beginLoad();
+        Player player;
+        String sql = "SELECT * FROM player WHERE userid LIKE ? AND urtauth LIKE ? AND active LIKE ?";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             pstmt.setString(1, user == null ? "%" : user.getId());
             pstmt.setString(2, urtauth == null ? "%" : urtauth);
             pstmt.setString(3, onlyActive ? String.valueOf(true) : "%");
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                player = new Player(discordService.getUserById(rs.getString("userid")), rs.getString("urtauth"));
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                DiscordUser loadedUser = user != null ? user : discordService.getUserById(rs.getString("userid"));
+                player = Player.detached(loadedUser, rs.getString("urtauth"));
                 player.setElo(rs.getInt("elo"));
                 player.setEloChange(rs.getInt("elochange"));
                 player.setActive(Boolean.parseBoolean(rs.getString("active")));
                 player.setEnforceAC(Boolean.parseBoolean(rs.getString("enforce_ac")));
                 player.setCountry(rs.getString("country"));
                 player.setCoins(rs.getLong("coins"));
-                player.setEloBoost(rs.getLong("eloboost"));
-                player.setAdditionalMapVotes(rs.getInt("mapvote"));
-                player.setMapBans(rs.getInt("mapban"));
+                player.hydrateBoost(rs.getLong("eloboost"), rs.getInt("mapvote"), rs.getInt("mapban"));
                 player.setProctf(Boolean.parseBoolean(rs.getString("proctf")));
-                loadSpree(player);
-
-                sql = "SELECT start, end, reason, pardon, forgiven FROM banlist WHERE player_userid=? AND player_urtauth=?";
-                PreparedStatement banstmt = c.prepareStatement(sql);
-                banstmt.setString(1, player.getDiscordUser().getId());
-                banstmt.setString(2, player.getUrtauth());
-                ResultSet banSet = banstmt.executeQuery();
-                while (banSet.next()) {
-                    BanReason reason = BanReason.fromStorage(banSet.getString("reason"));
-                    if (reason == null) {
-                        log.warn("Skipping ban with unknown reason '{}' for player {}", banSet.getString("reason"), player.getUrtauth());
-                        continue;
-                    }
-
-                    PlayerBan ban = new PlayerBan();
-                    ban.player = player;
-                    ban.startTime = banSet.getLong("start");
-                    ban.endTime = banSet.getLong("end");
-                    ban.reason = reason;
-                    ban.pardon = banSet.getString("pardon").matches("^[0-9]*$") ? discordService.getUserById(banSet.getString("pardon")) : null;
-                    ban.forgiven = banSet.getBoolean("forgiven");
-                    player.addBan(ban);
-                }
-                player.setRank(getRankForPlayer(player));
-                player.stats = getPlayerStats(player, logic.currentSeason);
-                banSet.close();
-                banstmt.close();
             }
-            rs.close();
-            pstmt.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
+            return null;
         }
-        return player;
+        try {
+            readSpree(player);
+            sql = "SELECT start, end, reason, pardon, forgiven FROM banlist WHERE player_userid=? AND player_urtauth=?";
+            try (PreparedStatement banstmt = c.prepareStatement(sql)) {
+                banstmt.setString(1, player.getDiscordUser().getId());
+                banstmt.setString(2, player.getUrtauth());
+                try (ResultSet banSet = banstmt.executeQuery()) {
+                    while (banSet.next()) {
+                        BanReason reason = BanReason.fromStorage(banSet.getString("reason"));
+                        if (reason == null) {
+                            log.warn("Skipping ban with unknown reason '{}' for player {}", banSet.getString("reason"), player.getUrtauth());
+                            continue;
+                        }
+
+                        PlayerBan ban = new PlayerBan();
+                        ban.player = player;
+                        ban.startTime = banSet.getLong("start");
+                        ban.endTime = banSet.getLong("end");
+                        ban.reason = reason;
+                        ban.pardon = banSet.getString("pardon").matches("^[0-9]*$") ? discordService.getUserById(banSet.getString("pardon")) : null;
+                        ban.forgiven = banSet.getBoolean("forgiven");
+                        player.addBan(ban);
+                    }
+                }
+            }
+            player.setRank(readRankForPlayer(player));
+            player.stats = readPlayerStats(player, logic.currentSeason);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+            return null;
+        }
+        return Player.publishLoaded(player, startedAt, onlyActive);
     }
 
     public void updatePlayerCountry(Player player, String country) {
@@ -1292,52 +1297,60 @@ public class Database {
     }
 
     public int getRankForPlayer(Player player) {
-        int rank = -1;
         try {
-            String sql = "SELECT (SELECT COUNT(*) FROM player b WHERE a.elo < b.elo AND active=?) AS rank FROM player a WHERE userid=? AND urtauth=?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
+            return readRankForPlayer(player);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+            return -1;
+        }
+    }
+
+    private int readRankForPlayer(Player player) throws SQLException {
+        String sql = "SELECT (SELECT COUNT(*) FROM player b WHERE a.elo < b.elo AND active=?) AS rank FROM player a WHERE userid=? AND urtauth=?";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             pstmt.setString(1, String.valueOf(true));
             pstmt.setString(2, player.getDiscordUser().getId());
             pstmt.setString(3, player.getUrtauth());
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                rank = rs.getInt("rank") + 1;
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next() ? rs.getInt("rank") + 1 : -1;
             }
-            rs.close();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
         }
-        return rank;
     }
 
     public WinDrawLoss getWDLForPlayer(Player player, Gametype gt, Season season) {
+        try {
+            return readWDLForPlayer(player, gt, season);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+            return new WinDrawLoss();
+        }
+    }
+
+    private WinDrawLoss readWDLForPlayer(Player player, Gametype gt, Season season) throws SQLException {
         WinDrawLoss wdl = new WinDrawLoss();
         if (gt == null) {
             return wdl;
         }
-        try {
-            String gametypeCondition;
-            if (gt.getName().equals("TS")) {
-                gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
-            } else {
-                gametypeCondition = "AND m.gametype=?";
-            }
+        String gametypeCondition;
+        if (gt.getName().equals("TS")) {
+            gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
+        } else {
+            gametypeCondition = "AND m.gametype=?";
+        }
 
-            String sql = "SELECT SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS win, "
-                    + "SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 END) AS draw, "
-                    + "SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 END) AS loss "
-                    + "FROM ("
-                    + "SELECT pim.player_urtauth AS urtauth, "
-                    + "(CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, "
-                    + "(CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore "
-                    + "FROM 'player_in_match' AS pim "
-                    + "JOIN 'match' AS m ON m.id = pim.matchid "
-                    + "JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid "
-                    + "WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?"
-                    + "AND p.urtauth=? AND p.userid=?) AS stat ";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-
+        String sql = "SELECT SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS win, "
+                + "SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 END) AS draw, "
+                + "SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 END) AS loss "
+                + "FROM ("
+                + "SELECT pim.player_urtauth AS urtauth, "
+                + "(CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, "
+                + "(CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore "
+                + "FROM 'player_in_match' AS pim "
+                + "JOIN 'match' AS m ON m.id = pim.matchid "
+                + "JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid "
+                + "WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?"
+                + "AND p.urtauth=? AND p.userid=?) AS stat ";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1346,44 +1359,48 @@ public class Database {
             pstmt.setLong(paramIndex++, season.enddate);
             pstmt.setString(paramIndex++, player.getUrtauth());
             pstmt.setString(paramIndex, player.getDiscordUser().getId());
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                wdl.win = rs.getInt("win");
-                wdl.draw = rs.getInt("draw");
-                wdl.loss = rs.getInt("loss");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    wdl.win = rs.getInt("win");
+                    wdl.draw = rs.getInt("draw");
+                    wdl.loss = rs.getInt("loss");
+                }
             }
-            rs.close();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
         }
         return wdl;
     }
 
     public int getWDLRankForPlayer(Player player, Gametype gt, Season season) {
+        try {
+            return readWDLRankForPlayer(player, gt, season);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+            return -1;
+        }
+    }
+
+    private int readWDLRankForPlayer(Player player, Gametype gt, Season season) throws SQLException {
         int rank = -1;
         if (gt == null) {
             return rank;
         }
-        try {
-            int limit = 20;
-            if (season.number == 0) {
-                limit = 100;
-            }
-            if (gt.getName().equals("CTF")) {
-                limit = 10;
-            }
+        int limit = 20;
+        if (season.number == 0) {
+            limit = 100;
+        }
+        if (gt.getName().equals("CTF")) {
+            limit = 10;
+        }
 
-            String gametypeCondition;
-            if (gt.getName().equals("TS")) {
-                gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
-            } else {
-                gametypeCondition = "AND m.gametype=?";
-            }
+        String gametypeCondition;
+        if (gt.getName().equals("TS")) {
+            gametypeCondition = "AND (m.gametype='TS' OR m.gametype='PROMOD')";
+        } else {
+            gametypeCondition = "AND m.gametype=?";
+        }
 
-            String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-
+        String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             int paramIndex = 1;
             pstmt.setLong(paramIndex++, season.startdate);
             pstmt.setLong(paramIndex++, season.enddate);
@@ -1392,45 +1409,49 @@ public class Database {
             }
             pstmt.setInt(paramIndex++, limit);
             pstmt.setString(paramIndex, player.getUrtauth());
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                rank = rs.getInt("rowIndex");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    rank = rs.getInt("rowIndex");
+                }
             }
-            rs.close();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
         }
         return rank;
     }
 
     public int getKDRRankForPlayer(Player player, Gametype gt, Season season) {
+        try {
+            return readKDRRankForPlayer(player, gt, season);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+            return -1;
+        }
+    }
+
+    private int readKDRRankForPlayer(Player player, Gametype gt, Season season) throws SQLException {
         int rank = -1;
         if (gt == null) {
             return -1;
         }
-        try {
-            int limit = 20;
-            if (season.number == 0) {
-                limit = 100;
-            }
+        int limit = 20;
+        if (season.number == 0) {
+            limit = 100;
+        }
 
-            String rating_query = "(CAST(SUM(kills) AS FLOAT) + CAST(SUM(assists) AS FLOAT)/2) / CAST(SUM(deaths) AS FLOAT)";
-            if (gt.getName().equals("CTF")) {
-                limit = 10;
-                rating_query = "CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50";
-            }
+        String rating_query = "(CAST(SUM(kills) AS FLOAT) + CAST(SUM(assists) AS FLOAT)/2) / CAST(SUM(deaths) AS FLOAT)";
+        if (gt.getName().equals("CTF")) {
+            limit = 10;
+            rating_query = "CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50";
+        }
 
-            String gametypeCondition;
-            if (gt.getName().equals("TS")) {
-                gametypeCondition = "AND (match.gametype='TS' OR match.gametype='PROMOD')";
-            } else {
-                gametypeCondition = "AND match.gametype=?";
-            }
+        String gametypeCondition;
+        if (gt.getName().equals("TS")) {
+            gametypeCondition = "AND (match.gametype='TS' OR match.gametype='PROMOD')";
+        } else {
+            gametypeCondition = "AND match.gametype=?";
+        }
 
-            String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-
+        String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             int paramIndex = 1;
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
@@ -1439,15 +1460,11 @@ public class Database {
             pstmt.setLong(paramIndex++, season.enddate);
             pstmt.setInt(paramIndex++, limit);
             pstmt.setString(paramIndex, player.getUrtauth());
-
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                rank = rs.getInt("rowIndex");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    rank = rs.getInt("rowIndex");
+                }
             }
-            rs.close();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
         }
         return rank;
     }
@@ -1603,56 +1620,74 @@ public class Database {
 
     public PlayerStats getPlayerStats(Player player, Season season) {
         PlayerStats stats = new PlayerStats();
-
         stats.kdrRank = getKDRRankForPlayer(player, logic.getGametypeByString("TS"), season);
         stats.ctfRank = getKDRRankForPlayer(player, logic.getGametypeByString("CTF"), season);
-
         stats.wdlRank = getWDLRankForPlayer(player, logic.getGametypeByString("TS"), season);
         stats.ctfWdlRank = getWDLRankForPlayer(player, logic.getGametypeByString("CTF"), season);
-
         stats.ts_wdl = getWDLForPlayer(player, logic.getGametypeByString("TS"), season);
         stats.ctf_wdl = getWDLForPlayer(player, logic.getGametypeByString("CTF"), season);
-
         try {
-            // TODO: maybe move this somewhere
-            String sql = "SELECT SUM(kills) as sumkills, SUM(deaths) as sumdeaths, SUM(assists) as sumassists FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN match ON match.id = player_in_match.matchid WHERE (match.gametype=\"TS\" OR match.gametype=\"PROMOD\") AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND player_userid=? AND player_urtauth=? AND match.starttime > ? AND match.starttime < ?;";
-            PreparedStatement pstmt = c.prepareStatement(sql);
+            readPlayerStatsValues(player, season, stats);
+        } catch (SQLException e) {
+            log.warn("Exception: ", e);
+        }
+        return stats;
+    }
+
+    // Hydration requires every stats query to succeed. Public stats requests retain
+    // their existing best-effort behavior through the tolerant wrappers above.
+    private PlayerStats readPlayerStats(Player player, Season season) throws SQLException {
+        PlayerStats stats = new PlayerStats();
+
+        stats.kdrRank = readKDRRankForPlayer(player, logic.getGametypeByString("TS"), season);
+        stats.ctfRank = readKDRRankForPlayer(player, logic.getGametypeByString("CTF"), season);
+
+        stats.wdlRank = readWDLRankForPlayer(player, logic.getGametypeByString("TS"), season);
+        stats.ctfWdlRank = readWDLRankForPlayer(player, logic.getGametypeByString("CTF"), season);
+
+        stats.ts_wdl = readWDLForPlayer(player, logic.getGametypeByString("TS"), season);
+        stats.ctf_wdl = readWDLForPlayer(player, logic.getGametypeByString("CTF"), season);
+
+        readPlayerStatsValues(player, season, stats);
+        return stats;
+    }
+
+    private void readPlayerStatsValues(Player player, Season season, PlayerStats stats) throws SQLException {
+        String sql = "SELECT SUM(kills) as sumkills, SUM(deaths) as sumdeaths, SUM(assists) as sumassists FROM score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN match ON match.id = player_in_match.matchid WHERE (match.gametype=\"TS\" OR match.gametype=\"PROMOD\") AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND player_userid=? AND player_urtauth=? AND match.starttime > ? AND match.starttime < ?;";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             pstmt.setString(1, player.getDiscordUser().getId());
             pstmt.setString(2, player.getUrtauth());
             pstmt.setLong(3, season.startdate);
             pstmt.setLong(4, season.enddate);
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                float kdr = ((float) rs.getInt("sumkills") + (float) rs.getInt("sumassists") / 2) / (float) rs.getInt("sumdeaths");
-                player.setKdr(kdr);
-                stats.kdr = kdr;
-                stats.kills = rs.getInt("sumkills");
-                stats.assists = rs.getInt("sumassists");
-                stats.deaths = rs.getInt("sumdeaths");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    float kdr = ((float) rs.getInt("sumkills") + (float) rs.getInt("sumassists") / 2) / (float) rs.getInt("sumdeaths");
+                    player.setKdr(kdr);
+                    stats.kdr = kdr;
+                    stats.kills = rs.getInt("sumkills");
+                    stats.assists = rs.getInt("sumassists");
+                    stats.deaths = rs.getInt("sumdeaths");
+                }
             }
+        }
 
-            // CTF
-            sql = "SELECT COUNT(player_in_match.player_urtauth)/2 as matchcount, CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50   as ctfrating, SUM(caps) as sumcaps, SUM(returns) as sumreturns, SUM(fckills) as sumfckills, SUM(stopcaps) as sumstopcaps, SUM(protflag) as sumprotflag, player_in_match.player_urtauth as auth, match.id as matchid FROM score INNER JOIN stats ON (score.id = stats.score_1 OR score.id = stats.score_2) INNER JOIN player_in_match ON player_in_match.id = stats.pim INNER JOIN match ON player_in_match.matchid = match.id WHERE match.gametype=\"CTF\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND auth=?  AND match.starttime > ? AND match.starttime < ?;";
-            pstmt = c.prepareStatement(sql);
+        // CTF
+        sql = "SELECT COUNT(player_in_match.player_urtauth)/2 as matchcount, CAST (SUM(score.kills) AS FLOAT) / (COUNT(player_in_match.player_urtauth)/2 ) / 50   as ctfrating, SUM(caps) as sumcaps, SUM(returns) as sumreturns, SUM(fckills) as sumfckills, SUM(stopcaps) as sumstopcaps, SUM(protflag) as sumprotflag, player_in_match.player_urtauth as auth, match.id as matchid FROM score INNER JOIN stats ON (score.id = stats.score_1 OR score.id = stats.score_2) INNER JOIN player_in_match ON player_in_match.id = stats.pim INNER JOIN match ON player_in_match.matchid = match.id WHERE match.gametype=\"CTF\" AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') AND auth=?  AND match.starttime > ? AND match.starttime < ?;";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             pstmt.setString(1, player.getUrtauth());
             pstmt.setLong(2, season.startdate);
             pstmt.setLong(3, season.enddate);
-            rs = pstmt.executeQuery();
-            if (rs.next()) {
-                stats.ctf_rating = rs.getFloat("ctfrating");
-                stats.caps = rs.getInt("sumcaps");
-                stats.returns = rs.getInt("sumreturns");
-                stats.fckills = rs.getInt("sumfckills");
-                stats.stopcaps = rs.getInt("sumstopcaps");
-                stats.protflag = rs.getInt("sumprotflag");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    stats.ctf_rating = rs.getFloat("ctfrating");
+                    stats.caps = rs.getInt("sumcaps");
+                    stats.returns = rs.getInt("sumreturns");
+                    stats.fckills = rs.getInt("sumfckills");
+                    stats.stopcaps = rs.getInt("sumstopcaps");
+                    stats.protflag = rs.getInt("sumprotflag");
+                }
             }
-            rs.close();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
         }
-
-        return stats;
     }
 
     public void resetElo() {
@@ -1853,22 +1888,26 @@ public class Database {
 
     public void loadSpree(Player player) {
         try {
-            String sql = "SELECT * FROM spree WHERE player_urtauth = ?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, player.getUrtauth());
-            ResultSet rs = pstmt.executeQuery();
-            while (rs.next()) {
-                String gametype = rs.getString("gametype");
-                int spree = rs.getInt("spree");
-                Gametype gt = logic.getGametypeByString(gametype);
-                if (gt != null) {
-                    player.spree.put(gt, spree);
-                }
-            }
-            rs.close();
-            pstmt.close();
+            readSpree(player);
         } catch (SQLException e) {
             log.warn("Exception: ", e);
+        }
+    }
+
+    private void readSpree(Player player) throws SQLException {
+        String sql = "SELECT * FROM spree WHERE player_urtauth = ?";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
+            pstmt.setString(1, player.getUrtauth());
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String gametype = rs.getString("gametype");
+                    int spree = rs.getInt("spree");
+                    Gametype gt = logic.getGametypeByString(gametype);
+                    if (gt != null) {
+                        player.spree.put(gt, spree);
+                    }
+                }
+            }
         }
     }
 

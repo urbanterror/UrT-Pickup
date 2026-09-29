@@ -37,3 +37,6 @@ build/
 
 #Database
 *.db
+
+# Local production deployment script
+/deploy-local.sh

@@ -70,6 +70,29 @@ class AsyncConfigTest {
         }
     }
 
+    @Test
+    void pickPromptsCanRunWhileJoinValidationIsBlocked() throws Exception {
+        ThreadPoolTaskExecutor joins = (ThreadPoolTaskExecutor) new AsyncConfig().pickupIoExecutor();
+        ThreadPoolTaskExecutor picks = (ThreadPoolTaskExecutor) new AsyncConfig().pickIoExecutor();
+        CountDownLatch joinStarted = new CountDownLatch(1);
+        CountDownLatch releaseJoin = new CountDownLatch(1);
+        CountDownLatch pickCompleted = new CountDownLatch(1);
+
+        try {
+            joins.execute(() -> {
+                joinStarted.countDown();
+                await(releaseJoin);
+            });
+            assertTrue(joinStarted.await(2, TimeUnit.SECONDS));
+            picks.execute(pickCompleted::countDown);
+            assertTrue(pickCompleted.await(2, TimeUnit.SECONDS));
+        } finally {
+            releaseJoin.countDown();
+            joins.shutdown();
+            picks.shutdown();
+        }
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             latch.await();
