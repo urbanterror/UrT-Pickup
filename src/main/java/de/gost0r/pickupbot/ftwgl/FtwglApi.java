@@ -29,12 +29,14 @@ import java.util.*;
 public class FtwglApi {
 
     private final RestClient restClient;
+    private final RestClient rentalClient;
 
     public FtwglApi(
             @Value("${app.ftw.url}") String apiUrl,
             @Value("${app.ftw.key}") String apiKey,
             @Value("${app.ftw.connect-timeout:2s}") Duration connectTimeout,
-            @Value("${app.ftw.read-timeout:5s}") Duration readTimeout
+            @Value("${app.ftw.read-timeout:5s}") Duration readTimeout,
+            @Value("${app.ftw.rental-read-timeout:1m}") Duration rentalReadTimeout
     ) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(connectTimeout);
@@ -47,6 +49,11 @@ public class FtwglApi {
                 .defaultHeader("User-Agent", "Bot")
                 .requestFactory(requestFactory)
                 .build();
+
+        SimpleClientHttpRequestFactory rentalRequestFactory = new SimpleClientHttpRequestFactory();
+        rentalRequestFactory.setConnectTimeout(connectTimeout);
+        rentalRequestFactory.setReadTimeout(rentalReadTimeout);
+        rentalClient = restClient.mutate().requestFactory(rentalRequestFactory).build();
     }
 
     public String launchAC(Player player, String ip, String password) {
@@ -112,7 +119,7 @@ public class FtwglApi {
                 .build();
 
         try {
-            RentPugResponse response = sendPostRequest("/rent/pug", request, RentPugResponse.class).getBody();
+            RentPugResponse response = sendPostRequest(rentalClient, "/rent/pug", request, RentPugResponse.class).getBody();
             assert response != null;
             if (response.getServer() == null || response.getServer().getConfig() == null) {
                 log.warn("CAN'T SPAWN: {}", response);
@@ -241,8 +248,12 @@ public class FtwglApi {
 
     @Retryable(retryFor = {RetryableHttpException.class})
     private <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
+        return sendPostRequest(restClient, url, body, responseType);
+    }
+
+    private <T> ResponseEntity<T> sendPostRequest(RestClient client, String url, Object body, Class<T> responseType) {
         log.trace("Creating POST request to: {}", url);
-        ResponseEntity<T> response = restClient.post()
+        ResponseEntity<T> response = client.post()
                 .uri(url)
                 .header("charset", "utf-8")
                 .header("Content-Type", "application/json")

@@ -8,6 +8,7 @@ app:
     key: ${FTW_KEY}
     connect-timeout: ${FTW_CONNECT_TIMEOUT:2s}
     read-timeout: ${FTW_READ_TIMEOUT:5s}
+    rental-read-timeout: ${FTW_RENTAL_READ_TIMEOUT:1m}
 
 logging:
   level:

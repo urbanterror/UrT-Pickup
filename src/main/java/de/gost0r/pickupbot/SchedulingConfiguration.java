@@ -19,4 +19,9 @@ public class SchedulingConfiguration {
     public void scheduledTick() {
         bot.tick();
     }
+
+    @Scheduled(fixedDelay = 86_400_000, initialDelay = 86_400_000)
+    public void scheduledDatabaseOptimize() {
+        bot.optimizeDatabase();
+    }
 }

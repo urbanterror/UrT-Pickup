@@ -8,6 +8,7 @@ import de.gost0r.pickupbot.pickup.server.ServerMonitor.ServerState;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
+import java.util.concurrent.RejectedExecutionException;
 
 @Slf4j
 public class Match implements Runnable {
@@ -259,6 +260,14 @@ public class Match implements Runnable {
                 }
                 cleanUp();
                 logic.db.saveMatch(this);
+                Player.invalidateSeasonStats();
+                List<Player> participants = List.copyOf(playerStats.keySet());
+                try {
+                    logic.bot.pickupIoExecutor.execute(() -> refreshPlayerStatsAfterResult(participants));
+                } catch (RejectedExecutionException e) {
+                    // The cached stats remain invalid and will be refreshed on demand.
+                    log.warn("Unable to schedule surrender stats refresh", e);
+                }
                 sendAftermath();
                 logic.matchRemove(this);
             }
@@ -338,15 +347,19 @@ public class Match implements Runnable {
         }
 
         logic.db.saveMatch(this);
-        // Update player stats
-        for (Player p : playerStats.keySet()) {
-            p.stats = logic.db.getPlayerStats(p, logic.currentSeason);
-            p.setRank(logic.db.getRankForPlayer(p));
-        }
+        Player.invalidateSeasonStats();
+        refreshPlayerStatsAfterResult(List.copyOf(playerStats.keySet()));
 
         if (gtvServer != null) {
             gtvServer.free();
             gtvServer.sendRcon("gtv_disconnect 1");
+        }
+    }
+
+    private void refreshPlayerStatsAfterResult(List<Player> participants) {
+        for (Player p : participants) {
+            p.refreshCurrentSeasonStats(logic.db, logic.currentSeason);
+            p.setRank(logic.db.getRankForPlayer(p));
         }
     }
 

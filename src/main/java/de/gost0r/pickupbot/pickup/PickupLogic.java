@@ -154,9 +154,21 @@ public class PickupLogic {
             modes.forEach(gt -> reply.accept(ban));
             return;
         }
+        List<Gametype> toJoin = new ArrayList<>();
+        for (Gametype gt : modes) {
+            Match match = curMatch.get(gt);
+            if (match != null && match.isInMatch(player)) {
+                reply.accept(new PickupReply("You are already queued for: " + gt.getName()));
+            } else {
+                toJoin.add(gt);
+            }
+        }
+        if (toJoin.isEmpty()) {
+            return;
+        }
         Map<Gametype, Long> versions = new HashMap<>();
         Map<Gametype, Long> resetAtJoin = new HashMap<>();
-        for (Gametype gt : modes) {
+        for (Gametype gt : toJoin) {
             String key = joinKey(player, gt);
             pendingJoins.putIfAbsent(key, 0L);
             versions.put(gt, pendingJoins.get(key));
@@ -166,7 +178,7 @@ public class PickupLogic {
         bot.pickupIoExecutor.execute(() -> {
             PickupReply error;
             try {
-                boolean needsPing = modes.stream().anyMatch(gt -> dynamicServers || gt.getTeamSize() == 0);
+                boolean needsPing = toJoin.stream().anyMatch(gt -> dynamicServers || gt.getTeamSize() == 0);
                 CompletableFuture<Boolean> launcher = player.getEnforceAC()
                         ? CompletableFuture.supplyAsync(() -> ftwglApi.hasLauncherOn(player))
                         : CompletableFuture.completedFuture(true);
@@ -180,7 +192,7 @@ public class PickupLogic {
             }
             PickupReply validation = error;
             bot.queueExecutor.execute(() -> {
-                for (Gametype gt : modes) {
+                for (Gametype gt : toJoin) {
                     if (pendingJoins.getOrDefault(joinKey(player, gt), 0L) != versions.get(gt)
                             || resetVersions.getOrDefault(gt, 0L) != resetAtJoin.get(gt)
                             || curMatch.get(gt) == null) {
@@ -288,6 +300,15 @@ public class PickupLogic {
             return new PickupReply(Config.player_already_match);
         }
 
+        boolean queued = curMatch.entrySet().stream()
+                .anyMatch(entry -> (modes == null || modes.contains(entry.getKey()))
+                        && entry.getValue() != null && entry.getValue().isInMatch(player));
+        boolean inTeam = activeTeams.stream().anyMatch(team -> team.isInTeam(player));
+        if (!queued && !inTeam) {
+            return new PickupReply(modes == null ? Config.player_already_removed
+                    : "You are not added to any of those queues.");
+        }
+
         // remove from all if null
         if (modes == null) {
             for (Match match : curMatch.values()) {
@@ -358,6 +379,7 @@ public class PickupLogic {
         Player p = new Player(user, urtauth);
         p.setElo(db.getAvgElo());
         db.createPlayer(p);
+        Player.invalidateSeasonStats();
 
         String admin_msg = Config.auth_success_admin;
         admin_msg = admin_msg.replace(".user.", user.getMentionString());
@@ -378,6 +400,7 @@ public class PickupLogic {
             return false;
         }
         Player.remove(player);
+        Player.invalidateSeasonStats();
         return true;
     }
 
@@ -855,7 +878,8 @@ public class PickupLogic {
     }
 
     public DiscordEmbed getStatsEmbed(Player p) {
-        PlayerStats stats = db.getPlayerStats(p, currentSeason);
+        // Current-season stats are hydrated on player load and refreshed when a match ends.
+        PlayerStats stats = p.getCurrentSeasonStats(db, currentSeason);
         String country = "<:puma:849287183474884628>";
         if (!p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
             country = ":flag_" + p.getCountry().toLowerCase() + ":";
@@ -887,7 +911,7 @@ public class PickupLogic {
             // 	statsEmbed.addField("KDR", String.format("%.02f", stats.kdr) + " (#" + stats.kdrRank + ")", true);
             // }
             statsEmbed.addField("Rating", String.format("%.02f", ftwglApi.getPlayerRatings(p)), true);
-            if (p.stats.wdlRank == -1) {
+            if (stats.wdlRank == -1) {
                 statsEmbed.addField("Win %", Math.round(stats.ts_wdl.calcWinRatio() * 100d) + "%", true);
 
             } else {

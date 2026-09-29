@@ -47,8 +47,8 @@ class PickupBotAsyncRoutingTest {
         bot.recvMessage(message("!add TS", sender));
         bot.recvMessage(message("!status", sender));
 
-        assertEquals(3, queueExecutor.tasks.size());
-        assertEquals(1, commandExecutor.tasks.size());
+        assertEquals(0, queueExecutor.tasks.size());
+        assertEquals(2, commandExecutor.tasks.size()); // cold lookup and read-only command
     }
 
     @Test
@@ -66,6 +66,25 @@ class PickupBotAsyncRoutingTest {
         queueExecutor.tasks.get(0).run();
         verify(logic).afkCheck();
         verify(logic).checkPrivateGroups();
+    }
+
+    @Test
+    void dailyDatabaseMaintenanceUsesIoWorkerInsteadOfQueueWorker() throws Exception {
+        RecordingExecutor queueExecutor = new RecordingExecutor();
+        RecordingExecutor ioExecutor = new RecordingExecutor();
+        PickupBot bot = new PickupBot("test", mock(FtwglApi.class), mock(DiscordService.class),
+                mock(PermissionService.class), mock(PickupRoleCache.class), Runnable::run,
+                queueExecutor, ioExecutor, Runnable::run);
+        PickupLogic logic = mock(PickupLogic.class);
+        logic.db = mock(Database.class);
+        setField(bot, "logic", logic);
+
+        bot.optimizeDatabase();
+
+        assertEquals(0, queueExecutor.tasks.size());
+        assertEquals(1, ioExecutor.tasks.size());
+        ioExecutor.tasks.get(0).run();
+        verify(logic.db).optimize();
     }
 
     private static DiscordMessage message(String content, DiscordUser sender) {

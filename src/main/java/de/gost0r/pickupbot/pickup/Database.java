@@ -39,6 +39,11 @@ public class Database {
                 stmt.execute("PRAGMA journal_mode=WAL;");
             }
             initTable();
+            // Seed planner statistics after index creation. Without sqlite_stat1,
+            // SQLite can scan every player's history before filtering to this season.
+            try (Statement stmt = c.createStatement()) {
+                stmt.execute("PRAGMA optimize=0x10002;");
+            }
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -54,6 +59,14 @@ public class Database {
             c.close();
         } catch (SQLException e) {
             log.warn("Exception during database shutdown: ", e);
+        }
+    }
+
+    public void optimize() {
+        try (Statement stmt = c.createStatement()) {
+            stmt.execute("PRAGMA optimize;");
+        } catch (SQLException e) {
+            log.warn("Unable to update SQLite planner statistics", e);
         }
     }
 
@@ -1001,7 +1014,8 @@ public class Database {
                 }
             }
             player.setRank(readRankForPlayer(player));
-            player.stats = readPlayerStats(player, logic.currentSeason);
+            long statsRevision = Player.currentSeasonStatsRevision();
+            player.setCurrentSeasonStats(readPlayerStats(player, logic.currentSeason), logic.currentSeason, statsRevision);
         } catch (SQLException e) {
             log.warn("Exception: ", e);
             return null;
@@ -1399,7 +1413,9 @@ public class Database {
             gametypeCondition = "AND m.gametype=?";
         }
 
-        String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
+        // Drive from the season's matches. SQLite otherwise starts with every active
+        // player and walks their entire match history before applying the season filter.
+        String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'match' AS m CROSS JOIN 'player_in_match' AS pim CROSS JOIN 'player' AS p WHERE pim.matchid=m.id AND pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true' AND (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
         try (PreparedStatement pstmt = c.prepareStatement(sql)) {
             int paramIndex = 1;
             pstmt.setLong(paramIndex++, season.startdate);

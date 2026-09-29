@@ -19,7 +19,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,6 +39,7 @@ public class PickupBot {
     final Executor queueExecutor;
     final Executor pickupIoExecutor;
     final Executor pickIoExecutor;
+    private final ConcurrentHashMap<String, CompletableFuture<Void>> pendingQueueCommands = new ConcurrentHashMap<>();
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
@@ -103,6 +108,12 @@ public class PickupBot {
         }
     }
 
+    public void optimizeDatabase() {
+        if (logic != null && logic.db != null) {
+            pickupIoExecutor.execute(logic.db::optimize);
+        }
+    }
+
     private static final Set<String> QUEUE_COMMANDS = Set.of(
             Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
             Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
@@ -136,10 +147,23 @@ public class PickupBot {
         Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
                 ? queueExecutor : commandExecutor;
 
-        executor.execute(() -> {
+        String command = data[0].startsWith("!") ? data[0] : "message";
+        if (executor == queueExecutor) {
+            executeQueuePlayerCommand(msg.getUser(), command, p -> handleMessage(msg, data, p, true));
+        } else {
+            executeCommand(executor, command, () -> handleMessage(msg, data, null, false));
+        }
+    }
 
+    private void handleMessage(DiscordMessage msg, String[] data, Player loadedPlayer, boolean playerLoaded) {
             if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
-                Player p = Player.get(msg.getUser());
+                // Plain chat, !help and !status need at most an AFK timestamp update;
+                // they must not start a full database/statistics hydration.
+                boolean needsPlayer = data[0].startsWith("!")
+                        && !data[0].equalsIgnoreCase(Config.CMD_STATUS)
+                        && !data[0].equalsIgnoreCase(Config.CMD_HELP);
+                Player p = playerLoaded ? loadedPlayer : needsPlayer
+                        ? getCommandPlayer(msg.getUser()) : Player.getCachedByDiscordId(msg.getUser().getId());
 
                 if (p != null) {
                     p.afkCheck();
@@ -826,7 +850,7 @@ public class PickupBot {
         }
 
         if (msg.getChannel().isThreadChannel()) {
-            Player p = Player.get(msg.getUser());
+            Player p = playerLoaded ? loadedPlayer : getCommandPlayer(msg.getUser());
 
             // AFK CHECK CODE
             if (p != null) {
@@ -1482,7 +1506,6 @@ public class PickupBot {
                     break;
             }
         }
-        });
     }
 
     private static final Set<String> QUEUE_INTERACTIONS = Set.of(
@@ -1490,6 +1513,99 @@ public class PickupBot {
             Config.INT_TEAMINVITE, Config.INT_TEAMREMOVE,
             Config.INT_BET
     );
+
+    // Cached players go straight to the queue. Cold loads use a command worker;
+    // each user's next command waits for the previous mutation to finish.
+    private void executeQueuePlayerCommand(DiscordUser user, String command, Consumer<Player> task) {
+        String userId = user.getId();
+        CompletableFuture<Void> next = pendingQueueCommands.compute(userId, (id, previous) -> {
+            CompletableFuture<Void> ready = previous == null
+                    ? CompletableFuture.completedFuture(null) : previous.handle((result, failure) -> null);
+            return ready.thenCompose(ignored -> {
+                CompletableFuture<Void> done = new CompletableFuture<>();
+                if (Player.getCachedByDiscordId(userId) == null) {
+                    loadQueuePlayerAsync(user, command, task, done);
+                } else {
+                    // An earlier admin command may evict the cached player before this
+                    // task runs. Recheck on the queue worker without doing I/O there.
+                    try {
+                        executeCommand(queueExecutor, command, () -> {
+                            Player current = Player.getCachedByDiscordId(userId);
+                            if (current == null) {
+                                loadQueuePlayerAsync(user, command, task, done);
+                            } else {
+                                try {
+                                    task.accept(current);
+                                } finally {
+                                    done.complete(null);
+                                }
+                            }
+                        });
+                    } catch (Throwable failure) {
+                        done.completeExceptionally(failure);
+                    }
+                }
+                return done;
+            });
+        });
+        next.whenComplete((ignored, failure) -> {
+            pendingQueueCommands.remove(userId, next);
+            if (failure != null) {
+                log.error("Unable to process queue command {} for user {}", command, userId, failure);
+            }
+        });
+    }
+
+    private void loadQueuePlayerAsync(DiscordUser user, String command, Consumer<Player> task,
+                                      CompletableFuture<Void> done) {
+        try {
+            commandExecutor.execute(() -> {
+                try {
+                    Player player = getCommandPlayer(user);
+                    executeCommand(queueExecutor, command, () -> {
+                        try {
+                            task.accept(player);
+                        } finally {
+                            done.complete(null);
+                        }
+                    });
+                } catch (Throwable failure) {
+                    done.completeExceptionally(failure);
+                }
+            });
+        } catch (Throwable failure) {
+            done.completeExceptionally(failure);
+        }
+    }
+
+    private void executeCommand(Executor executor, String command, Runnable task) {
+        long submitted = System.nanoTime();
+        executor.execute(() -> {
+            long started = System.nanoTime();
+            try {
+                task.run();
+            } finally {
+                long waitMs = TimeUnit.NANOSECONDS.toMillis(started - submitted);
+                long runMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                if (waitMs + runMs >= 1000) {
+                    log.warn("Slow command {}: executor={}, waitMs={}, runMs={}", command,
+                            executor == queueExecutor ? "queue" : "command", waitMs, runMs);
+                }
+            }
+        });
+    }
+
+    private Player getCommandPlayer(DiscordUser user) {
+        long started = System.nanoTime();
+        try {
+            return Player.get(user);
+        } finally {
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            if (elapsedMs >= 1000) {
+                log.warn("Slow command player lookup: userId={}, elapsedMs={}", user.getId(), elapsedMs);
+            }
+        }
+    }
 
     private void queueAddPlayer(Player player, List<Gametype> modes, DiscordMessage message, String map) {
         long voteVersion = map == null ? 0 : logic.mapVoteVersion(player, modes.get(0));
@@ -1514,8 +1630,14 @@ public class PickupBot {
         Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
                 ? queueExecutor : commandExecutor;
 
-        executor.execute(() -> {
-            Player p = Player.get(interaction.getUser());
+        if (executor == queueExecutor) {
+            executeQueuePlayerCommand(interaction.getUser(), data[0], p -> handleInteraction(interaction, data, p));
+        } else {
+            executeCommand(executor, data[0], () -> handleInteraction(interaction, data, getCommandPlayer(interaction.getUser())));
+        }
+    }
+
+    private void handleInteraction(DiscordInteraction interaction, String[] data, Player p) {
             if (p == null) {
                 interaction.respondEphemeral(Config.user_not_registered);
                 return;
@@ -1583,7 +1705,6 @@ public class PickupBot {
 //			}
 //			break;
             }
-        });
     }
 
     private void handleForceAdd(String[] data, DiscordMessage msg) {
@@ -1717,9 +1838,8 @@ public class PickupBot {
         List<Player> mentionedPlayers = new ArrayList<Player>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }
@@ -1746,9 +1866,8 @@ public class PickupBot {
         List<Player> mentionedPlayers = new ArrayList<Player>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }
@@ -1776,9 +1895,8 @@ public class PickupBot {
         List<DiscordMessage> sentMessages = new ArrayList<DiscordMessage>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }

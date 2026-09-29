@@ -473,7 +473,7 @@ class PickupBotCommandRoutingTest {
         }
     }
 
-    @Test void newerDirectMapVoteWinsOverDelayedJoinVote() throws Exception {
+    @Test void directMapVoteAfterAlreadyQueuedJoinWinsWithoutValidation() throws Exception {
         Player alpha = players.get("alpha");
         Gametype ts = gt("TS");
         logic.cmdAddPlayer(alpha, ts, false);
@@ -482,19 +482,18 @@ class PickupBotCommandRoutingTest {
         PickupBot asyncBot = botWithDelayedIo(ioTasks);
         try {
             asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
-            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+            org.junit.jupiter.api.Assertions.assertEquals(0, ioTasks.size());
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_turnpike", alpha.getVotedMap(ts).name);
 
             asyncBot.recvMessage(mockMessage("!map TS ut4_casa", users.get("alpha"), pubChannel));
             org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
-            ioTasks.get(0).run();
-
             org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
         } finally {
             logic.bot = originalBot;
         }
     }
 
-    @Test void newerAsyncMapVoteWinsWhenValidationsCompleteOutOfOrder() throws Exception {
+    @Test void alreadyQueuedMapVotesApplyInCommandOrderWithoutValidation() throws Exception {
         Player alpha = players.get("alpha");
         Gametype ts = gt("TS");
         logic.cmdAddPlayer(alpha, ts, false);
@@ -504,11 +503,7 @@ class PickupBotCommandRoutingTest {
         try {
             asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
             asyncBot.recvMessage(mockMessage("!ts ut4_casa", users.get("alpha"), pubChannel));
-            org.junit.jupiter.api.Assertions.assertEquals(2, ioTasks.size());
-
-            ioTasks.get(1).run();
-            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
-            ioTasks.get(0).run();
+            org.junit.jupiter.api.Assertions.assertEquals(0, ioTasks.size());
 
             org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
         } finally {

@@ -90,6 +90,60 @@ class AsyncQueueLifecycleTest {
     }
 
     @Test
+    void alreadyQueuedRepliesImmediatelyWithoutFtwValidation() {
+        when(match.isInMatch(player)).thenReturn(true);
+        List<PickupReply> replies = new ArrayList<>();
+
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+
+        assertEquals("You are already queued for: TS", replies.get(0).getMessage());
+        assertEquals(1, replies.size());
+        assertEquals(0, io.size());
+        verifyNoInteractions(ftw);
+    }
+
+    @Test
+    void alreadyQueuedModeDoesNotDelayJoiningAnotherMode() {
+        Gametype ctf = new Gametype("CTF", 5, true, false);
+        Match ctfMatch = mock(Match.class);
+        when(ctfMatch.getMatchState()).thenReturn(MatchState.Signup);
+        current.put(ctf, ctfMatch);
+        when(match.isInMatch(player)).thenReturn(true);
+        List<PickupReply> replies = new ArrayList<>();
+
+        logic.queueAddPlayer(player, List.of(gametype, ctf), false, replies::add);
+
+        assertEquals("You are already queued for: TS", replies.get(0).getMessage());
+        assertEquals(1, io.size());
+        verifyNoInteractions(ftw);
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+        verify(ctfMatch).addPlayer(player);
+        verify(ftw).checkIfPingStored(player);
+        verify(ftw).hasLauncherOn(player);
+        assertEquals(2, replies.size());
+    }
+
+    @Test
+    void removingWhenAlreadyOutOfQueueRepliesEveryTime() {
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        assertEquals("You are not added to any of those queues.",
+                logic.cmdRemovePlayer(player, List.of(gametype)).getMessage());
+        verifyNoInteractions(ftw);
+    }
+
+    @Test
+    void removingPendingJoinAcknowledgesAndStillCancelsIt() {
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+    }
+
+    @Test
     void removeOrResetWhileValidationRunsCannotReaddPlayer() {
         logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
         logic.cmdRemovePlayer(player, null);

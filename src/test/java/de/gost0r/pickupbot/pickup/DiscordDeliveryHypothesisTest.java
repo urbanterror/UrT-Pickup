@@ -112,7 +112,7 @@ class DiscordDeliveryHypothesisTest {
     }
 
     @Test
-    void blockedMentionLookupStopsSendAndSerialCallerButIndependentNoMentionSendProceeds() throws Exception {
+    void blockedDiscordLookupDoesNotDelayQueueAnnouncementsOrFollowingQueueWork() throws Exception {
         DiscordService service = mock(DiscordService.class);
         DiscordChannel mentionChannel = mock(DiscordChannel.class);
         DiscordChannel controlChannel = mock(DiscordChannel.class);
@@ -130,24 +130,23 @@ class DiscordDeliveryHypothesisTest {
         PickupBot bot = bot(service, queueExecutor);
 
         try {
+            Future<?> blockedLookup = independentExecutor.submit(() -> service.getUserById("123"));
+            assertTrue(lookupEntered.await(5, SECONDS));
             Future<?> mentionSend = queueExecutor.submit(
                     () -> bot.sendMsg(List.of(mentionChannel), "Ready <@123>"));
-            assertTrue(lookupEntered.await(5, SECONDS));
             Future<?> followingQueueTask = queueExecutor.submit(() -> { });
 
-            // A separate caller can submit text while the mention-bearing caller is blocked.
-            independentExecutor.submit(() -> bot.sendMsg(List.of(controlChannel), "Queue status"))
+            queueExecutor.submit(() -> bot.sendMsg(List.of(controlChannel), "Queue status"))
                     .get(5, SECONDS);
-            verify(controlChannel).sendMessage("Queue status");
-            verifyNoInteractions(mentionChannel);
-            verifyNoInteractions(database);
-            assertFalse(mentionSend.isDone());
-            assertFalse(followingQueueTask.isDone());
-
-            releaseLookup.countDown();
             mentionSend.get(5, SECONDS);
             followingQueueTask.get(5, SECONDS);
+            verify(controlChannel).sendMessage("Queue status");
             verify(mentionChannel).sendMessage("Ready <@123>");
+            verifyNoInteractions(database);
+            assertFalse(blockedLookup.isDone());
+
+            releaseLookup.countDown();
+            blockedLookup.get(5, SECONDS);
             verify(service, times(1)).getUserById("123");
             verifyNoInteractions(database);
         } finally {
@@ -160,19 +159,42 @@ class DiscordDeliveryHypothesisTest {
     }
 
     @Test
-    void cachedPlayerSkipsDatabaseHydrationButStillResolvesServiceUserAndFormatsMention() {
+    void cachedPlayerFormatsCrossGuildMentionWithoutDiscordOrDatabaseLookup() {
         DiscordService service = mock(DiscordService.class);
         DiscordChannel channel = mock(DiscordChannel.class);
         DiscordUser user = cachedUser();
-        when(service.getUserById("123")).thenReturn(user);
         when(channel.getGuildId()).thenReturn("other-guild");
 
-        bot(service, Runnable::run).sendMsg(List.of(channel), "Ready <@123>");
+        PickupBot bot = bot(service, Runnable::run);
+        DiscordEmbed embed = new DiscordEmbed();
+        bot.sendMsg(List.of(channel), "Ready <@123>");
+        bot.sendMsg(List.of(channel), "Ready <@123>", embed);
+        bot.sendMsgToEdit(List.of(channel), "Ready <@123>", embed, List.of());
 
-        verify(service).getUserById("123");
-        verify(user).isInGuild("other-guild");
+        verifyNoInteractions(service);
+        verify(user, times(3)).isInGuild("other-guild");
         verify(channel).sendMessage("Ready **cached-auth**");
+        verify(channel).sendMessage("Ready **cached-auth**", embed);
+        verify(channel).sendMessage("Ready **cached-auth**", embed, List.of());
         verifyNoInteractions(database);
+    }
+
+    @Test
+    void allSendVariantsPreserveUnknownMentionsWithoutLoadingPlayers() {
+        DiscordService service = mock(DiscordService.class);
+        DiscordChannel channel = mock(DiscordChannel.class);
+        PickupBot bot = bot(service, Runnable::run);
+        DiscordEmbed embed = new DiscordEmbed();
+        String text = "Ready <@999> <@!998> <@&997>";
+
+        bot.sendMsg(List.of(channel), text);
+        bot.sendMsg(List.of(channel), text, embed);
+        bot.sendMsgToEdit(List.of(channel), text, embed, List.of());
+
+        verify(channel).sendMessage(text);
+        verify(channel).sendMessage(text, embed);
+        verify(channel).sendMessage(text, embed, List.of());
+        verifyNoInteractions(service, database);
     }
 
     @Test

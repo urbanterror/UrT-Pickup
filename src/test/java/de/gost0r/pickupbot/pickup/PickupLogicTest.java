@@ -106,6 +106,20 @@ class PickupLogicTest {
         assertContains(r, "Nobody signed up");
     }
 
+    @Test void currentSeasonStatsEmbedReusesHydratedPlayerStats() {
+        Database original = logic.db;
+        Player alpha = players.get("alpha");
+        alpha.refreshCurrentSeasonStats(original, logic.currentSeason);
+        Database noQueries = mock(Database.class);
+        logic.db = noQueries;
+        try {
+            assertNotNull(logic.getStatsEmbed(alpha));
+            verifyNoInteractions(noQueries);
+        } finally {
+            logic.db = original;
+        }
+    }
+
     @Test void status_afterAdd_showsPlayer() {
         logic.cmdAddPlayer(players.get("alpha"), gt("TS"), false);
         assertContains(logic.cmdStatus(), "alpha");

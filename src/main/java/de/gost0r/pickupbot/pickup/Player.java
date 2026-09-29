@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Player {
 
@@ -23,7 +25,40 @@ public class Player {
 
     private float kdr = 0.0f;
 
-    public PlayerStats stats = new PlayerStats();
+    public volatile PlayerStats stats = new PlayerStats();
+    private volatile int statsSeason = -1;
+    private volatile long statsRevision = -1;
+    private static final AtomicLong seasonStatsRevision = new AtomicLong();
+
+    static long currentSeasonStatsRevision() {
+        return seasonStatsRevision.get();
+    }
+
+    static void invalidateSeasonStats() {
+        seasonStatsRevision.incrementAndGet();
+    }
+
+    void setCurrentSeasonStats(PlayerStats updated, Season season, long revision) {
+        stats = updated;
+        statsRevision = revision;
+        statsSeason = season.number;
+    }
+
+    public synchronized void refreshCurrentSeasonStats(Database database, Season season) {
+        long revision = currentSeasonStatsRevision();
+        setCurrentSeasonStats(database.getPlayerStats(this, season), season, revision);
+    }
+
+    public PlayerStats getCurrentSeasonStats(Database database, Season season) {
+        if (statsSeason != season.number || statsRevision != currentSeasonStatsRevision()) {
+            synchronized (this) {
+                if (statsSeason != season.number || statsRevision != currentSeasonStatsRevision()) {
+                    refreshCurrentSeasonStats(database, season);
+                }
+            }
+        }
+        return stats;
+    }
 
     private List<PlayerBan> bans = new ArrayList<PlayerBan>();
     public Map<Gametype, Integer> spree = new HashMap<Gametype, Integer>();
@@ -274,6 +309,8 @@ public class Player {
     // an unrelated identity cannot invalidate a successful in-flight load.
     private static long lifecycleSequence;
     private static final Map<Identity, Long> invalidatedAt = new HashMap<>();
+    // Guarded by Player.class. Prevent parallel commands from hydrating the same player repeatedly.
+    private static final Map<String, CompletableFuture<Player>> loadingByDiscordId = new HashMap<>();
 
     private Identity identity() {
         return new Identity(user.getId(), urtauth);
@@ -313,13 +350,45 @@ public class Player {
     }
 
     public static Player get(DiscordUser user) {
+        CompletableFuture<Player> pending;
+        boolean loadHere = false;
         synchronized (Player.class) {
             for (Player player : playerList) {
                 if (player.getDiscordUser().getId().equals(user.getId()) && player.getActive())
                     return player;
             }
+            pending = loadingByDiscordId.get(user.getId());
+            if (pending == null) {
+                pending = new CompletableFuture<>();
+                loadingByDiscordId.put(user.getId(), pending);
+                loadHere = true;
+            }
         }
-        return db.loadPlayer(user);
+        if (!loadHere) {
+            return pending.join();
+        }
+        try {
+            Player loaded = db.loadPlayer(user);
+            pending.complete(loaded);
+            return loaded;
+        } catch (Throwable failure) {
+            pending.completeExceptionally(failure);
+            throw failure;
+        } finally {
+            synchronized (Player.class) {
+                loadingByDiscordId.remove(user.getId(), pending);
+            }
+        }
+    }
+
+    /** Message formatting must not hydrate players or fetch Discord members on the queue worker. */
+    static synchronized Player getCachedByDiscordId(String discordId) {
+        for (Player player : playerList) {
+            if (player.getActive() && player.getDiscordUser().getId().equals(discordId)) {
+                return player;
+            }
+        }
+        return null;
     }
 
     public static Player get(DiscordUser user, String urtauth) {
