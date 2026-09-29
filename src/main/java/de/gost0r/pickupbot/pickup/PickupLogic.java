@@ -296,14 +296,14 @@ public class PickupLogic {
 
         cancelPendingJoins(player, modes);
 
-        if (playerInActiveMatch(player) != null) {
-            return new PickupReply(Config.player_already_match);
-        }
-
         boolean queued = curMatch.entrySet().stream()
                 .anyMatch(entry -> (modes == null || modes.contains(entry.getKey()))
                         && entry.getValue() != null && entry.getValue().isInMatch(player));
         boolean inTeam = activeTeams.stream().anyMatch(team -> team.isInTeam(player));
+        Match activeMatch = playerInActiveMatch(player);
+        if (!queued && activeMatch != null && (modes == null || modes.contains(activeMatch.getGametype()))) {
+            return new PickupReply(Config.player_already_match);
+        }
         if (!queued && !inTeam) {
             return new PickupReply(modes == null ? Config.player_already_removed
                     : "You are not added to any of those queues.");

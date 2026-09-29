@@ -290,6 +290,59 @@ class PickupBotCommandRoutingTest {
                 status.contains("alpha"), "Player should be removed from queue");
     }
 
+    @Test void removeTsWhilePlayingAimLeavesOnlyTsAndDoesNotRejectTheCommand() throws Exception {
+        Player alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("TS"), false);
+        logic.cmdAddPlayer(alpha, gt("CTF"), false);
+        Match liveAim = startLiveAim(alpha);
+        try {
+            DiscordMessage removeAim = mockMessage("!remove AIM", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeAim);
+            verify(removeAim).reply(Config.player_already_match);
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("TS"), alpha));
+
+            DiscordMessage removeTs = mockMessage("!remove TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeTs);
+            verify(removeTs, never()).reply(anyString());
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(alpha));
+            org.junit.jupiter.api.Assertions.assertEquals(MatchState.Live, liveAim.getMatchState());
+
+            DiscordMessage removeTsAgain = mockMessage("!remove TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeTsAgain);
+            verify(removeTsAgain).reply("You are not added to any of those queues.");
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(alpha));
+        } finally {
+            ongoingMatches().remove(liveAim);
+            currentMatches().remove(liveAim.getGametype());
+        }
+    }
+
+    @Test void removeAllWhilePlayingAimLeavesLiveMatchButClearsEverySignup() throws Exception {
+        Player bravo = players.get("bravo");
+        logic.cmdAddPlayer(bravo, gt("TS"), false);
+        logic.cmdAddPlayer(bravo, gt("CTF"), false);
+        Match liveAim = startLiveAim(bravo);
+        try {
+            DiscordMessage remove = mockMessage("!remove", users.get("bravo"), pubChannel);
+            bot.recvMessage(remove);
+            verify(remove, never()).reply(anyString());
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), bravo));
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("CTF"), bravo));
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(bravo));
+            org.junit.jupiter.api.Assertions.assertEquals(MatchState.Live, liveAim.getMatchState());
+
+            DiscordMessage removeAgain = mockMessage("!remove", users.get("bravo"), pubChannel);
+            bot.recvMessage(removeAgain);
+            verify(removeAgain).reply(Config.player_already_match);
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(bravo));
+        } finally {
+            ongoingMatches().remove(liveAim);
+            currentMatches().remove(liveAim.getGametype());
+        }
+    }
+
     @Test void remove_fromPublicChannel_adminRemovesOther() {
         logic.cmdAddPlayer(players.get("bravo"), gt("TS"), false);
         assertContains(logic.cmdStatus(), "bravo");
@@ -565,6 +618,31 @@ class PickupBotCommandRoutingTest {
     }
 
     // ========== Helpers ==========
+
+    private static Match startLiveAim(Player player) throws Exception {
+        Match aim = new Match(logic, new Gametype("AIM", 2, true, false), List.of(), perms);
+        aim.addPlayer(player);
+        Field state = Match.class.getDeclaredField("state");
+        state.setAccessible(true);
+        state.set(aim, MatchState.Live);
+        currentMatches().put(aim.getGametype(), new Match(logic, aim.getGametype(), List.of(), perms));
+        ongoingMatches().add(aim);
+        return aim;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Gametype, Match> currentMatches() throws Exception {
+        Field field = PickupLogic.class.getDeclaredField("curMatch");
+        field.setAccessible(true);
+        return (Map<Gametype, Match>) field.get(logic);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Match> ongoingMatches() throws Exception {
+        Field field = PickupLogic.class.getDeclaredField("ongoingMatches");
+        field.setAccessible(true);
+        return (List<Match>) field.get(logic);
+    }
 
     static Gametype gt(String name) { return logic.getGametypeByString(name); }
 
