@@ -2,6 +2,7 @@ package de.gost0r.pickupbot.discord.jda;
 
 import de.gost0r.pickupbot.discord.*;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
@@ -10,6 +11,7 @@ import net.dv8tion.jda.api.requests.restaction.WebhookMessageEditAction;
 import java.util.ArrayList;
 import java.util.List;
 
+@Slf4j
 public class JdaDiscordInteraction implements DiscordInteraction {
     @Getter
     private final DiscordUser user;
@@ -39,6 +41,22 @@ public class JdaDiscordInteraction implements DiscordInteraction {
         event.deferReply()
                 .setEphemeral(true)
                 .queue();
+    }
+
+    @Override
+    public void deferEdit() {
+        event.deferEdit().queue();
+    }
+
+    @Override
+    public void publishMessage() {
+        event.getHook()
+                .sendMessageEmbeds(event.getMessage().getEmbeds())
+                .setEphemeral(false)
+                .queue(published -> deleteDeferredReply(), failure -> {
+                    log.warn("Could not publish stats", failure);
+                    respondEphemeral("Could not publish stats. Please try again.");
+                });
     }
 
     @Override

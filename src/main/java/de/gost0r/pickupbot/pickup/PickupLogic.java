@@ -874,7 +874,16 @@ public class PickupLogic {
         }
 
         DiscordEmbed statsEmbed = getDetailedStatsEmbed(p, season);
-        interaction.respondEphemeral(null, statsEmbed);
+        if (seasonnumber == 0) {
+            DiscordButton publish = new DiscordButton(DiscordButtonStyle.PURPLE);
+            publish.setCustomId(Config.INT_PUBLISHSTATS);
+            publish.setLabel("Publish");
+            ArrayList<DiscordComponent> components = new ArrayList<>();
+            components.add(publish);
+            interaction.respondEphemeral(null, statsEmbed, components);
+        } else {
+            interaction.respondEphemeral(null, statsEmbed);
+        }
     }
 
     public DiscordEmbed getStatsEmbed(Player p) {

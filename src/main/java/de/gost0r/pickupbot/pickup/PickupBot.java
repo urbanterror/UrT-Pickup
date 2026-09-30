@@ -1623,9 +1623,12 @@ public class PickupBot {
                 interaction.getUser().getUsername(),
                 interaction.getComponentId()
         );
-        interaction.deferReply();
-
         String[] data = interaction.getComponentId().split("_");
+        if (Config.INT_PUBLISHSTATS.equalsIgnoreCase(data[0])) {
+            interaction.deferEdit();
+        } else {
+            interaction.deferReply();
+        }
 
         Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
                 ? queueExecutor : commandExecutor;
@@ -1666,6 +1669,10 @@ public class PickupBot {
 
             case Config.INT_SEASONSTATS:
                 logic.showSeasonStats(interaction, Player.get(data[1]), Integer.parseInt(data[2]));
+                break;
+
+            case Config.INT_PUBLISHSTATS:
+                interaction.publishMessage();
                 break;
 
             case Config.INT_SEASONLIST:

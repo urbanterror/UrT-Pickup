@@ -1,17 +1,25 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.discord.jda.JdaDiscordInteraction;
+import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
+import net.dv8tion.jda.api.requests.restaction.WebhookMessageCreateAction;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
 import org.junit.jupiter.api.*;
+import org.mockito.ArgumentCaptor;
 
 import java.io.File;
 import java.lang.reflect.Field;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -108,6 +116,137 @@ class PickupBotCommandRoutingTest {
         logic.cmdUnlock();
         // Reset permission mocks to default (no rights)
         reset(perms);
+    }
+
+    // ========== Stats publishing ==========
+
+    @Test void allTimeStatsButtonShowsRequestedPlayerAndPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSTATS + "_bravo_0", users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), embed.capture(), components.capture());
+        assertEquals("All time stats", embed.getValue().getDescription());
+        assertTrue(embed.getValue().getTitle().contains("bravo"));
+        assertFalse(embed.getValue().getTitle().contains("alpha"));
+        assertEquals(users.get("bravo").getAvatarUrl(), embed.getValue().getThumbnail());
+        assertFalse(embed.getValue().getFields().isEmpty());
+        assertPublishButton(components.getValue());
+        verify(interaction).deferReply();
+        verify(interaction, never()).deferEdit();
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void seasonSelectionKeepsSeasonalStatsPrivateWithoutPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSELECTED + "_bravo", users.get("alpha"));
+        when(interaction.getValues()).thenReturn(List.of("1"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+        verify(interaction).respondEphemeral(isNull(), embed.capture());
+        assertTrue(embed.getValue().getDescription().startsWith("Season 1 "));
+        assertTrue(embed.getValue().getTitle().contains("bravo"));
+        verify(interaction, never()).respondEphemeral(any(), any(), any());
+        verify(interaction).deferReply();
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void allTimeStatsViaSeasonSelectionAlsoHasPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSELECTED + "_alpha", users.get("alpha"));
+        when(interaction.getValues()).thenReturn(List.of("0"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), argThat(embed ->
+                "All time stats".equals(embed.getDescription())), components.capture());
+        assertPublishButton(components.getValue());
+    }
+
+    @Test void publishClickAcknowledgesOriginalMessageBeforePublishing() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_PUBLISHSTATS, users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        var order = inOrder(interaction);
+        order.verify(interaction).deferEdit();
+        order.verify(interaction).publishMessage();
+        verify(interaction, never()).deferReply();
+        verify(interaction, never()).respondEphemeral(anyString());
+    }
+
+    @Test void unregisteredUserCannotPublishStats() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_PUBLISHSTATS, mockUser("9999", "unknown"));
+
+        bot.recvInteraction(interaction);
+
+        verify(interaction).respondEphemeral(Config.user_not_registered);
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void missingTargetPlayerDoesNotCreatePublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSTATS + "_missingplayer_0", users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        verify(interaction, never()).respondEphemeral(any(), any(), any());
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void publishClickThroughRealAdapterPostsSnapshotThenDeletesOriginal() {
+        GenericComponentInteractionCreateEvent event = mock(
+                GenericComponentInteractionCreateEvent.class, RETURNS_DEEP_STUBS);
+        when(event.getMember()).thenReturn(null);
+        when(event.getUser().getId()).thenReturn("1001");
+        when(event.getUser().getEffectiveName()).thenReturn("alpha");
+        when(event.getComponentId()).thenReturn(Config.INT_PUBLISHSTATS);
+        // The viewed player can differ from the user clicking Publish.
+        var snapshot = List.of(new EmbedBuilder().setTitle("bravo")
+                .setDescription("All time stats").addField("Wins", "42", true).build());
+        when(event.getMessage().getEmbeds()).thenReturn(snapshot);
+        var hook = event.getHook();
+        WebhookMessageCreateAction<Message> post = hook.sendMessageEmbeds(snapshot);
+        when(post.setEphemeral(false)).thenReturn(post);
+        clearInvocations(event, hook, post);
+
+        bot.recvInteraction(new JdaDiscordInteraction(event));
+
+        verify(event).deferEdit();
+        verify(event, never()).deferReply();
+        verify(hook).sendMessageEmbeds(same(snapshot));
+        verify(post).setEphemeral(false);
+        verify(hook, never()).deleteOriginal();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Consumer<Message>> success = ArgumentCaptor.forClass(Consumer.class);
+        verify(post).queue(success.capture(), any());
+        success.getValue().accept(mock(Message.class));
+        verify(hook).deleteOriginal();
+        verify(hook.deleteOriginal()).queue();
+    }
+
+    private static DiscordInteraction mockInteraction(String componentId, DiscordUser user) {
+        DiscordInteraction interaction = mock(DiscordInteraction.class);
+        DiscordMessage message = mockMessage("", discord.getMe(), pubChannel);
+        when(interaction.getComponentId()).thenReturn(componentId);
+        when(interaction.getUser()).thenReturn(user);
+        when(interaction.getMessage()).thenReturn(message);
+        return interaction;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<ArrayList<DiscordComponent>> componentCaptor() {
+        return ArgumentCaptor.forClass(ArrayList.class);
+    }
+
+    private static void assertPublishButton(List<DiscordComponent> components) {
+        assertEquals(1, components.size());
+        DiscordButton button = assertInstanceOf(DiscordButton.class, components.get(0));
+        assertEquals("Publish", button.getLabel());
+        assertEquals(Config.INT_PUBLISHSTATS, button.getCustomId());
+        assertFalse(button.isDisabled());
     }
 
     // ========== !reset ==========
