@@ -2155,17 +2155,15 @@ public class Database {
     }
 
     public Season getCurrentSeason() {
-        try {
-            String sql = "SELECT number, startdate, enddate FROM season ORDER BY number DESC LIMIT 1;";
-            PreparedStatement pstmt = getPreparedStatement(sql);
-            ResultSet rs = pstmt.executeQuery();
+        String sql = "SELECT number, startdate, enddate FROM season ORDER BY number DESC LIMIT 1;";
+        try (PreparedStatement pstmt = c.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
             if (rs.next()) {
                 int number = rs.getInt("number");
                 long startdate = rs.getLong("startdate");
                 long enddate = rs.getLong("enddate");
                 return new Season(number, startdate, enddate);
             }
-            rs.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -2173,17 +2171,16 @@ public class Database {
     }
 
     public Season getSeason(int number) {
-        try {
-            String sql = "SELECT number, startdate, enddate FROM season WHERE number = ?;";
-            PreparedStatement pstmt = getPreparedStatement(sql);
-            pstmt.setString(1, String.valueOf(number));
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                long startdate = rs.getLong("startdate");
-                long enddate = rs.getLong("enddate");
-                return new Season(number, startdate, enddate);
+        String sql = "SELECT number, startdate, enddate FROM season WHERE number = ?;";
+        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
+            pstmt.setInt(1, number);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    long startdate = rs.getLong("startdate");
+                    long enddate = rs.getLong("enddate");
+                    return new Season(number, startdate, enddate);
+                }
             }
-            rs.close();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -2212,11 +2209,12 @@ public class Database {
     public synchronized boolean transferCoins(Player sender, Player recipient, long amount) {
         if (amount <= 0) return false;
         try {
-            if (!c.getAutoCommit()) throw new SQLException("Command connection already in a transaction");
+            ensureMatchWriter();
+            if (!matchWrites.getAutoCommit()) throw new SQLException("Wallet writer already in a transaction");
             String from = sender.getDiscordUser().getId(), to = recipient.getDiscordUser().getId();
             String fromAuth = sender.getUrtauth(), toAuth = recipient.getUrtauth();
             if (from.equals(to) && fromAuth.equals(toAuth)) {
-                try (PreparedStatement balance = c.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?")) {
+                try (PreparedStatement balance = matchWrites.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?")) {
                     balance.setString(1, from);
                     balance.setString(2, fromAuth);
                     try (ResultSet rs = balance.executeQuery()) {
@@ -2225,8 +2223,8 @@ public class Database {
                 }
             }
 
-            // One SQLite statement is atomic without opening a transaction on the
-            // shared connection between calls, where unrelated commands could join it.
+            // One atomic statement on the isolated writer cannot inherit an open
+            // command-side read snapshot or join an unrelated command transaction.
             // Materialize eligibility once so updating the sender cannot change the
             // recipient row's eligibility during the same UPDATE.
             String sql = "WITH transfer AS MATERIALIZED (SELECT s.rowid AS sender_id, r.rowid AS recipient_id "
@@ -2235,7 +2233,7 @@ public class Database {
                     + "UPDATE player SET coins=CASE WHEN rowid=(SELECT sender_id FROM transfer) "
                     + "THEN coins-? ELSE coins+? END "
                     + "WHERE rowid IN (SELECT sender_id FROM transfer UNION ALL SELECT recipient_id FROM transfer)";
-            try (PreparedStatement stmt = c.prepareStatement(sql)) {
+            try (PreparedStatement stmt = matchWrites.prepareStatement(sql)) {
                 stmt.setString(1, to);
                 stmt.setString(2, toAuth);
                 stmt.setString(3, from);
@@ -2249,6 +2247,64 @@ public class Database {
         } catch (SQLException e) {
             throw new MatchPersistenceException("Unable to transfer coins", e);
         }
+    }
+
+    public enum Perk { ELO_BOOST, MAP_VOTES, MAP_BAN }
+
+    public enum PurchaseStatus { PURCHASED, INSUFFICIENT_FUNDS, ALREADY_OWNED }
+
+    public record PerkPurchase(PurchaseStatus status, long coins, long eloBoost, int mapVotes, int mapBans) { }
+
+    /** Grant the perk and debit its price together, using persisted funds and ownership. */
+    public synchronized PerkPurchase purchasePerk(Player player, Perk perk, int quantity) {
+        if (quantity < 1 || quantity > (perk == Perk.MAP_VOTES ? 5 : 1)) {
+            throw new IllegalArgumentException("Invalid perk quantity: " + quantity);
+        }
+        long price = switch (perk) {
+            case ELO_BOOST -> 1000;
+            case MAP_VOTES -> 1000L << (quantity - 1);
+            case MAP_BAN -> 10000;
+        };
+        return writeMatch("purchase " + perk, () -> {
+            String user = player.getDiscordUser().getId(), auth = player.getUrtauth();
+            try (PreparedStatement select = matchWrites.prepareStatement(
+                    "SELECT coins, eloboost, mapvote, mapban FROM player WHERE userid=? AND urtauth=?");
+                 PreparedStatement update = matchWrites.prepareStatement(
+                         "UPDATE player SET coins=?, eloboost=?, mapvote=?, mapban=? WHERE userid=? AND urtauth=?")) {
+                select.setString(1, user);
+                select.setString(2, auth);
+                long coins, boost;
+                int votes, bans;
+                try (ResultSet rs = select.executeQuery()) {
+                    if (!rs.next()) throw new SQLException("Wallet not found: " + auth);
+                    coins = rs.getLong(1);
+                    boost = rs.getLong(2);
+                    votes = rs.getInt(3);
+                    bans = rs.getInt(4);
+                }
+                long now = System.currentTimeMillis();
+                if ((perk == Perk.ELO_BOOST && boost >= now) || (perk == Perk.MAP_VOTES && votes > 0)) {
+                    return new PerkPurchase(PurchaseStatus.ALREADY_OWNED, coins, boost, votes, bans);
+                }
+                if (coins < price) {
+                    return new PerkPurchase(PurchaseStatus.INSUFFICIENT_FUNDS, coins, boost, votes, bans);
+                }
+                coins -= price;
+                switch (perk) {
+                    case ELO_BOOST -> boost = now + 7_200_000;
+                    case MAP_VOTES -> votes = quantity;
+                    case MAP_BAN -> bans = Math.addExact(bans, 1);
+                }
+                update.setLong(1, coins);
+                update.setLong(2, boost);
+                update.setInt(3, votes);
+                update.setInt(4, bans);
+                update.setString(5, user);
+                update.setString(6, auth);
+                if (update.executeUpdate() != 1) throw new SQLException("Wallet not found: " + auth);
+                return new PerkPurchase(PurchaseStatus.PURCHASED, coins, boost, votes, bans);
+            }
+        });
     }
 
     public void updatePlayerBoost(Player player) {

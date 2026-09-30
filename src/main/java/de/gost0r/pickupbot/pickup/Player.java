@@ -538,40 +538,49 @@ public class Player {
         coins = Math.addExact(balance, unsavedCoinDelta);
     }
 
-    public long getEloBoost() {
+    public synchronized Database.PerkPurchase purchasePerk(Database.Perk perk, int quantity) {
+        Database.PerkPurchase purchase = db.purchasePerk(this, perk, quantity);
+        // The database has already applied a successful debit. Never add it to
+        // unsavedCoinDelta, including when funds or ownership reject the purchase.
+        coins = Math.addExact(purchase.coins(), unsavedCoinDelta);
+        hydrateBoost(purchase.eloBoost(), purchase.mapVotes(), purchase.mapBans());
+        return purchase;
+    }
+
+    public synchronized long getEloBoost() {
         return eloBoost;
     }
 
-    public void setEloBoost(long eloBoost) {
+    public synchronized void setEloBoost(long eloBoost) {
         this.eloBoost = eloBoost;
         db.updatePlayerBoost(this);
     }
 
     // Loading stored values is not a wallet mutation and must never write them back.
-    void hydrateBoost(long eloBoost, int mapVotes, int mapBans) {
+    synchronized void hydrateBoost(long eloBoost, int mapVotes, int mapBans) {
         this.eloBoost = eloBoost;
         this.additionalMapVotes = mapVotes;
         this.mapBans = mapBans;
     }
 
-    public boolean hasBoostActive() {
+    public synchronized boolean hasBoostActive() {
         return eloBoost >= System.currentTimeMillis();
     }
 
-    public int getAdditionalMapVotes() {
+    public synchronized int getAdditionalMapVotes() {
         return additionalMapVotes;
     }
 
-    public void setAdditionalMapVotes(int mapVotes) {
+    public synchronized void setAdditionalMapVotes(int mapVotes) {
         this.additionalMapVotes = mapVotes;
         db.updatePlayerBoost(this);
     }
 
-    public int getMapBans() {
+    public synchronized int getMapBans() {
         return mapBans;
     }
 
-    public void setMapBans(int mapBans) {
+    public synchronized void setMapBans(int mapBans) {
         this.mapBans = mapBans;
         db.updatePlayerBoost(this);
     }

@@ -448,17 +448,16 @@ class MatchSettlementTest {
             assertEquals(1350, value(reader, "SELECT coins FROM player WHERE userid='2'"));
             assertTrue(command.getAutoCommit());
 
-            // A transfer must not join an unrelated command transaction.
+            // A transfer commits independently of an unrelated command transaction.
             command.setAutoCommit(false);
             try {
                 assertEquals(650, value(command, "SELECT coins FROM player WHERE userid='1'"));
-                assertThrows(MatchPersistenceException.class, () -> db.transferCoins(sender, recipient, 50));
+                assertTrue(db.transferCoins(sender, recipient, 50));
+                assertEquals(600, value(reader, "SELECT coins FROM player WHERE userid='1'"));
                 command.rollback();
             } finally {
                 command.setAutoCommit(true);
             }
-            assertEquals(650, value(reader, "SELECT coins FROM player WHERE userid='1'"));
-            assertTrue(db.transferCoins(sender, recipient, 50));
             assertEquals(600, value(reader, "SELECT coins FROM player WHERE userid='1'"));
             assertEquals(1400, value(reader, "SELECT coins FROM player WHERE userid='2'"));
         } finally { db.disconnect(); }

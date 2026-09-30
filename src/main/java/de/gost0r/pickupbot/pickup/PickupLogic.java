@@ -2912,19 +2912,17 @@ public class PickupLogic {
     public void buyBoost(DiscordInteraction interaction, Player p) {
         int price = 1000;
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
-        if (p.getCoins() < price) {
+        Database.PerkPurchase purchase = p.purchasePerk(Database.Perk.ELO_BOOST, 1);
+        if (purchase.status() == Database.PurchaseStatus.INSUFFICIENT_FUNDS) {
             interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
-        if (p.hasBoostActive()) {
-            interaction.respondEphemeral(Config.buy_boostactive.replace(".remaining.", String.valueOf(p.getEloBoost() / 1000)));
+        if (purchase.status() == Database.PurchaseStatus.ALREADY_OWNED) {
+            interaction.respondEphemeral(Config.buy_boostactive.replace(".remaining.", String.valueOf(purchase.eloBoost() / 1000)));
             return;
         }
 
-        p.setEloBoost((long) (System.currentTimeMillis() + 7.2e6)); // 2h
-        p.spendCoins(price);
-        p.saveWallet();
         interaction.deleteDeferredReply();
 
         String msg = Config.buy_boostactivated;
@@ -2998,6 +2996,7 @@ public class PickupLogic {
     }
 
     public void buyAdditionalVotes(DiscordInteraction interaction, Player p, int number) {
+        if (number < 1 || number > 5) throw new IllegalArgumentException("Invalid vote quantity: " + number);
         int price = 1000;
         if (number == 2) {
             price = 2000;
@@ -3008,20 +3007,18 @@ public class PickupLogic {
         } else if (number == 5) {
             price = 16000;
         }
-        if (p.getAdditionalMapVotes() > 0) {
-            interaction.respondEphemeral(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(p.getAdditionalMapVotes())));
+        Database.PerkPurchase purchase = p.purchasePerk(Database.Perk.MAP_VOTES, number);
+        if (purchase.status() == Database.PurchaseStatus.ALREADY_OWNED) {
+            interaction.respondEphemeral(Config.buy_voteoptionsalready.replace(".vote.", String.valueOf(purchase.mapVotes())));
             return;
         }
 
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
-        if (p.getCoins() < price) {
+        if (purchase.status() == Database.PurchaseStatus.INSUFFICIENT_FUNDS) {
             interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
-        p.setAdditionalMapVotes(number);
-        p.spendCoins(price);
-        p.saveWallet();
         interaction.respondEphemeral(Config.buy_addvote_purchased);
 
         String msg = Config.buy_addvotesactivated;
@@ -3037,14 +3034,12 @@ public class PickupLogic {
         int price = 10000;
 
         DiscordEmoji emoji = Bet.getCoinEmoji(price);
-        if (p.getCoins() < price) {
+        Database.PerkPurchase purchase = p.purchasePerk(Database.Perk.MAP_BAN, 1);
+        if (purchase.status() == Database.PurchaseStatus.INSUFFICIENT_FUNDS) {
             interaction.respondEphemeral(Config.bets_insufficient);
             return;
         }
 
-        p.setMapBans(p.getMapBans() + 1);
-        p.spendCoins(price);
-        p.saveWallet();
         interaction.respondEphemeral(Config.buy_banmap_purchased);
 
         String msg = Config.buy_mapbanactivated;
