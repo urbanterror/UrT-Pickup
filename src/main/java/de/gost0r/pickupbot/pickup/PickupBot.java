@@ -43,7 +43,7 @@ public class PickupBot {
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
-    private PickupLogic logic;
+    private volatile PickupLogic logic;
     private DiscordUser self;
 
     public PickupBot(

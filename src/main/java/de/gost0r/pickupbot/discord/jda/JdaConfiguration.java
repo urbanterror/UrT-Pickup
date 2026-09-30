@@ -19,7 +19,7 @@ public class JdaConfiguration {
     }
 
     @Bean
-    public JDA jda() {
+    public JDA jda(DiscordRequestBudget requestBudget) {
         return JDABuilder.create(
                         token,
                         EnumSet.of(
@@ -29,6 +29,7 @@ public class JdaConfiguration {
                                 GatewayIntent.DIRECT_MESSAGES
                         )
                 )
+                .setHttpClientBuilder(new okhttp3.OkHttpClient.Builder().addNetworkInterceptor(requestBudget))
                 .build();
     }
 }

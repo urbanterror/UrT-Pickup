@@ -40,3 +40,6 @@ build/
 
 # Local production deployment script
 /deploy-local.sh
+
+# Persistent Discord live-channel metrics
+/data/discord-live/

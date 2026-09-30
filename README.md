@@ -15,6 +15,61 @@ From this discord server you can:
 - request a game server for a few hours for your personal use.
 
 
+## Live-game previews
+
+The bot automatically creates a **`live-games-N`** text channel in each guild with a
+configured PUBLIC pickup channel. `N` is the number of public matches in the Live
+state (private matches and matches awaiting a server are excluded). Each match has
+a preview with teams, map, game status and score; click its title to open the
+existing live scoreboard when available. Finished previews are removed, and the
+channel is deleted when no public live matches remain.
+
+- Previews refresh approximately every **30 seconds**, slowing down as match count
+  or Discord traffic increases. Unchanged previews do not cause edits.
+- Channel names update at most once every **10 minutes**, because Discord applies
+  particularly restrictive limits to renames. The count in the name can lag; the
+  previews continue updating. Rename deadlines survive restarts.
+- The channel denies sending messages, creating/sending in threads, application
+  commands and adding reactions to everyone except the bot. Conflicting role/member
+  sending overrides are repaired. Discord administrators can bypass these denies.
+- The bot needs **Manage Channels**, **Manage Permissions**, **View Channel**,
+  **Send Messages**, **Embed Links** and **Read Message History**. Missing permissions
+  produce a log warning and, when possible, a warning in the configured ADMIN
+  channel (at most hourly per guild).
+- Restarts rediscover owned channels by their topic marker and recover preview
+  messages from history. Keep the bot-managed topic intact.
+
+Set `DISCORD_LIVE_GAMES_ENABLED=false` to disable channel management (existing
+channels remain). `DISCORD_LIVE_STATE_DIRECTORY` defaults to `./data/discord-live`;
+mount that directory on persistent storage, separately for each bot instance.
+
+### Discord request metrics
+
+All Discord REST attempts made by JDA, including retries, are counted. JDA still
+enforces Discord's route/global limits. Live-channel work adds a conservative
+one-operation-per-two-seconds budget, pauses above 600 requests in the trailing
+minute, and honors observed `Retry-After` / `X-RateLimit-Reset-After` feedback.
+There is only one live-channel worker, so slow REST calls cannot accumulate a
+refresh queue or block pickup commands.
+
+Counters are restored from `state.properties` and atomically checkpointed every
+five seconds and on shutdown (an abrupt crash can lose up to five seconds of
+counter increments). `discord.prom` in the same directory is a periodically updated
+Prometheus textfile that can be polled directly or scraped through the Prometheus
+node exporter's textfile collector. It includes:
+
+- `urt_discord_requests_total`, `urt_discord_rate_limited_total`,
+  `urt_discord_errors_total` and `urt_discord_network_errors_total`
+- `urt_discord_live_operations_total`, `urt_discord_live_deferred_total`,
+  `urt_discord_live_errors_total`
+- `urt_discord_requests_last_minute`, `urt_discord_live_refresh_interval_seconds`,
+  `urt_discord_live_blocked_until_seconds`, `urt_discord_metrics_written_timestamp_seconds`
+
+For example, `rate(urt_discord_requests_total[5m])` shows requests/second and
+`increase(urt_discord_rate_limited_total[15m])` shows recent HTTP 429s. Cumulative
+counters alone cannot predict Discord's available quota: the refresh policy also
+uses the recent request window and actual response headers.
+
 ## Commands
 
 ### User Commands

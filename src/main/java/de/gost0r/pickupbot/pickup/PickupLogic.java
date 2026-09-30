@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -103,7 +104,7 @@ public class PickupLogic {
             }
         }
         mapList = db.loadMaps(); // needs current gamemode list
-        ongoingMatches = db.loadOngoingMatches(); // need maps, servers and gamemodes
+        ongoingMatches = new CopyOnWriteArrayList<>(db.loadOngoingMatches()); // need maps, servers and gamemodes
         activeTeams = new ArrayList<Team>();
 
         createCurrentMatches();
@@ -1580,6 +1581,14 @@ public class PickupLogic {
             }
         }
         channel.sendMessage(msg.toString());
+    }
+
+    public List<Match> getPublicLiveMatches() {
+        if (ongoingMatches == null) return List.of();
+        return ongoingMatches.stream()
+                .filter(match -> match.getMatchState() == MatchState.Live)
+                .filter(match -> !match.getGametype().getPrivate() && match.getID() > 0)
+                .toList();
     }
 
     public List<PickupReply> cmdLive(DiscordChannel channel) {

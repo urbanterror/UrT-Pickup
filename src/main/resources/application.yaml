@@ -3,6 +3,9 @@ app:
   discord:
     token: ${DISCORD_TOKEN}
     application-id: ${DISCORD_APPLICATION_ID}
+    live-games:
+      enabled: ${DISCORD_LIVE_GAMES_ENABLED:true}
+      state-directory: ${DISCORD_LIVE_STATE_DIRECTORY:./data/discord-live}
   ftw:
     url: ${FTW_URL}
     key: ${FTW_KEY}
