@@ -106,7 +106,11 @@ public class PickupLogic {
         }
         mapList = db.loadMaps(); // needs current gamemode list
         db.recoverSettlements();
-        ongoingMatches = new CopyOnWriteArrayList<>(db.loadOngoingMatches()); // need maps, servers and gamemodes
+        // Recovery can abort a match and call matchRemove before loadOngoingMatches returns.
+        ongoingMatches = new CopyOnWriteArrayList<>();
+        for (Match match : db.loadOngoingMatches()) { // need maps, servers and gamemodes
+            if (!match.isOver() || match.isPersistencePending()) ongoingMatches.add(match);
+        }
         activeTeams = new ArrayList<Team>();
 
         createCurrentMatches();
