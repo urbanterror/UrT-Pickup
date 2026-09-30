@@ -188,6 +188,36 @@ class StatsCommandCacheTest {
     }
 
     @Test
+    void slowPostMatchBatchDoesNotOverwriteFresherCommandLookup() throws Exception {
+        player.stats.ts_wdl.win = 5;
+        when(db.getRankForPlayer(player)).thenReturn(2);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+            entered.countDown();
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+            return Map.of(player, 1.25f);
+        }).thenReturn(Map.of(player, 1.5f));
+        long revision = Player.currentSeasonStatsRevision();
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            try {
+                var batch = executor.submit(() -> cache.warm(Map.of(player, 3), season, revision, ftw));
+                assertTrue(entered.await(5, TimeUnit.SECONDS));
+                var expected = new StatsCommandCache.Values(2, 1.5f);
+                assertEquals(expected, executor.submit(() -> get(player)).get(5, TimeUnit.SECONDS));
+                release.countDown();
+                batch.get(5, TimeUnit.SECONDS);
+                assertEquals(expected, get(player));
+                verify(db).getRankForPlayer(player);
+                verify(ftw, times(2)).getPlayerRatings(List.of(player));
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
+    @Test
     void commandsReuseThePostMatchWarmup() {
         PickupLogic logic = spy(new PickupLogic(null, ftw, null, null, null));
         logic.db = db;
@@ -233,6 +263,7 @@ class StatsCommandCacheTest {
         logic.cmdGetElo(player, new Gametype("TS", 5, true, false));
         verify(db).getRankForPlayer(player);
         verify(db, never()).getPlayerStats(any(), any());
+        verify(db, never()).tryGetPlayerStats(any(), any());
         verify(ftw).getPlayerRatings(List.of(player));
     }
 

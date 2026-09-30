@@ -39,14 +39,21 @@ public class Player {
     }
 
     void setCurrentSeasonStats(PlayerStats updated, Season season, long revision) {
+        setKdr(updated.kdr);
         stats = updated;
         statsRevision = revision;
         statsSeason = season.number;
     }
 
+    /** SQL failure keeps the last complete snapshot, invalid for the next command's retry. */
     public synchronized void refreshCurrentSeasonStats(Database database, Season season) {
         long revision = currentSeasonStatsRevision();
-        setCurrentSeasonStats(database.getPlayerStats(this, season), season, revision);
+        // Even a forced refresh of a current snapshot must remain retryable on failure.
+        statsRevision = -1;
+        PlayerStats updated = database.tryGetPlayerStats(this, season);
+        if (updated != null) {
+            setCurrentSeasonStats(updated, season, revision);
+        }
     }
 
     public PlayerStats getCurrentSeasonStats(Database database, Season season) {

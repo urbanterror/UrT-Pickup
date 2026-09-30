@@ -268,8 +268,6 @@ public class Match implements Runnable {
                 }
                 persistResult(() -> {
                     cleanUp();
-                    Player.invalidateSeasonStats();
-                    schedulePlayerStatsRefresh();
                     sendAftermath();
                     announceRefunds();
                     logic.matchRemove(this);
@@ -353,8 +351,6 @@ public class Match implements Runnable {
             if (gametype.getTeamSize() > 0) {
                 announceSettlement();
             }
-            Player.invalidateSeasonStats();
-            schedulePlayerStatsRefresh();
             if (gtvServer != null) {
                 gtvServer.free();
                 gtvServer.sendRcon("gtv_disconnect 1");
@@ -399,6 +395,11 @@ public class Match implements Runnable {
             return;
         }
         pendingCompletion = null;
+        if (state == MatchState.Done || state == MatchState.Mercy || state == MatchState.Surrender) {
+            // Saved results must become visible even if cleanup or notifications fail.
+            Player.invalidateSeasonStats();
+            schedulePlayerStatsRefresh();
+        }
         if (persistenceAlertSent) {
             log.info("Match {} result saved on retry", id);
             try {

@@ -189,18 +189,18 @@ class PlayerLockHypothesisTest {
         PlayerStats currentStats = new PlayerStats();
         PlayerStats updatedRank = new PlayerStats();
         PlayerStats nextStats = new PlayerStats();
-        when(database.getPlayerStats(warmPlayer, current)).thenReturn(currentStats, updatedRank);
-        when(database.getPlayerStats(warmPlayer, next)).thenReturn(nextStats);
+        when(database.tryGetPlayerStats(warmPlayer, current)).thenReturn(currentStats, updatedRank);
+        when(database.tryGetPlayerStats(warmPlayer, next)).thenReturn(nextStats);
 
         assertSame(currentStats, warmPlayer.getCurrentSeasonStats(database, current));
         assertSame(currentStats, warmPlayer.getCurrentSeasonStats(database, current));
-        verify(database, times(1)).getPlayerStats(warmPlayer, current);
+        verify(database, times(1)).tryGetPlayerStats(warmPlayer, current);
         Player.invalidateSeasonStats(); // Another player's scored match can change our rank.
         assertSame(updatedRank, warmPlayer.getCurrentSeasonStats(database, current));
         assertSame(updatedRank, warmPlayer.getCurrentSeasonStats(database, current));
-        verify(database, times(2)).getPlayerStats(warmPlayer, current);
+        verify(database, times(2)).tryGetPlayerStats(warmPlayer, current);
         assertSame(nextStats, warmPlayer.getCurrentSeasonStats(database, next));
-        verify(database, times(1)).getPlayerStats(warmPlayer, next);
+        verify(database, times(1)).tryGetPlayerStats(warmPlayer, next);
     }
 
     @Test
@@ -224,8 +224,8 @@ class PlayerLockHypothesisTest {
         Player other = new Player(otherUser, "another-auth");
         warmPlayer.setCurrentSeasonStats(before, season, Player.currentSeasonStatsRevision());
         other.setCurrentSeasonStats(otherBefore, season, Player.currentSeasonStatsRevision());
-        when(database.getPlayerStats(warmPlayer, season)).thenReturn(after);
-        when(database.getPlayerStats(other, season)).thenReturn(otherAfter);
+        when(database.tryGetPlayerStats(warmPlayer, season)).thenReturn(after);
+        when(database.tryGetPlayerStats(other, season)).thenReturn(otherAfter);
 
         Match match = new Match(logic, new Gametype("TS", 5, true, false), List.of(), mock(PermissionService.class));
         Field statsField = Match.class.getDeclaredField("playerStats");
@@ -248,15 +248,15 @@ class PlayerLockHypothesisTest {
         match.checkSurrender();
 
         assertNotNull(backgroundRefresh.get());
-        verify(database, never()).getPlayerStats(warmPlayer, season);
+        verify(database, never()).tryGetPlayerStats(warmPlayer, season);
         backgroundRefresh.get().run();
         assertSame(after, warmPlayer.getCurrentSeasonStats(database, season));
         assertSame(otherAfter, other.getCurrentSeasonStats(database, season));
         var order = inOrder(database);
         order.verify(database).saveMatch(match);
-        order.verify(database).getPlayerStats(warmPlayer, season);
-        verify(database, times(1)).getPlayerStats(warmPlayer, season);
-        verify(database, times(1)).getPlayerStats(other, season);
+        order.verify(database).tryGetPlayerStats(warmPlayer, season);
+        verify(database, times(1)).tryGetPlayerStats(warmPlayer, season);
+        verify(database, times(1)).tryGetPlayerStats(other, season);
     }
 
     @Test

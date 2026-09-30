@@ -1770,6 +1770,9 @@ public class PickupLogic {
 
     public void cmdResetElo() {
         db.resetElo();
+        // This command can run within a season. The database swallows SQL failures,
+        // including partial resets, so conservatively invalidate after every attempt.
+        Player.invalidateSeasonStats();
     }
 
     // Matchcreation

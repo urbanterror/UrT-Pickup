@@ -115,6 +115,7 @@ class PickupLogicTest {
         try {
             assertNotNull(logic.getStatsEmbed(alpha));
             verify(noQueries, never()).getPlayerStats(any(), any());
+            verify(noQueries, never()).tryGetPlayerStats(any(), any());
         } finally {
             logic.db = original;
         }

@@ -2059,14 +2059,28 @@ public class Database {
         stats.ctf_wdl = getWDLForPlayer(player, logic.getGametypeByString("CTF"), season);
         try {
             readPlayerStatsValues(player, season, stats);
+            player.setKdr(stats.kdr);
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
         return stats;
     }
 
-    // Hydration requires every stats query to succeed. Public stats requests retain
-    // their existing best-effort behavior through the tolerant wrappers above.
+    /**
+     * Returns a complete, cacheable snapshot, or null if any SQL read fails.
+     * Does not mutate the player; callers retain their previous snapshot and retry.
+     * Historical display can still use the best-effort getPlayerStats method.
+     */
+    public PlayerStats tryGetPlayerStats(Player player, Season season) {
+        try {
+            return readPlayerStats(player, season);
+        } catch (SQLException e) {
+            log.warn("Unable to refresh season stats for {}", player.getUrtauth(), e);
+            return null;
+        }
+    }
+
+    // Hydration and cache refresh both require every stats query to succeed.
     private PlayerStats readPlayerStats(Player player, Season season) throws SQLException {
         PlayerStats stats = new PlayerStats();
 
@@ -2093,7 +2107,6 @@ public class Database {
             try (ResultSet rs = pstmt.executeQuery()) {
                 if (rs.next()) {
                     float kdr = ((float) rs.getInt("sumkills") + (float) rs.getInt("sumassists") / 2) / (float) rs.getInt("sumdeaths");
-                    player.setKdr(kdr);
                     stats.kdr = kdr;
                     stats.kills = rs.getInt("sumkills");
                     stats.assists = rs.getInt("sumassists");
