@@ -39,14 +39,48 @@ final class StatsCommandCache {
         this.nanoTime = nanoTime;
     }
 
+    void warm(Map<Player, Integer> ranks, Season season, long revision, FtwglApi ftw) {
+        if (Player.currentSeasonStatsRevision() != revision) return;
+        List<Player> ratedPlayers = ranks.keySet().stream()
+                .filter(player -> ranks.get(player) > 0 && player.stats.ts_wdl.getTotal() >= 5)
+                .toList();
+        // Match participants share one FTW request; ranks were already read during stats refresh.
+        Map<Player, Float> ratings = ratedPlayers.isEmpty() ? Map.of() : ftw.getPlayerRatings(ratedPlayers);
+        if (Player.currentSeasonStatsRevision() != revision) return;
+        ranks.forEach((player, rank) -> {
+            if (rank <= 0) return;
+            store(player, season, revision, false, new Values(rank, 0f));
+            if (ratings.containsKey(player)) {
+                store(player, season, revision, true, new Values(rank, ratings.get(player)));
+            }
+        });
+    }
+
+    private void store(Player player, Season season, long revision, boolean includeRating, Values values) {
+        Key key = new Key(player.getDiscordUser().getId(), player.getUrtauth(),
+                season.number, season.startdate, season.enddate, revision, includeRating);
+        Entry entry = entryFor(key);
+        synchronized (entry) {
+            // A command may have populated this entry while the batch request was in flight.
+            if (Player.currentSeasonStatsRevision() == revision
+                    && (entry.values == null || nanoTime.getAsLong() - entry.loadedAt >= TTL_NANOS)) {
+                entry.values = values;
+                entry.loadedAt = nanoTime.getAsLong();
+            }
+        }
+    }
+
+    private Entry entryFor(Key key) {
+        synchronized (entries) {
+            return entries.computeIfAbsent(key, ignored -> new Entry());
+        }
+    }
+
     Values get(Player player, Season season, boolean includeRating, Database db, FtwglApi ftw) {
         Key key = new Key(player.getDiscordUser().getId(), player.getUrtauth(),
                 season.number, season.startdate, season.enddate,
                 Player.currentSeasonStatsRevision(), includeRating);
-        Entry entry;
-        synchronized (entries) {
-            entry = entries.computeIfAbsent(key, ignored -> new Entry());
-        }
+        Entry entry = entryFor(key);
         // Coalesce concurrent requests for this player without holding a global or Player lock over I/O.
         synchronized (entry) {
             if (entry.values != null && nanoTime.getAsLong() - entry.loadedAt < TTL_NANOS) {

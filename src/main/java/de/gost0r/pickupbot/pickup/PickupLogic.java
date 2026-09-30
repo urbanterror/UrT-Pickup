@@ -812,6 +812,10 @@ public class PickupLogic {
         return new PickupReply(null, embed);
     }
 
+    void warmStatsCommandCache(Map<Player, Integer> ranks, Season season, long revision) {
+        statsCommandCache.warm(ranks, season, revision, ftwglApi);
+    }
+
     public String cmdGetElo(Player p, Gametype gt) {
         if (p == null) {
             return "";

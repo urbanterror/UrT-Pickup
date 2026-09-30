@@ -269,13 +269,7 @@ public class Match implements Runnable {
                 persistResult(() -> {
                     cleanUp();
                     Player.invalidateSeasonStats();
-                    List<Player> participants = List.copyOf(playerStats.keySet());
-                    try {
-                        logic.bot.pickupIoExecutor.execute(() -> refreshPlayerStatsAfterResult(participants));
-                    } catch (RejectedExecutionException e) {
-                        // The cached stats remain invalid and will be refreshed on demand.
-                        log.warn("Unable to schedule surrender stats refresh", e);
-                    }
+                    schedulePlayerStatsRefresh();
                     sendAftermath();
                     announceRefunds();
                     logic.matchRemove(this);
@@ -360,7 +354,7 @@ public class Match implements Runnable {
                 announceSettlement();
             }
             Player.invalidateSeasonStats();
-            refreshPlayerStatsAfterResult(List.copyOf(playerStats.keySet()));
+            schedulePlayerStatsRefresh();
             if (gtvServer != null) {
                 gtvServer.free();
                 gtvServer.sendRcon("gtv_disconnect 1");
@@ -417,11 +411,27 @@ public class Match implements Runnable {
         completion.run();
     }
 
-    private void refreshPlayerStatsAfterResult(List<Player> participants) {
-        for (Player p : participants) {
-            p.refreshCurrentSeasonStats(logic.db, logic.currentSeason);
-            p.setRank(logic.db.getRankForPlayer(p));
+    private void schedulePlayerStatsRefresh() {
+        List<Player> participants = List.copyOf(playerStats.keySet());
+        try {
+            logic.bot.pickupIoExecutor.execute(() -> refreshPlayerStatsAfterResult(participants));
+        } catch (RejectedExecutionException e) {
+            // Requests can still refresh the invalidated caches on demand.
+            log.warn("Unable to schedule post-match stats refresh", e);
         }
+    }
+
+    private void refreshPlayerStatsAfterResult(List<Player> participants) {
+        long revision = Player.currentSeasonStatsRevision();
+        Season season = logic.currentSeason;
+        Map<Player, Integer> ranks = new LinkedHashMap<>();
+        for (Player p : participants) {
+            p.refreshCurrentSeasonStats(logic.db, season);
+            int rank = logic.db.getRankForPlayer(p);
+            p.setRank(rank);
+            ranks.put(p, rank);
+        }
+        logic.warmStatsCommandCache(ranks, season, revision);
     }
 
     public void cancelStart() {

@@ -5,6 +5,7 @@ import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -135,6 +136,74 @@ class StatsCommandCacheTest {
         get(player);
         get(player);
         verify(ftw, times(2)).getPlayerRatings(List.of(player));
+    }
+
+    @Test
+    void postMatchBatchPopulatesParticipantsIncludingPlacementPlayersWithoutMoreQueries() {
+        Player other = player("2", "bravo");
+        Player placement = player("3", "charlie");
+        player.stats.ts_wdl.win = 5;
+        other.stats.ts_wdl.win = 6;
+        Map<Player, Integer> ranks = new LinkedHashMap<>();
+        ranks.put(player, 2);
+        ranks.put(other, 3);
+        ranks.put(placement, 4);
+        when(ftw.getPlayerRatings(List.of(player, other))).thenReturn(Map.of(player, 1.5f, other, 2f));
+
+        cache.warm(ranks, season, Player.currentSeasonStatsRevision(), ftw);
+
+        assertEquals(new StatsCommandCache.Values(2, 1.5f), get(player));
+        assertEquals(new StatsCommandCache.Values(3, 2f), get(other));
+        assertEquals(4, cache.get(placement, season, false, db, ftw).eloRank());
+        verifyNoInteractions(db);
+        verify(ftw).getPlayerRatings(List.of(player, other));
+        verifyNoMoreInteractions(ftw);
+    }
+
+    @Test
+    void failedPostMatchFetchIsRetriedOnDemand() {
+        player.stats.ts_wdl.win = 5;
+        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(), Map.of(player, 1.5f));
+        when(db.getRankForPlayer(player)).thenReturn(2);
+
+        cache.warm(Map.of(player, 2), season, Player.currentSeasonStatsRevision(), ftw);
+
+        assertEquals(1.5f, get(player).rating());
+        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+    }
+
+    @Test
+    void postMatchBatchCannotPopulateCacheForANewerRevision() {
+        player.stats.ts_wdl.win = 5;
+        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+            Player.invalidateSeasonStats();
+            return Map.of(player, 1.25f);
+        });
+        cache.warm(Map.of(player, 3), season, Player.currentSeasonStatsRevision(), ftw);
+        results(player, 2, 1.5f);
+
+        assertEquals(new StatsCommandCache.Values(2, 1.5f), get(player));
+        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        verify(db).getRankForPlayer(player);
+    }
+
+    @Test
+    void commandsReuseThePostMatchWarmup() {
+        PickupLogic logic = spy(new PickupLogic(null, ftw, null, null, null));
+        logic.db = db;
+        logic.currentSeason = season;
+        doReturn(null).when(logic).getGametypeByString(anyString());
+        player.stats.ts_wdl.win = 5;
+        player.setCurrentSeasonStats(player.stats, season, Player.currentSeasonStatsRevision());
+        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.5f));
+
+        logic.warmStatsCommandCache(Map.of(player, 2), season, Player.currentSeasonStatsRevision());
+
+        assertTrue(logic.cmdGetStats(player).getEmbed().getDescription().contains("#2"));
+        logic.cmdGetElo(player, new Gametype("TS", 5, true, false));
+        verifyNoInteractions(db);
+        verify(ftw).getPlayerRatings(List.of(player));
+        verifyNoMoreInteractions(ftw);
     }
 
     @Test
