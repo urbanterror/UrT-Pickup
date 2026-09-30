@@ -536,12 +536,16 @@ class AsyncQueueLifecycleTest {
                 .doReturn(List.of()).doReturn(List.of(prompt)).when(bot)
                 .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
         Match draft = pendingDraft();
+        set(draft, "timeLastPick", System.currentTimeMillis() - 10 * 60_000L);
+        when(match.getPlayerList()).thenReturn(List.of());
         draft.checkTeams();
         for (int attempt = 0; attempt < 2; attempt++) {
             pickIo.runNext();
             queue.runNext();
+            logic.afkCheck();
             assertEquals(true, get(draft, "pickPromptPending"));
             assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+            assertTrue(logic.isOngoingMatch(draft));
         }
         pickIo.runNext();
         queue.runNext();
@@ -549,6 +553,7 @@ class AsyncQueueLifecycleTest {
         assertEquals(List.of(prompt), get(draft, "pickMessages"));
         assertEquals(false, get(draft, "pickPromptPending"));
         assertEquals(1, get(draft, "pickPromptGeneration"));
+        assertTrue(draft.getTimeLastPick() > System.currentTimeMillis() - 60_000L);
         assertEquals(0, pickIo.size());
         verify(logic.db, never()).createBan(any());
     }
@@ -567,6 +572,32 @@ class AsyncQueueLifecycleTest {
 
         assertEquals(0, pickIo.size());
         assertEquals(MatchState.Signup, draft.getMatchState());
+    }
+
+    @Test
+    void failedOlderPromptDoesNotRetryOrReplaceNewerPrompt() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage currentPrompt = mock(DiscordMessage.class);
+        doThrow(new IllegalStateException("Discord unavailable"))
+                .doReturn(List.of(currentPrompt)).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+
+        draft.checkTeams();
+        pickIo.runNext(); // The failed send's callback is still waiting on the queue.
+        draft.checkTeams();
+        queue.runNext();
+        assertEquals(1, pickIo.size(), "Only the newer prompt should be scheduled");
+        pickIo.runNext();
+        queue.runNext();
+
+        assertEquals(0, pickIo.size());
+        assertEquals(List.of(currentPrompt), get(draft, "pickMessages"));
+        assertEquals(false, get(draft, "pickPromptPending"));
+        assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+        verify(currentPrompt, never()).delete();
+        verify(bot, times(2)).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
     }
 
     private Match pendingDraft() throws Exception {
