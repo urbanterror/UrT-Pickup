@@ -16,11 +16,13 @@ import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.exceptions.ErrorResponseException;
 import net.dv8tion.jda.api.requests.ErrorResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -29,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One low-priority REST operation per pass. No refresh backlog can build up in JDA. */
@@ -46,66 +49,82 @@ public class LiveGamesChannelService {
     private final PickupBot bot;
     private final DiscordRequestBudget budget;
     private final boolean enabled;
+    private final Clock clock;
     private final Map<String, ChannelState> channels = new HashMap<>();
     private final Map<String, Long> warnings = new HashMap<>();
     private final AtomicBoolean running = new AtomicBoolean();
-    private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "live-games-channel");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ExecutorService worker;
     private int guildCursor;
 
+    @Autowired
     public LiveGamesChannelService(JDA jda, PickupBot bot, DiscordRequestBudget budget,
                                   @Value("${app.discord.live-games.enabled:true}") boolean enabled) {
+        this(jda, bot, budget, enabled, Clock.systemUTC(), Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r, "live-games-channel");
+            thread.setDaemon(true);
+            return thread;
+        }));
+    }
+
+    LiveGamesChannelService(JDA jda, PickupBot bot, DiscordRequestBudget budget,
+                            boolean enabled, Clock clock, ExecutorService worker) {
         this.jda = jda;
         this.bot = bot;
         this.budget = budget;
         this.enabled = enabled;
+        this.clock = clock;
+        this.worker = worker;
     }
 
     @Scheduled(fixedDelay = 2_000)
     public void tick() {
         if (!enabled || bot.getLogic() == null || jda.getStatus() != JDA.Status.CONNECTED
-                || !running.compareAndSet(false, true)) return;
-        worker.execute(() -> {
-            try {
-                PickupLogic logic = bot.getLogic();
-                List<String> guildIds = logic.getChannelByType(PickupChannelType.PUBLIC).stream()
-                        .map(DiscordChannel::getGuildId).filter(Objects::nonNull).distinct().sorted().toList();
-                if (guildIds.isEmpty()) return;
-                List<Match> matches = logic.getPublicLiveMatches();
-                long interval = budget.refreshMillis(matches.size() * guildIds.size());
-                // Rotate guilds so a busy guild cannot starve the others.
-                int start = Math.floorMod(guildCursor++, guildIds.size());
-                for (int i = 0; i < guildIds.size(); i++) {
-                    Guild guild = jda.getGuildById(guildIds.get((start + i) % guildIds.size()));
-                    if (guild != null) {
-                        try {
-                            reconcile(logic, guild, matches, interval);
-                        } catch (Exception e) {
-                            // A timed-out send might still have succeeded. Recover history before sending again.
-                            channels.remove(guild.getId());
-                            budget.failedOperation();
-                            warn(logic, guild, "Live-games refresh failed; check the bot's channel permissions. Details: " + e.getMessage());
-                            log.warn("Live-games refresh failed in guild {}", guild.getId(), e);
-                        }
+                || worker.isShutdown() || !running.compareAndSet(false, true)) return;
+        try {
+            worker.execute(this::refresh);
+        } catch (RejectedExecutionException e) {
+            running.set(false);
+            if (!worker.isShutdown()) log.warn("Unable to schedule live-games refresh", e);
+        }
+    }
+
+    private void refresh() {
+        try {
+            PickupLogic logic = bot.getLogic();
+            List<String> guildIds = logic.getChannelByType(PickupChannelType.PUBLIC).stream()
+                    .map(DiscordChannel::getGuildId).filter(Objects::nonNull).distinct().sorted().toList();
+            if (guildIds.isEmpty()) return;
+            List<Match> matches = logic.getPublicLiveMatches();
+            long interval = budget.refreshMillis(matches.size() * guildIds.size());
+            // Rotate guilds so a busy guild cannot starve the others.
+            int start = Math.floorMod(guildCursor++, guildIds.size());
+            for (int i = 0; i < guildIds.size(); i++) {
+                Guild guild = jda.getGuildById(guildIds.get((start + i) % guildIds.size()));
+                if (guild != null) {
+                    try {
+                        reconcile(logic, guild, matches, interval);
+                    } catch (Exception e) {
+                        // A timed-out send might still have succeeded. Recover history before sending again.
+                        channels.remove(guild.getId());
+                        budget.failedOperation();
+                        warn(logic, guild, "Live-games refresh failed; check the bot's channel permissions. Details: " + e.getMessage());
+                        log.warn("Live-games refresh failed in guild {}", guild.getId(), e);
                     }
                 }
-            } catch (Exception e) {
-                budget.failedOperation();
-                log.warn("Live-games channel refresh failed; retrying with backoff", e);
-            } finally {
-                running.set(false);
             }
-        });
+        } catch (Exception e) {
+            budget.failedOperation();
+            log.warn("Live-games channel refresh failed; retrying with backoff", e);
+        } finally {
+            running.set(false);
+        }
     }
 
     void reconcile(PickupLogic logic, Guild guild, List<Match> matches, long interval) throws IOException {
         String marker = "urt-pickup:live-games:" + jda.getSelfUser().getId() + ":" + guild.getId();
         ChannelState state = channels.get(guild.getId());
         if (state != null && guild.getTextChannelById(state.channel.getId()) == null
-                && System.currentTimeMillis() - state.createdAt > 30_000) {
+                && clock.millis() - state.createdAt > 30_000) {
             channels.remove(guild.getId());
             state = null;
         }
@@ -113,7 +132,7 @@ public class LiveGamesChannelService {
             TextChannel existing = guild.getTextChannels().stream()
                     .filter(channel -> marker.equals(channel.getTopic())).findFirst().orElse(null);
             if (existing != null) {
-                state = new ChannelState(existing, false);
+                state = new ChannelState(existing, false, clock.millis());
                 channels.put(guild.getId(), state);
             }
         }
@@ -148,7 +167,7 @@ public class LiveGamesChannelService {
                         .addPermissionOverride(guild.getPublicRole(), Permission.VIEW_CHANNEL.getRawValue(), WRITE_PERMISSIONS)
                         .addPermissionOverride(self, BOT_PERMISSIONS, 0)
                         .reason("Read-only live match previews").complete();
-                channels.put(guild.getId(), new ChannelState(channel, true));
+                channels.put(guild.getId(), new ChannelState(channel, true, clock.millis()));
             }
             return;
         }
@@ -201,7 +220,7 @@ public class LiveGamesChannelService {
         for (Match match : ordered) {
             var entry = state.previews.entrySet().stream().filter(e -> e.getValue().matchId == match.getID()).findFirst();
             Preview preview = entry.map(Map.Entry::getValue).orElse(null);
-            long now = System.currentTimeMillis();
+            long now = clock.millis();
             if (preview != null && now - preview.checkedAt < interval) continue;
             MessageEmbed embed = preview(match, guild.getId());
             if (preview != null && embed.equals(preview.embed)) {
@@ -302,7 +321,7 @@ public class LiveGamesChannelService {
     }
 
     private void warn(PickupLogic logic, Guild guild, String message) {
-        long now = System.currentTimeMillis();
+        long now = clock.millis();
         if (now < warnings.getOrDefault(guild.getId(), 0L)) return;
         warnings.put(guild.getId(), now + 3_600_000);
         log.warn("Guild {}: {}", guild.getId(), message);
@@ -322,15 +341,16 @@ public class LiveGamesChannelService {
 
     private static final class ChannelState {
         final TextChannel channel;
-        final long createdAt = System.currentTimeMillis();
+        final long createdAt;
         final Map<String, Preview> previews = new HashMap<>();
         final List<String> obsolete = new ArrayList<>();
         boolean recovered;
         String before;
 
-        ChannelState(TextChannel channel, boolean recovered) {
+        ChannelState(TextChannel channel, boolean recovered, long createdAt) {
             this.channel = channel;
             this.recovered = recovered;
+            this.createdAt = createdAt;
         }
     }
 

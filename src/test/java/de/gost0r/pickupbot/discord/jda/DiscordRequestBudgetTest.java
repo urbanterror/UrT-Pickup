@@ -102,6 +102,79 @@ class DiscordRequestBudgetTest {
         assertEquals("requests_total=broken\n", Files.readString(state));
     }
 
+    @Test
+    void failedCheckpointPreservesLastGoodFilesAndCanBeRetried() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        budget.recordRequest();
+        budget.flush();
+        String lastState = Files.readString(directory.resolve("state.properties"));
+        String lastMetrics = Files.readString(directory.resolve("discord.prom"));
+        Files.createDirectory(directory.resolve("state.properties.tmp"));
+        budget.recordRequest();
+        assertDoesNotThrow(budget::flush);
+        assertEquals(lastState, Files.readString(directory.resolve("state.properties")));
+        assertEquals(lastMetrics, Files.readString(directory.resolve("discord.prom")));
+        DiscordRequestBudget restarted = new DiscordRequestBudget(directory, clock);
+        assertTrue(restarted.prometheus().contains("urt_discord_requests_total 1\n"));
+        Files.delete(directory.resolve("state.properties.tmp"));
+        budget.flush();
+        restarted = new DiscordRequestBudget(directory, clock);
+        assertTrue(restarted.prometheus().contains("urt_discord_requests_total 2\n"));
+        assertTrue(Files.readString(directory.resolve("discord.prom")).contains("urt_discord_requests_total 2\n"));
+    }
+
+    @Test
+    void abandonedPartialCheckpointIsIgnoredAndNextFlushReplacesIt() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        budget.recordRequest();
+        budget.recordResponse(429, "0", "30", "30");
+        budget.reserveRename("guild");
+        budget.flush();
+        // Simulate a crash after writing part of the temporary file, before atomic replacement.
+        Files.writeString(directory.resolve("state.properties.tmp"), "requests_total=broken");
+        Files.writeString(directory.resolve("discord.prom.tmp"), "urt_discord_requests_total ");
+        DiscordRequestBudget restarted = new DiscordRequestBudget(directory, clock);
+        assertFalse(restarted.tryAcquire());
+        assertFalse(restarted.canRename("guild"));
+        assertTrue(restarted.prometheus().contains("urt_discord_requests_total 1\n"));
+        restarted.recordRequest();
+        restarted.flush();
+        assertFalse(Files.exists(directory.resolve("state.properties.tmp")));
+        assertFalse(Files.exists(directory.resolve("discord.prom.tmp")));
+        assertTrue(new DiscordRequestBudget(directory, clock).prometheus().contains("urt_discord_requests_total 2\n"));
+    }
+
+    @Test
+    void metricsWriteFailureDoesNotLoseCheckpointedCounters() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        budget.recordRequest();
+        budget.flush();
+        String oldMetrics = Files.readString(directory.resolve("discord.prom"));
+        Files.createDirectory(directory.resolve("discord.prom.tmp"));
+        budget.recordRequest();
+        budget.flush();
+        assertEquals(oldMetrics, Files.readString(directory.resolve("discord.prom")));
+        DiscordRequestBudget restarted = new DiscordRequestBudget(directory, clock);
+        assertTrue(restarted.prometheus().contains("urt_discord_requests_total 2\n"));
+        Files.delete(directory.resolve("discord.prom.tmp"));
+        restarted.flush();
+        assertTrue(Files.readString(directory.resolve("discord.prom")).contains("urt_discord_requests_total 2\n"));
+    }
+
+    @Test
+    void networkFailureIsCountedWithoutInventingAResponse() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        Interceptor.Chain chain = mock(Interceptor.Chain.class);
+        Request request = new Request.Builder().url("https://discord.com/api/v10/channels/123/messages").build();
+        when(chain.request()).thenReturn(request);
+        java.io.IOException failure = new java.io.IOException("Connection reset");
+        when(chain.proceed(request)).thenThrow(failure);
+        assertSame(failure, assertThrows(java.io.IOException.class, () -> budget.intercept(chain)));
+        assertTrue(budget.prometheus().contains("urt_discord_requests_total 1\n"));
+        assertTrue(budget.prometheus().contains("urt_discord_network_errors_total 1\n"));
+        assertTrue(budget.prometheus().contains("urt_discord_responses_total 0\n"));
+    }
+
     private static class MutableClock extends Clock {
         private long millis = 1_000_000;
         void advance(long amount) { millis += amount; }
