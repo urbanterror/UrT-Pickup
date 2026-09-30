@@ -27,7 +27,9 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -153,7 +155,7 @@ public class LiveGamesChannelService {
             }
             if (budget.tryAcquire()) {
                 budget.reserveRename(guild.getId());
-                TextChannel channel = guild.createTextChannel(channelName(matches.size()))
+                TextChannel channel = guild.createTextChannel(channelName(matches))
                         .setTopic(marker)
                         .addPermissionOverride(guild.getPublicRole(), Permission.VIEW_CHANNEL.getRawValue(), WRITE_PERMISSIONS)
                         .addPermissionOverride(self, BOT_PERMISSIONS, 0)
@@ -195,7 +197,7 @@ public class LiveGamesChannelService {
             return;
         }
 
-        String name = channelName(matches.size());
+        String name = channelName(matches);
         if (!channel.getName().equals(name) && budget.canRename(guild.getId())) {
             if (budget.tryAcquire()) {
                 budget.reserveRename(guild.getId());
@@ -301,7 +303,14 @@ public class LiveGamesChannelService {
         if (!messages.isEmpty()) state.before = messages.getLast().getId();
     }
 
-    static String channelName(int count) { return "live-games-" + count; }
+    static String channelName(List<Match> matches) {
+        if (matches.isEmpty()) return "pickup-live-0";
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        matches.stream().sorted(Comparator.comparingInt(Match::getID)).forEach(match ->
+                counts.merge(match.getGametype().getName().toLowerCase(Locale.ROOT), 1, Integer::sum));
+        return "pickup-live-" + String.join("-", counts.entrySet().stream()
+                .map(entry -> entry.getKey() + entry.getValue()).toList());
+    }
 
     static MessageEmbed preview(Match match, String guildId) {
         String link = match.liveScoreMsgs.stream()

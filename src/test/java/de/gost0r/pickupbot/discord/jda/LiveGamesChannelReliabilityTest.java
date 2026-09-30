@@ -3,6 +3,7 @@ package de.gost0r.pickupbot.discord.jda;
 import de.gost0r.pickupbot.command.common.CommandInitService;
 import de.gost0r.pickupbot.discord.DiscordChannel;
 import de.gost0r.pickupbot.pickup.Match;
+import de.gost0r.pickupbot.pickup.Gametype;
 import de.gost0r.pickupbot.pickup.PickupBot;
 import de.gost0r.pickupbot.pickup.PickupChannelType;
 import de.gost0r.pickupbot.pickup.PickupLogic;
@@ -85,7 +86,7 @@ class LiveGamesChannelReliabilityTest {
         assertEquals(1, worker.tasks.size());
         worker.tasks.removeFirst().run();
 
-        verify(guild.guild).createTextChannel("live-games-0");
+        verify(guild.guild).createTextChannel("pickup-live-0");
         verify(guild.create).complete();
         assertTrue(guild.exists);
         assertTrue(guild.history.isEmpty());
@@ -192,7 +193,7 @@ class LiveGamesChannelReliabilityTest {
     void persistedRenameCooldownSurvivesServiceRestartWhilePreviewsContinue() {
         GuildFixture guild = guild("200");
         publish(guild);
-        when(guild.channel.getName()).thenReturn("live-games-2");
+        when(guild.channel.getName()).thenReturn("pickup-live-ts2");
         doAnswer(invocation -> {
             String name = invocation.getArgument(0);
             when(guild.channel.getName()).thenReturn(name);
@@ -200,11 +201,11 @@ class LiveGamesChannelReliabilityTest {
         }).when(guild.manager).setName(anyString());
         advanceAndTick(2_000);
         long renamedAt = clock.millis();
-        verify(guild.manager).setName("live-games-1");
+        verify(guild.manager).setName("pickup-live-ts1");
         matches.add(match(43));
         advanceAndTick(2_000);
         verify(guild.send, times(2)).complete(); // previews update while name is still throttled
-        assertEquals("live-games-1", guild.channel.getName());
+        assertEquals("pickup-live-ts1", guild.channel.getName());
 
         service.shutdown();
         worker = new ManualExecutor();
@@ -212,11 +213,11 @@ class LiveGamesChannelReliabilityTest {
         service = new LiveGamesChannelService(jda, bot, budget, true, clock, worker);
         tick(); // recover both previews
         advanceAndTick(renamedAt + 600_000 - clock.millis() - 1);
-        verify(guild.manager, never()).setName("live-games-2");
+        verify(guild.manager, never()).setName("pickup-live-ts2");
         verify(guild.send, times(2)).complete();
         advanceAndTick(1);
-        verify(guild.manager).setName("live-games-2");
-        assertEquals("live-games-2", guild.channel.getName());
+        verify(guild.manager).setName("pickup-live-ts2");
+        assertEquals("pickup-live-ts2", guild.channel.getName());
     }
 
     @Test
@@ -403,6 +404,9 @@ class LiveGamesChannelReliabilityTest {
 
     private static Match match(int id) {
         Match match = mock(Match.class);
+        Gametype gametype = mock(Gametype.class);
+        when(gametype.getName()).thenReturn("TS");
+        when(match.getGametype()).thenReturn(gametype);
         when(match.getID()).thenReturn(id);
         when(match.getMatchInfo()).thenReturn("Match " + id + ": score 3-2");
         match.liveScoreMsgs = new ArrayList<>();
@@ -451,7 +455,7 @@ class LiveGamesChannelReliabilityTest {
             when(guild.createTextChannel(anyString())).thenReturn(create);
             when(create.complete()).thenAnswer(ignored -> { exists = true; return channel; });
             when(channel.getId()).thenReturn(id + "0");
-            when(channel.getName()).thenReturn("live-games-1");
+            when(channel.getName()).thenReturn("pickup-live-ts1");
             when(channel.getTopic()).thenReturn("urt-pickup:live-games:100:" + id);
             when(channel.getGuild()).thenReturn(guild);
             when(channel.getManager()).thenReturn(manager);

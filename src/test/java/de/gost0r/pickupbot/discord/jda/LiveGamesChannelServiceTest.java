@@ -50,7 +50,7 @@ class LiveGamesChannelServiceTest {
         when(self.hasPermission(eq(channel), anyCollection())).thenReturn(true);
         when(budget.tryAcquire()).thenReturn(true);
         when(channel.getId()).thenReturn("300");
-        when(channel.getName()).thenReturn("live-games-1");
+        when(channel.getName()).thenReturn("pickup-live-ts1");
         when(channel.getGuild()).thenReturn(guild);
         when(channel.getManager()).thenReturn(manager);
         when(guild.getTextChannelById("300")).thenReturn(channel);
@@ -68,7 +68,7 @@ class LiveGamesChannelServiceTest {
     void createsReadOnlyChannelUpdatesChangedPreviewsAndKeepsChannelWhenEmpty() throws Exception {
         Match match = match(42, "TS - ut4_casa — LIVE (3-2)");
         ChannelAction<TextChannel> create = mock(ChannelAction.class, RETURNS_SELF);
-        when(guild.createTextChannel("live-games-1")).thenReturn(create);
+        when(guild.createTextChannel("pickup-live-ts1")).thenReturn(create);
         when(create.complete()).thenReturn(channel);
         MessageCreateAction send = mock(MessageCreateAction.class, RETURNS_SELF);
         Message message = mock(Message.class);
@@ -97,9 +97,9 @@ class LiveGamesChannelServiceTest {
         verify(channel.deleteMessageById("400")).complete();
         when(budget.canRename("200")).thenReturn(true);
         service.reconcile(logic, guild, List.of(), 0);
-        verify(manager).setName("live-games-0");
+        verify(manager).setName("pickup-live-0");
         verify(channel, never()).delete();
-        when(channel.getName()).thenReturn("live-games-0");
+        when(channel.getName()).thenReturn("pickup-live-0");
         when(budget.canRename("200")).thenReturn(false);
         service.reconcile(logic, guild, List.of(match), 0);
         verify(send, times(2)).complete();
@@ -130,7 +130,7 @@ class LiveGamesChannelServiceTest {
         when(guild.getTextChannels()).thenReturn(List.of(channel));
         when(channel.getTopic()).thenReturn("A user-created live-games-1 channel");
         ChannelAction<TextChannel> create = mock(ChannelAction.class, RETURNS_SELF);
-        when(guild.createTextChannel("live-games-0")).thenReturn(create);
+        when(guild.createTextChannel("pickup-live-0")).thenReturn(create);
         TextChannel created = mock(TextChannel.class);
         when(create.complete()).thenReturn(created);
         service.reconcile(logic, guild, List.of(), 0);
@@ -143,7 +143,7 @@ class LiveGamesChannelServiceTest {
     @Test
     void reusesEmptyOwnedChannelAfterRestartWithoutDeletingIt() throws Exception {
         existingChannel();
-        when(channel.getName()).thenReturn("live-games-0");
+        when(channel.getName()).thenReturn("pickup-live-0");
         service.reconcile(logic, guild, List.of(), 0);
         service.reconcile(logic, guild, List.of(), 0);
         verify(guild, never()).createTextChannel(anyString());
@@ -190,7 +190,7 @@ class LiveGamesChannelServiceTest {
     @Test
     void countChangesWaitForRenameBudgetWhileFinishedPreviewsAreRemoved() throws Exception {
         existingChannel();
-        when(channel.getName()).thenReturn("live-games-2");
+        when(channel.getName()).thenReturn("pickup-live-ts2");
         Match live = match(42, "live");
         Message previous = mock(Message.class);
         when(previous.getId()).thenReturn("401");
@@ -211,7 +211,7 @@ class LiveGamesChannelServiceTest {
         when(budget.tryAcquire()).thenReturn(true);
         service.reconcile(logic, guild, List.of(live), 30_000);
         verify(budget).reserveRename("200");
-        verify(manager).setName("live-games-1");
+        verify(manager).setName("pickup-live-ts1");
         verify(manager).complete();
     }
 
@@ -231,6 +231,40 @@ class LiveGamesChannelServiceTest {
         }
         org.springframework.test.util.ReflectionTestUtils.setField(actual, "ongoingMatches", matches);
         assertEquals(List.of(matches.getFirst()), actual.getPublicLiveMatches());
+    }
+
+    @Test
+    void channelNameCountsEachLiveGametypeAndOmitsEmptyModes() {
+        Match tsFirst = match(41, "live");
+        Match tsSecond = match(42, "live");
+        Match aim = match(43, "live");
+        Match ctf = match(44, "live");
+        when(tsSecond.getGametype().getName()).thenReturn("ts");
+        when(aim.getGametype().getName()).thenReturn("AIM");
+        when(ctf.getGametype().getName()).thenReturn("CTF");
+
+        assertEquals("pickup-live-ts2-aim1-ctf1",
+                LiveGamesChannelService.channelName(List.of(ctf, tsSecond, aim, tsFirst)));
+        assertEquals("pickup-live-aim1-ctf1", LiveGamesChannelService.channelName(List.of(aim, ctf)));
+        assertEquals("pickup-live-ts2", LiveGamesChannelService.channelName(List.of(tsFirst, tsSecond)));
+        assertEquals("pickup-live-0", LiveGamesChannelService.channelName(List.of()));
+    }
+
+    @Test
+    void gametypeCountsRenameOwnedChannelEvenWhenTotalCountIsUnchanged() throws Exception {
+        existingChannel();
+        when(channel.getName()).thenReturn("pickup-live-ts2");
+        when(budget.canRename("200")).thenReturn(true);
+        Match ts = match(42, "live");
+        Match aim = match(43, "live");
+        when(aim.getGametype().getName()).thenReturn("AIM");
+
+        service.reconcile(logic, guild, List.of(ts, aim), 30_000);
+        service.reconcile(logic, guild, List.of(ts, aim), 30_000);
+
+        verify(manager).setName("pickup-live-ts1-aim1");
+        verify(guild, never()).createTextChannel(anyString());
+        verify(channel, never()).delete();
     }
 
     @Test
@@ -268,6 +302,9 @@ class LiveGamesChannelServiceTest {
 
     private static Match match(int id, String info) {
         Match match = mock(Match.class);
+        Gametype gametype = mock(Gametype.class);
+        when(gametype.getName()).thenReturn("TS");
+        when(match.getGametype()).thenReturn(gametype);
         when(match.getID()).thenReturn(id);
         when(match.getMatchInfo()).thenReturn(info);
         match.liveScoreMsgs = new ArrayList<>();
