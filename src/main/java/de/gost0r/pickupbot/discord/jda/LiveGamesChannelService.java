@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.discord.jda;
 
 import de.gost0r.pickupbot.discord.DiscordChannel;
+import de.gost0r.pickupbot.pickup.Config;
 import de.gost0r.pickupbot.pickup.Match;
 import de.gost0r.pickupbot.pickup.PickupBot;
 import de.gost0r.pickupbot.pickup.PickupChannelType;
@@ -135,8 +136,6 @@ public class LiveGamesChannelService {
                 channels.put(guild.getId(), state);
             }
         }
-        if (state == null && matches.isEmpty()) return;
-
         var self = guild.getSelfMember();
         boolean canManage = state == null
                 ? self.hasPermission(Permission.MANAGE_CHANNEL, Permission.MANAGE_PERMISSIONS)
@@ -147,13 +146,6 @@ public class LiveGamesChannelService {
             return;
         }
 
-        if (matches.isEmpty()) {
-            if (budget.tryAcquire()) {
-                state.channel.delete().reason("No public live matches").complete();
-                channels.remove(guild.getId());
-            }
-            return;
-        }
         if (state == null) {
             if (!self.hasPermission(Permission.getPermissions(BOT_PERMISSIONS))) {
                 warn(logic, guild, "Live-games channel needs View Channel, Send Messages, Embed Links and Read Message History.");
@@ -222,17 +214,20 @@ public class LiveGamesChannelService {
             long now = clock.millis();
             if (preview != null && now - preview.checkedAt < interval) continue;
             MessageEmbed embed = preview(match, guild.getId());
-            if (preview != null && embed.equals(preview.embed)) {
+            String content = match.getMatchInfo();
+            if (preview != null && embed.equals(preview.embed) && content.equals(preview.content)) {
                 preview.checkedAt = now;
                 continue;
             }
             if (!budget.tryAcquire()) return;
             if (preview == null) {
-                Message message = channel.sendMessageEmbeds(embed).setAllowedMentions(List.of()).complete();
-                state.previews.put(message.getId(), new Preview(match.getID(), embed, now));
+                Message message = channel.sendMessageEmbeds(embed).setContent(content).setAllowedMentions(List.of()).complete();
+                state.previews.put(message.getId(), new Preview(match.getID(), content, embed, now));
             } else {
                 try {
-                    channel.editMessageEmbedsById(entry.orElseThrow().getKey(), embed).complete();
+                    channel.editMessageEmbedsById(entry.orElseThrow().getKey(), embed)
+                            .setContent(content).setAllowedMentions(List.of()).complete();
+                    preview.content = content;
                     preview.embed = embed;
                     preview.checkedAt = now;
                 } catch (ErrorResponseException e) {
@@ -297,7 +292,7 @@ public class LiveGamesChannelService {
             try {
                 int matchId = Integer.parseInt(footer.substring(PREVIEW_MARKER.length()));
                 if (state.previews.values().stream().anyMatch(p -> p.matchId == matchId)) state.obsolete.add(message.getId());
-                else state.previews.put(message.getId(), new Preview(matchId, embed, 0));
+                else state.previews.put(message.getId(), new Preview(matchId, message.getContentRaw(), embed, 0));
             } catch (NumberFormatException ignored) {
                 // A message without our exact marker is not managed by this service.
             }
@@ -309,13 +304,13 @@ public class LiveGamesChannelService {
     static String channelName(int count) { return "live-games-" + count; }
 
     static MessageEmbed preview(Match match, String guildId) {
-        String description = match.getMatchInfo();
         String link = match.liveScoreMsgs.stream()
                 .filter(message -> guildId.equals(message.getChannel().getGuildId()))
                 .map(message -> "https://discord.com/channels/" + guildId + "/" + message.getChannel().getId() + "/" + message.getId())
                 .findFirst().orElse(null);
-        return new EmbedBuilder().setTitle("Live match #" + match.getID(), link)
-                .setDescription(description.length() > 4096 ? description.substring(0, 4093) + "..." : description)
+        String description = link == null ? "Live scoreboard is not available yet." : "[Live scoreboard](" + link + ")";
+        if (match.getGtvServer() != null) description += "\n" + Config.pkup_go_pub_calm;
+        return new EmbedBuilder().setDescription(description)
                 .setColor(7056881).setFooter(PREVIEW_MARKER + match.getID()).build();
     }
 
@@ -362,11 +357,13 @@ public class LiveGamesChannelService {
 
     private static final class Preview {
         final int matchId;
+        String content;
         MessageEmbed embed;
         long checkedAt;
 
-        Preview(int matchId, MessageEmbed embed, long checkedAt) {
+        Preview(int matchId, String content, MessageEmbed embed, long checkedAt) {
             this.matchId = matchId;
+            this.content = content;
             this.embed = embed;
             this.checkedAt = checkedAt;
         }

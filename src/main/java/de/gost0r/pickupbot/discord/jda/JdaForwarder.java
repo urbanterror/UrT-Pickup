@@ -22,10 +22,13 @@ public class JdaForwarder extends ListenerAdapter {
 
     private final PickupBot bot;
     private final CommandInitService commandInitService;
+    private final LiveGamesChannelService liveGamesChannelService;
 
-    public JdaForwarder(JDA jda, PickupBot bot, CommandInitService commandInitService) {
+    public JdaForwarder(JDA jda, PickupBot bot, CommandInitService commandInitService,
+                        LiveGamesChannelService liveGamesChannelService) {
         this.bot = bot;
         this.commandInitService = commandInitService;
+        this.liveGamesChannelService = liveGamesChannelService;
 
         jda.addEventListener(this);
     }
@@ -34,6 +37,7 @@ public class JdaForwarder extends ListenerAdapter {
     public void onReady(@Nonnull ReadyEvent event) {
         commandInitService.initCommands();
         bot.init();
+        liveGamesChannelService.tick();
     }
 
     @Override

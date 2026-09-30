@@ -65,7 +65,7 @@ class LiveGamesChannelServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void createsReadOnlyChannelUpdatesChangedPreviewsAndDeletesWhenEmpty() throws Exception {
+    void createsReadOnlyChannelUpdatesChangedPreviewsAndKeepsChannelWhenEmpty() throws Exception {
         Match match = match(42, "TS - ut4_casa — LIVE (3-2)");
         ChannelAction<TextChannel> create = mock(ChannelAction.class, RETURNS_SELF);
         when(guild.createTextChannel("live-games-1")).thenReturn(create);
@@ -86,12 +86,24 @@ class LiveGamesChannelServiceTest {
         service.reconcile(logic, guild, List.of(match), 0);
         service.reconcile(logic, guild, List.of(match), 0);
         verify(send, times(1)).complete();
+        verify(send).setContent("TS - ut4_casa — LIVE (3-2)");
         verify(edit, never()).complete();
         when(match.getMatchInfo()).thenReturn("TS - ut4_casa — LIVE (4-2)");
         service.reconcile(logic, guild, List.of(match), 0);
         verify(edit).complete();
+        verify(edit).setContent("TS - ut4_casa — LIVE (4-2)");
+        verify(edit).setAllowedMentions(List.of());
         service.reconcile(logic, guild, List.of(), 0);
-        verify(channel.delete().reason("No public live matches")).complete();
+        verify(channel.deleteMessageById("400")).complete();
+        when(budget.canRename("200")).thenReturn(true);
+        service.reconcile(logic, guild, List.of(), 0);
+        verify(manager).setName("live-games-0");
+        verify(channel, never()).delete();
+        when(channel.getName()).thenReturn("live-games-0");
+        when(budget.canRename("200")).thenReturn(false);
+        service.reconcile(logic, guild, List.of(match), 0);
+        verify(send, times(2)).complete();
+        verify(guild, times(1)).createTextChannel(anyString());
     }
 
     @Test
@@ -103,6 +115,7 @@ class LiveGamesChannelServiceTest {
         when(previous.getAuthor()).thenReturn(user);
         MessageEmbed embed = LiveGamesChannelService.preview(match, "200");
         when(previous.getEmbeds()).thenReturn(List.of(embed));
+        when(previous.getContentRaw()).thenReturn("TS - ut4_casa — LIVE (3-2)");
         when(channel.getHistory().retrievePast(100).complete()).thenReturn(List.of(previous));
         service.reconcile(logic, guild, List.of(match), 0);
         service.reconcile(logic, guild, List.of(match), 0);
@@ -112,14 +125,30 @@ class LiveGamesChannelServiceTest {
     }
 
     @Test
-    void onlyDeletesChannelsWithOurExactOwnershipMarker() throws Exception {
+    @SuppressWarnings("unchecked")
+    void createsEmptyChannelWithoutTakingOverUserCreatedChannel() throws Exception {
         when(guild.getTextChannels()).thenReturn(List.of(channel));
         when(channel.getTopic()).thenReturn("A user-created live-games-1 channel");
+        ChannelAction<TextChannel> create = mock(ChannelAction.class, RETURNS_SELF);
+        when(guild.createTextChannel("live-games-0")).thenReturn(create);
+        TextChannel created = mock(TextChannel.class);
+        when(create.complete()).thenReturn(created);
         service.reconcile(logic, guild, List.of(), 0);
+        verify(create).setTopic("urt-pickup:live-games:100:200");
+        verify(create).complete();
         verify(channel, never()).delete();
+        verify(channel, never()).getManager();
+    }
+
+    @Test
+    void reusesEmptyOwnedChannelAfterRestartWithoutDeletingIt() throws Exception {
         existingChannel();
+        when(channel.getName()).thenReturn("live-games-0");
         service.reconcile(logic, guild, List.of(), 0);
-        verify(channel.delete().reason("No public live matches")).complete();
+        service.reconcile(logic, guild, List.of(), 0);
+        verify(guild, never()).createTextChannel(anyString());
+        verify(channel, never()).delete();
+        verify(channel, never()).sendMessageEmbeds(any(MessageEmbed.class));
     }
 
     @Test
@@ -214,8 +243,22 @@ class LiveGamesChannelServiceTest {
         when(thread.getId()).thenReturn("123");
         when(scoreboard.getId()).thenReturn("456");
         match.liveScoreMsgs.add(scoreboard);
-        assertEquals("https://discord.com/channels/200/123/456", LiveGamesChannelService.preview(match, "200").getUrl());
-        assertNull(LiveGamesChannelService.preview(match, "999").getUrl());
+        assertEquals("[Live scoreboard](https://discord.com/channels/200/123/456)",
+                LiveGamesChannelService.preview(match, "200").getDescription());
+        assertEquals("Live scoreboard is not available yet.",
+                LiveGamesChannelService.preview(match, "999").getDescription());
+    }
+
+    @Test
+    void previewUsesLiveCommandGtvInfoWithoutRepeatingMatchSummary() {
+        Match match = match(42, "**TS #42**: **[**ut4_casa**] [**LIVE (3-2)**] [**red**]** VS **[**blue**]**");
+        when(match.getGtvServer()).thenReturn(mock(de.gost0r.pickupbot.pickup.server.Server.class));
+
+        MessageEmbed embed = LiveGamesChannelService.preview(match, "200");
+
+        assertEquals("Live scoreboard is not available yet.\n" + Config.pkup_go_pub_calm, embed.getDescription());
+        assertNull(embed.getTitle());
+        assertEquals("urt-pickup-live:42", embed.getFooter().getText());
     }
 
     private void existingChannel() {

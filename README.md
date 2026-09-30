@@ -17,12 +17,13 @@ From this discord server you can:
 
 ## Live-game previews
 
-The bot automatically creates a **`live-games-N`** text channel in each guild with a
+At startup, the bot automatically creates a **`live-games-N`** text channel in each guild with a
 configured PUBLIC pickup channel. `N` is the number of public matches in the Live
-state (private matches and matches awaiting a server are excluded). Each match has
-a preview with teams, map, game status and score; click its title to open the
-existing live scoreboard when available. Finished previews are removed, and the
-channel is deleted when no public live matches remain.
+state (private matches and matches awaiting a server are excluded). Each match uses
+the same summary as `!live`, showing teams, map, game status and score above a
+compact embed with the live scoreboard link and GTV info when available. Finished
+previews are removed, and the channel stays empty as **`live-games-0`** when no
+public live matches remain.
 
 - Previews refresh approximately every **30 seconds**, slowing down as match count
   or Discord traffic increases. Unchanged previews do not cause edits.

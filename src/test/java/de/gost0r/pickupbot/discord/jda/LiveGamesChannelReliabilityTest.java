@@ -1,5 +1,6 @@
 package de.gost0r.pickupbot.discord.jda;
 
+import de.gost0r.pickupbot.command.common.CommandInitService;
 import de.gost0r.pickupbot.discord.DiscordChannel;
 import de.gost0r.pickupbot.pickup.Match;
 import de.gost0r.pickupbot.pickup.PickupBot;
@@ -9,6 +10,7 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.exceptions.ErrorResponseException;
 import net.dv8tion.jda.api.managers.channel.concrete.TextChannelManager;
 import net.dv8tion.jda.api.requests.ErrorResponse;
@@ -70,6 +72,26 @@ class LiveGamesChannelReliabilityTest {
 
     @AfterEach
     void shutdown() { service.shutdown(); }
+
+    @Test
+    void readyEventCreatesEmptyChannelBeforeAnyMatchGoesLive() {
+        GuildFixture guild = guild("200");
+        guild.exists = false;
+        matches.clear();
+        var forwarder = new JdaForwarder(jda, bot, mock(CommandInitService.class), service);
+
+        forwarder.onReady(mock(ReadyEvent.class));
+        verify(bot).init();
+        assertEquals(1, worker.tasks.size());
+        worker.tasks.removeFirst().run();
+
+        verify(guild.guild).createTextChannel("live-games-0");
+        verify(guild.create).complete();
+        assertTrue(guild.exists);
+        assertTrue(guild.history.isEmpty());
+        verify(guild.send, never()).complete();
+        verify(guild.channel, never()).delete();
+    }
 
     @Test
     void overlappingTicksDuringBlockedRestCallDoNotQueueDuplicateWork() throws Exception {
@@ -409,6 +431,7 @@ class LiveGamesChannelReliabilityTest {
         boolean canManage = true;
         MessageEmbed pendingEmbed;
         String pendingMessageId;
+        String pendingContent;
         int sequence;
 
         GuildFixture(String id) {
@@ -455,6 +478,10 @@ class LiveGamesChannelReliabilityTest {
                 return send;
             });
             when(send.complete()).thenAnswer(ignored -> completeSend());
+            when(send.setContent(anyString())).thenAnswer(invocation -> {
+                pendingContent = invocation.getArgument(0);
+                return send;
+            });
             when(channel.editMessageEmbedsById(anyString(), any(MessageEmbed.class))).thenAnswer(invocation -> {
                 pendingMessageId = invocation.getArgument(0);
                 pendingEmbed = invocation.getArgument(1);
@@ -463,12 +490,18 @@ class LiveGamesChannelReliabilityTest {
             when(edit.complete()).thenAnswer(ignored -> {
                 Message message = history.stream().filter(m -> m.getId().equals(pendingMessageId)).findFirst().orElseThrow();
                 when(message.getEmbeds()).thenReturn(List.of(pendingEmbed));
+                when(message.getContentRaw()).thenReturn(pendingContent);
                 return message;
+            });
+            when(edit.setContent(anyString())).thenAnswer(invocation -> {
+                pendingContent = invocation.getArgument(0);
+                return edit;
             });
         }
 
         Message completeSend() {
             Message message = message("sent-" + ++sequence, pendingEmbed);
+            when(message.getContentRaw()).thenReturn(pendingContent);
             history.addFirst(message);
             return message;
         }
@@ -478,6 +511,7 @@ class LiveGamesChannelReliabilityTest {
             when(message.getId()).thenReturn(id);
             when(message.getAuthor()).thenReturn(user);
             when(message.getEmbeds()).thenReturn(List.of(embed));
+            when(message.getContentRaw()).thenReturn("Match 42: score 3-2");
             return message;
         }
     }
