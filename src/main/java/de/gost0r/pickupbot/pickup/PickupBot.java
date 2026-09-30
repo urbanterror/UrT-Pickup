@@ -105,6 +105,7 @@ public class PickupBot {
                 logic.afkCheck();
                 logic.checkPrivateGroups();
             });
+            pickupIoExecutor.execute(logic::retryPendingMatchSaves);
         }
     }
 
@@ -647,6 +648,13 @@ public class PickupBot {
                 case Config.CMD_TOP_RICH:
                     if (p != null) {
                         logic.cmdTopRich(10).replyTo(msg);
+                    } else msg.reply(Config.user_not_registered);
+                    break;
+                case Config.CMD_TOP_BAN:
+                    if (p != null) {
+                        if (data.length == 1) {
+                            logic.cmdTopBan(10).replyTo(msg);
+                        } else msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_TOP_BAN));
                     } else msg.reply(Config.user_not_registered);
                     break;
                 case Config.CMD_TOP_RATING:
@@ -1251,6 +1259,9 @@ public class PickupBot {
                                 break;
                             case Config.CMD_TOP_COUNTRIES:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_COUNTRIES));
+                                break;
+                            case Config.CMD_TOP_BAN:
+                                msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_BAN));
                                 break;
                             case Config.CMD_MATCH:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_MATCH));

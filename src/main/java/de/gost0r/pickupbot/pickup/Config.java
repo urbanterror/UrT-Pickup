@@ -62,6 +62,7 @@ public class Config {
     public static final String CMD_TOP_KDR = "!topkdr";
     public static final String CMD_TOP = "!top";
     public static final String CMD_TOP_RICH = "!toprich";
+    public static final String CMD_TOP_BAN = "!topban";
     public static final String CMD_SPREE = "!topspree";
     public static final String CMD_LOSS = "!toploss";
     public static final String CMD_TOP_RATING = "!toprating";
@@ -113,7 +114,7 @@ public class Config {
             + " " + CMD_MAPS + " " + CMD_MAP + " " + CMD_MATCH + " " + CMD_LAST + " " + CMD_LIVE + " " + CMD_STATUS + " " + CMD_HELP
             + " " + CMD_GETELO + " " + CMD_GETSTATS + " " + CMD_TOP_PLAYERS + " " + CMD_TOP_COUNTRIES + " " + CMD_TOP_KDR + " " + CMD_TOP_WDL
             + " " + CMD_SURRENDER + " " + CMD_BANINFO + " " + CMD_VOTES + " " + CMD_LAST + " " + CMD_TEAM + " " + CMD_LEAVETEAM + " " + CMD_SCRIM
-            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH
+            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH + " " + CMD_TOP_BAN
             + " " + CMD_CREATE_PRIVATE + " " + CMD_PRIVATE + " " + CMD_ADD_PLAYER_PRIVATE + " " + CMD_REMOVE_PLAYER_PRIVATE + " " + CMD_LEAVE_PRIVATE
             + " " + CMD_SHOW_PRIVATE;
 
@@ -170,6 +171,7 @@ public class Config {
     public static final String USE_CMD_GETSTATS = "!stats </@User|urtauth/>";
     public static final String USE_CMD_TOP10 = "!top10 displays the top 10 players";
     public static final String USE_CMD_TOP_COUNTRIES = "!topcountries ordered by average ELO";
+    public static final String USE_CMD_TOP_BAN = "!topban displays the top 10 players by all-time ban count (including expired and forgiven bans)";
     public static final String USE_CMD_TOP_WDL = "!topwin <gametype>: players with the best win ratio for a specific gamemode";
     public static final String USE_CMD_TOP_KDR = "!topkdr <gametype>: players with the best KDR for a specific gamemode";
     public static final String USE_CMD_TOP_SPREE = "!topspree <gametype>: players with the best winning spree for a specific gamemode";

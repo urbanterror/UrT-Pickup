@@ -415,6 +415,34 @@ class PickupBotCommandRoutingTest {
         assertContains(logic.cmdStatus(), "echo");
     }
 
+    // ========== !topban ==========
+
+    @Test void topBan_routesFromPublicChannelAndHelpDescribesTheCounts() {
+        Database original = logic.db;
+        Database leaderboard = mock(Database.class);
+        when(leaderboard.getTopBans(10)).thenReturn(List.of(new Database.BanCount("alpha", 4, 1)));
+        logic.db = leaderboard;
+        try {
+            DiscordMessage msg = mockMessage("!topban", users.get("alpha"), pubChannel);
+            bot.recvMessage(msg);
+            ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+            verify(msg).reply(isNull(), embed.capture());
+            org.junit.jupiter.api.Assertions.assertEquals("alpha\n", embed.getValue().getFields().get(1).value());
+            org.junit.jupiter.api.Assertions.assertEquals("4 (1)\n", embed.getValue().getFields().get(2).value());
+
+            DiscordMessage invalid = mockMessage("!topban TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(invalid);
+            verify(invalid).reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+
+            DiscordMessage help = mockMessage("!help topban", users.get("alpha"), pubChannel);
+            bot.recvMessage(help);
+            verify(help).reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+            verify(leaderboard).getTopBans(10);
+        } finally {
+            logic.db = original;
+        }
+    }
+
     // ========== !remove ==========
 
     @Test void remove_fromPublicChannel_selfRemove() {

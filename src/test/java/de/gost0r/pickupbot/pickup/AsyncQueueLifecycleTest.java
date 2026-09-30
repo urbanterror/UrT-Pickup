@@ -514,12 +514,176 @@ class AsyncQueueLifecycleTest {
         ongoing.add(draft);
 
         draft.checkTeams();
-        pickIo.runNext();
-        queue.runNext();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            assertTrue(ongoing.contains(draft));
+            pickIo.runNext();
+            queue.runNext();
+        }
 
         assertFalse(ongoing.contains(draft));
         assertEquals(MatchState.Signup, draft.getMatchState());
+        assertEquals(0, pickIo.size());
+        verify(bot, times(3)).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
         verify(logic.db, never()).createBan(any());
+    }
+
+    @Test
+    void failedAndEmptyPickPromptsRetryUntilDelivered() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage prompt = mock(DiscordMessage.class);
+        doThrow(new IllegalStateException("Discord unavailable"))
+                .doReturn(List.of()).doReturn(List.of(prompt)).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+        draft.checkTeams();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            pickIo.runNext();
+            queue.runNext();
+            assertEquals(true, get(draft, "pickPromptPending"));
+            assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+        }
+        pickIo.runNext();
+        queue.runNext();
+
+        assertEquals(List.of(prompt), get(draft, "pickMessages"));
+        assertEquals(false, get(draft, "pickPromptPending"));
+        assertEquals(1, get(draft, "pickPromptGeneration"));
+        assertEquals(0, pickIo.size());
+        verify(logic.db, never()).createBan(any());
+    }
+
+    @Test
+    void failedStalePickPromptDoesNotRetry() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        doThrow(new IllegalStateException("Discord unavailable")).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+        draft.checkTeams();
+        pickIo.runNext();
+        draft.reset();
+        queue.runNext();
+
+        assertEquals(0, pickIo.size());
+        assertEquals(MatchState.Signup, draft.getMatchState());
+    }
+
+    private Match pendingDraft() throws Exception {
+        when(player.getRank()).thenReturn(PlayerRank.SILVER);
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(draft);
+        return draft;
+    }
+
+    @Test
+    void ratingFailureRetriesWithoutCreatingDuplicateThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"))
+                .thenReturn(Map.of());
+        Match draft = spy(pendingDraft());
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        doNothing().when(draft).sortPlayers(anyMap(), any());
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+        ongoing.add(draft);
+
+        draft.launch(mock(Server.class));
+        io.runNext();
+        queue.runNext();
+        assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+        io.runNext();
+        queue.runNext();
+
+        verify(channel).createThread(any(), eq(true));
+        verify(thread, never()).delete();
+        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        verify(draft).sortPlayers(anyMap(), any());
+        assertEquals(List.of(thread), draft.threadChannels);
+    }
+
+    @Test
+    void repeatedSetupFailureCancelsAndDeletesPartialThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"));
+        Match draft = pendingDraft();
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+        draft.launch(mock(Server.class));
+        for (int attempt = 0; attempt < 3; attempt++) {
+            io.runNext();
+            queue.runNext();
+        }
+
+        verify(channel).createThread(any(), eq(true));
+        verify(thread).delete();
+        verify(ftw, times(3)).getPlayerRatings(anyList());
+        assertEquals(MatchState.Signup, draft.getMatchState());
+        assertFalse(logic.isOngoingMatch(draft));
+        assertEquals(0, io.size());
+    }
+
+    @Test
+    void threadCreationFailureRetriesOnlyMissingThreads() throws Exception {
+        DiscordChannel first = mock(DiscordChannel.class);
+        DiscordChannel second = mock(DiscordChannel.class);
+        DiscordChannel firstThread = mock(DiscordChannel.class);
+        DiscordChannel secondThread = mock(DiscordChannel.class);
+        when(first.createThread(any(), eq(true))).thenReturn(firstThread);
+        when(second.createThread(any(), eq(true))).thenThrow(new IllegalStateException("Discord unavailable"))
+                .thenReturn(secondThread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(first, second)));
+        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        Match draft = spy(pendingDraft());
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        doNothing().when(draft).sortPlayers(anyMap(), any());
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+
+        draft.launch(mock(Server.class));
+        io.runNext();
+        queue.runNext();
+        io.runNext();
+        queue.runNext();
+
+        verify(first).createThread(any(), eq(true));
+        verify(second, times(2)).createThread(any(), eq(true));
+        verify(draft).sortPlayers(anyMap(), any());
+        assertEquals(List.of(firstThread, secondThread), draft.threadChannels);
+    }
+
+    @Test
+    void resetAfterSetupFailurePreventsRetryAndDeletesPartialThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"));
+        Match draft = pendingDraft();
+        draft.launch(mock(Server.class));
+        io.runNext();
+        draft.reset();
+        queue.runNext();
+
+        verify(thread).delete();
+        verify(ftw).getPlayerRatings(anyList());
+        assertEquals(0, io.size());
+        assertEquals(MatchState.Signup, draft.getMatchState());
     }
 
     @Test

@@ -32,9 +32,7 @@ public class Bet {
         this.open = true;
     }
 
-    public void place(Match match) {
-        boolean allIn = amount == player.getCoins();
-        player.spendCoins(amount);
+    public void place(Match match, boolean allIn) {
         DiscordEmoji emoji = getCoinEmoji(amount);
         String msg = Config.bets_place;
         msg = msg.replace(".player.", player.getDiscordUser().getMentionString());
@@ -49,21 +47,7 @@ public class Bet {
         logic.bot.sendMsg(match.threadChannels, msg);
     }
 
-    public void enterResult(boolean result) {
-        won = result;
-        open = false;
-
-        if (won) {
-            int wonAmount = Math.round(amount * odds);
-            player.addCoins(wonAmount);
-        }
-        player.saveWallet();
-        logic.db.createBet(this);
-    }
-
-    public void refund(Match match) {
-        player.addCoins(amount);
-        open = false;
+    public void announceRefund(Match match) {
         String msg = Config.bets_refund;
         DiscordEmoji emoji = getCoinEmoji(amount);
         msg = msg.replace(".player.", player.getDiscordUser().getMentionString());

@@ -149,7 +149,28 @@ class PlayerLockHypothesisTest {
         try {
             Future<Player> first = workers.submit(() -> Player.get(coldUser));
             await(coldLoadEntered, "First load did not start");
-            Future<Player> second = workers.submit(() -> Player.get(coldUser));
+            AtomicReference<Thread> secondThread = new AtomicReference<>();
+            CountDownLatch secondStarted = new CountDownLatch(1);
+            Future<Player> second = workers.submit(() -> {
+                secondThread.set(Thread.currentThread());
+                secondStarted.countDown();
+                return Player.get(coldUser);
+            });
+            await(secondStarted, "Second lookup did not start");
+            // The second lookup must reach the in-flight load before releasing it;
+            // merely submitting the task makes this assertion scheduler-dependent.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(DEADLINE_SECONDS);
+            boolean waitingForLoad = false;
+            while (System.nanoTime() < deadline && !waitingForLoad) {
+                for (StackTraceElement frame : secondThread.get().getStackTrace()) {
+                    if (frame.getClassName().startsWith("java.util.concurrent.CompletableFuture")) {
+                        waitingForLoad = true;
+                        break;
+                    }
+                }
+                if (!waitingForLoad) Thread.sleep(1);
+            }
+            assertTrue(waitingForLoad, "Second lookup did not join the in-flight load");
             assertEquals(1L, releaseColdLoad.getCount());
             verify(database, times(1)).loadPlayer(coldUser);
             releaseColdLoad.countDown();

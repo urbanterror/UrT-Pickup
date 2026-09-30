@@ -75,6 +75,7 @@ public class Player {
     private String country = "NOT_DEFINED";
 
     private long coins = 1000;
+    private long unsavedCoinDelta;
     private long eloBoost = 0;
     private int additionalMapVotes = 0;
     private int mapBans = 0;
@@ -498,24 +499,36 @@ public class Player {
         return db.getRankForPlayer(this);
     }
 
-    public long getCoins() {
+    public synchronized long getCoins() {
         return coins;
     }
 
-    public void setCoins(long coins) {
+    public synchronized void setCoins(long coins) {
         this.coins = coins;
+        unsavedCoinDelta = 0;
     }
 
-    public void addCoins(long amount) {
-        coins += amount;
+    public synchronized void addCoins(long amount) {
+        coins = Math.addExact(coins, amount);
+        unsavedCoinDelta = Math.addExact(unsavedCoinDelta, amount);
     }
 
-    public void spendCoins(long amount) {
-        coins -= amount;
+    public synchronized void spendCoins(long amount) {
+        coins = Math.subtractExact(coins, amount);
+        unsavedCoinDelta = Math.subtractExact(unsavedCoinDelta, amount);
     }
 
-    public void saveWallet() {
-        db.updatePlayerCoins(this);
+    public synchronized void saveWallet() {
+        if (unsavedCoinDelta != 0) {
+            long current = db.updatePlayerCoins(this, unsavedCoinDelta);
+            unsavedCoinDelta = 0;
+            coins = current;
+        }
+    }
+
+    public synchronized void refreshWallet() {
+        long balance = db.walletBalance(this);
+        coins = Math.addExact(balance, unsavedCoinDelta);
     }
 
     public long getEloBoost() {

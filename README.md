@@ -91,6 +91,7 @@ uses the recent request window and actual response headers.
 - !topcountries ordered by average ELO
 - !topwin: players with the best win ratio
 - !topkdr: players with the best KDR
+- !topban: top 10 auths by all-time ban count, with active ban counts in parentheses
 - !match <id>
 - !last </@DiscordUser|urtauth/>
 

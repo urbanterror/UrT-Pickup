@@ -21,7 +21,53 @@ public class Database {
     private final PermissionService permissionService;
 
     private Connection c = null;
+    // Match persistence uses a separate WAL writer so a transaction cannot include
+    // unrelated queries on the shared command connection.
+    private Connection matchWrites;
     private Map<String, PreparedStatement> preparedStmtCache;
+    private Map<RankingKey, Map<String, Integer>> rankingCache = new HashMap<>();
+    private Object rankingLock = new Object();
+    private long rankingCacheRevision = -1;
+
+    private record RankingKey(int season, long start, long end, String gametype, boolean winRate) { }
+
+    @FunctionalInterface
+    private interface RankingQuery {
+        Map<String, Integer> load() throws SQLException;
+    }
+
+    private int cachedRank(Player player, Gametype gt, Season season, boolean winRate,
+                           RankingQuery query) throws SQLException {
+        // Match results and player registration changes invalidate every affected leaderboard.
+        // Historical seasons are also cleared because match results can be backfilled.
+        synchronized (rankingLock == null ? this : rankingLock) {
+            if (rankingCache == null) {
+                rankingCache = new HashMap<>();
+            }
+            long revision = Player.currentSeasonStatsRevision();
+            if (rankingCacheRevision != revision) {
+                rankingCache.clear();
+                rankingCacheRevision = revision;
+            }
+            RankingKey key = new RankingKey(season.number, season.startdate, season.enddate, gt.getName(), winRate);
+            Map<String, Integer> ranks = rankingCache.get(key);
+            if (ranks == null) {
+                ranks = query.load();
+                if (Player.currentSeasonStatsRevision() == revision) {
+                    rankingCache.put(key, ranks);
+                }
+            }
+            return ranks.getOrDefault(player.getUrtauth(), -1);
+        }
+    }
+
+    private Map<String, Integer> readRanks(ResultSet rs) throws SQLException {
+        Map<String, Integer> ranks = new HashMap<>();
+        while (rs.next()) {
+            ranks.put(rs.getString("auth"), rs.getInt("rowIndex"));
+        }
+        return ranks;
+    }
 
 
     public Database(PickupLogic logic, DiscordService discordService, PermissionService permissionService) {
@@ -37,8 +83,10 @@ public class Database {
             c = DriverManager.getConnection("jdbc:sqlite:" + logic.bot.env + ".pickup.db");
             try (Statement stmt = c.createStatement()) {
                 stmt.execute("PRAGMA journal_mode=WAL;");
+                stmt.execute("PRAGMA busy_timeout=5000;");
             }
             initTable();
+            ensureMatchWriter();
             // Seed planner statistics after index creation. Without sqlite_stat1,
             // SQLite can scan every player's history before filtering to this season.
             try (Statement stmt = c.createStatement()) {
@@ -49,8 +97,11 @@ public class Database {
         }
     }
 
-    public void disconnect() {
+    public synchronized void disconnect() {
         try {
+            if (matchWrites != null) {
+                matchWrites.close();
+            }
             // Checkpoint WAL to flush all pending writes to the main database file
             try (Statement stmt = c.createStatement()) {
                 stmt.execute("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -215,9 +266,29 @@ public class Database {
                     + "won TEXT,"
                     + "amount INTEGER,"
                     + "odds FLOAT,"
+                    + "open INTEGER DEFAULT 0,"
                     + "FOREIGN KEY (matchid) REFERENCES match(ID), "
                     + "FOREIGN KEY (player_userid, player_urtauth) REFERENCES player(userid, urtauth) )";
             stmt.executeUpdate(sql);
+
+            if (!columnExists("bets", "open")) {
+                stmt.executeUpdate("ALTER TABLE bets ADD COLUMN open INTEGER DEFAULT 0");
+            }
+
+            // Only matches created with durable bet escrow are eligible for automatic recovery.
+            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS match_settlement (matchid INTEGER PRIMARY KEY, settled INTEGER NOT NULL DEFAULT 0, teamsize INTEGER NOT NULL)");
+            if (!columnExists("match_settlement", "teamsize")) {
+                // Older markers did not record the original size. Only infer a
+                // positive team mode when both teams were recorded and its catalog
+                // entry still exists. Unknown/ambiguous matches require review.
+                stmt.executeUpdate("ALTER TABLE match_settlement ADD COLUMN teamsize INTEGER");
+                stmt.executeUpdate("UPDATE match_settlement SET teamsize=(SELECT g.teamsize FROM match m "
+                        + "JOIN gametype g ON g.gametype=m.gametype WHERE m.ID=match_settlement.matchid "
+                        + "AND g.teamsize>0 "
+                        + "AND EXISTS(SELECT 1 FROM player_in_match p WHERE p.matchid=m.ID AND p.team='red') "
+                        + "AND EXISTS(SELECT 1 FROM player_in_match p WHERE p.matchid=m.ID AND p.team='blue'))");
+            }
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_bets_open_match ON bets (matchid, open)");
 
             sql = "CREATE TABLE IF NOT EXISTS spree (ID INTEGER PRIMARY KEY AUTOINCREMENT,"
                     + "player_userid TEXT,"
@@ -382,63 +453,133 @@ public class Database {
         }
     }
 
-    public int createMatch(Match match) {
-        try {
-            String sql = "INSERT INTO match (state, gametype, server, starttime, map, elo_red, elo_blue) VALUES (?, ?, ?, ?, ?, ?, ?)";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, match.getMatchState().name());
-            pstmt.setString(2, match.getGametype().getName());
-            pstmt.setInt(3, match.getServer().id);
-            pstmt.setLong(4, match.getStartTime());
-            pstmt.setString(5, match.getMap().name);
-            pstmt.setInt(6, match.getEloRed());
-            pstmt.setInt(7, match.getEloBlue());
-            pstmt.executeUpdate();
-            pstmt.close();
+    @FunctionalInterface
+    private interface MatchWrite<T> {
+        T execute() throws SQLException;
+    }
 
-            Statement stmt = c.createStatement();
-            sql = "SELECT ID FROM match ORDER BY ID DESC";
-            ResultSet rs = stmt.executeQuery(sql);
-            rs.next();
-            int mid = rs.getInt("id");
-            for (Player player : match.getPlayerList()) {
-                int[] score = new int[2];
-                for (int i = 0; i < score.length; ++i) {
-                    sql = "INSERT INTO score (kills, deaths) VALUES (0, 0)";
-                    stmt.executeUpdate(sql);
-                    sql = "SELECT ID FROM score ORDER BY ID DESC";
-                    rs = stmt.executeQuery(sql);
-                    rs.next();
-                    score[i] = rs.getInt("ID");
-                }
-                sql = "INSERT INTO player_in_match (matchid, player_userid, player_urtauth, team) VALUES (?, ?, ?, ?)";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, mid);
-                pstmt.setString(2, player.getDiscordUser().getId());
-                pstmt.setString(3, player.getUrtauth());
-                pstmt.setString(4, match.getTeam(player));
-                pstmt.executeUpdate();
-                pstmt.close();
-                sql = "SELECT ID FROM player_in_match ORDER BY ID DESC";
-                rs = stmt.executeQuery(sql);
-                rs.next();
-                int pidmid = rs.getInt("ID");
-                sql = "INSERT INTO stats (pim, ip, score_1, score_2, status) VALUES (?, null, ?, ?, ?)";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, pidmid);
-                pstmt.setInt(2, score[0]);
-                pstmt.setInt(3, score[1]);
-                pstmt.setString(4, match.getStats(player).getStatus().name());
-                pstmt.executeUpdate();
-                pstmt.close();
+    private void ensureMatchWriter() throws SQLException {
+        if (matchWrites != null && !matchWrites.isClosed()) return;
+        Connection writer = DriverManager.getConnection("jdbc:sqlite:" + logic.bot.env + ".pickup.db");
+        try (Statement stmt = writer.createStatement()) {
+            stmt.execute("PRAGMA busy_timeout=1000;");
+        } catch (SQLException failure) {
+            try {
+                writer.close();
+            } catch (SQLException closeFailure) {
+                failure.addSuppressed(closeFailure);
             }
-            stmt.close();
-            rs.close();
-            return mid;
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
+            throw failure;
         }
-        return -1;
+        matchWrites = writer;
+    }
+
+    private <T> T writeMatch(String operation, MatchWrite<T> write) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            boolean transactionStarted = false;
+            boolean committed = false;
+            try {
+                ensureMatchWriter();
+                matchWrites.setAutoCommit(false);
+                transactionStarted = true;
+                T result = write.execute();
+                matchWrites.commit();
+                committed = true;
+                matchWrites.setAutoCommit(true);
+                return result;
+            } catch (SQLException | RuntimeException failure) {
+                if (committed) {
+                    // Retrying after a successful commit could duplicate a newly created match.
+                    throw new MatchPersistenceException("Committed " + operation + " but could not reset the writer", failure);
+                }
+                if (transactionStarted) {
+                    try {
+                        matchWrites.rollback();
+                        matchWrites.setAutoCommit(true);
+                    } catch (SQLException rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                        // A failed rollback leaves the connection unsafe for another transaction.
+                        try {
+                            matchWrites.close();
+                        } catch (SQLException closeFailure) {
+                            failure.addSuppressed(closeFailure);
+                        }
+                        matchWrites = null;
+                        throw new MatchPersistenceException("Unable to " + operation + ": rollback failed", failure);
+                    }
+                }
+                if (failure instanceof SQLException sql
+                        && ((sql.getErrorCode() & 0xff) == 5 || (sql.getErrorCode() & 0xff) == 6)
+                        && attempt < 3) {
+                    log.warn("SQLite busy during {} (attempt {}/3); retrying", operation, attempt);
+                    try {
+                        Thread.sleep(100L * attempt);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new MatchPersistenceException("Interrupted while retrying " + operation, interrupted);
+                    }
+                    continue;
+                }
+                throw new MatchPersistenceException("Unable to " + operation + " after " + attempt + " attempt(s)", failure);
+            }
+        }
+        throw new IllegalStateException("Unreachable match write retry state");
+    }
+
+    public synchronized int createMatch(Match match) {
+        return writeMatch("create match", () -> {
+                int id;
+                try (PreparedStatement insertMatch = matchWrites.prepareStatement(
+                        "INSERT INTO match (state, gametype, server, starttime, map, elo_red, elo_blue) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                     PreparedStatement insertScore = matchWrites.prepareStatement("INSERT INTO score (kills, deaths) VALUES (0, 0)");
+                     PreparedStatement insertPlayer = matchWrites.prepareStatement(
+                             "INSERT INTO player_in_match (matchid, player_userid, player_urtauth, team) VALUES (?, ?, ?, ?)");
+                     PreparedStatement insertStats = matchWrites.prepareStatement(
+                             "INSERT INTO stats (pim, ip, score_1, score_2, status) VALUES (?, null, ?, ?, ?)")) {
+                    insertMatch.setString(1, match.getMatchState().name());
+                    insertMatch.setString(2, match.getGametype().getName());
+                    insertMatch.setInt(3, match.getServer().id);
+                    insertMatch.setLong(4, match.getStartTime());
+                    insertMatch.setString(5, match.getMap().name);
+                    insertMatch.setInt(6, match.getEloRed());
+                    insertMatch.setInt(7, match.getEloBlue());
+                    insertMatch.executeUpdate();
+                    id = lastInsertId(matchWrites);
+
+                    try (PreparedStatement pending = matchWrites.prepareStatement(
+                            "INSERT INTO match_settlement (matchid, teamsize) VALUES (?, ?)")) {
+                        pending.setInt(1, id);
+                        pending.setInt(2, match.getGametype().getTeamSize());
+                        pending.executeUpdate();
+                    }
+
+                    for (Player player : match.getPlayerList()) {
+                        int[] scores = new int[2];
+                        for (int i = 0; i < scores.length; i++) {
+                            insertScore.executeUpdate();
+                            scores[i] = lastInsertId(matchWrites);
+                        }
+                        insertPlayer.setInt(1, id);
+                        insertPlayer.setString(2, player.getDiscordUser().getId());
+                        insertPlayer.setString(3, player.getUrtauth());
+                        insertPlayer.setString(4, match.getTeam(player));
+                        insertPlayer.executeUpdate();
+                        insertStats.setInt(1, lastInsertId(matchWrites));
+                        insertStats.setInt(2, scores[0]);
+                        insertStats.setInt(3, scores[1]);
+                        insertStats.setString(4, match.getStats(player).getStatus().name());
+                        insertStats.executeUpdate();
+                    }
+                }
+                return id;
+        });
+    }
+
+    private static int lastInsertId(Connection connection) throws SQLException {
+        try (Statement stmt = connection.createStatement(); ResultSet rs = stmt.executeQuery("SELECT last_insert_rowid()")) {
+            rs.next();
+            return rs.getInt(1);
+        }
     }
 
     public int getLastMatchID() {
@@ -760,6 +901,25 @@ public class Database {
                 });
 
                 Gametype gametype = logic.getGametypeByString(matchGametype);
+                if (gametype == null) {
+                    // Private modes are not registered in the gametype catalog after a
+                    // restart. Reconstruct live matches from the immutable snapshot.
+                    try (PreparedStatement snapshot = c.prepareStatement(
+                            "SELECT s.teamsize, EXISTS(SELECT 1 FROM gametype g WHERE g.gametype=?) "
+                                    + "FROM match_settlement s WHERE s.matchid=?")) {
+                        snapshot.setString(1, matchGametype);
+                        snapshot.setInt(2, id);
+                        try (ResultSet row = snapshot.executeQuery()) {
+                            if (row.next() && row.getObject(1) != null && row.getInt(1) >= 0) {
+                                gametype = new Gametype(matchGametype, row.getInt(1), true, row.getInt(2) == 0);
+                            }
+                        }
+                    }
+                    if (gametype == null && matchStateStr.equals(MatchState.Live.name())) {
+                        throw new MatchPersistenceException("Unable to reload live match " + id + ": no original team size");
+                    }
+                    if (gametype == null) return null;
+                }
                 Server server = logic.getServerByID(matchServer);
                 GameMap map = logic.getMapByName(matchMap);
                 MatchState state = MatchState.valueOf(matchStateStr);
@@ -775,6 +935,20 @@ public class Database {
                         stats,
                         logic,
                         permissionService);
+                if (state == MatchState.Live) {
+                    try (PreparedStatement open = c.prepareStatement(
+                            "SELECT player_urtauth, team, amount, odds FROM bets WHERE matchid=? AND open=1")) {
+                        open.setInt(1, id);
+                        try (ResultSet betRows = open.executeQuery()) {
+                            while (betRows.next()) {
+                                Player bettor = Player.get(betRows.getString(1));
+                                if (bettor == null) bettor = loadPlayer(null, betRows.getString(1), false);
+                                if (bettor != null) match.bets.add(new Bet(id, bettor, betRows.getInt(2) == 0 ? "red" : "blue",
+                                        betRows.getLong(3), betRows.getFloat(4)));
+                            }
+                        }
+                    }
+                }
             }
         } catch (SQLException e) {
             log.warn("Exception: ", e);
@@ -1131,72 +1305,292 @@ public class Database {
 
     // SAVE MATCH
 
-    public void saveMatch(Match match) {
-        try {
-            ResultSet rs;
-            String sql = "UPDATE match SET state=?, score_red=?, score_blue=? WHERE id=?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, match.getMatchState().name());
-            pstmt.setInt(2, match.getScoreRed());
-            pstmt.setInt(3, match.getScoreBlue());
-            pstmt.setInt(4, match.getID());
-            pstmt.executeUpdate();
+    public synchronized void saveMatch(Match match) {
+        writeMatch("save match " + match.getID(), () -> {
+                try (PreparedStatement updateMatch = matchWrites.prepareStatement(
+                        "UPDATE match SET state=?, score_red=?, score_blue=? WHERE id=?");
+                     PreparedStatement findPlayer = matchWrites.prepareStatement(
+                             "SELECT pim.ID, st.score_1, st.score_2 FROM player_in_match pim "
+                                     + "JOIN stats st ON st.pim=pim.ID WHERE pim.matchid=? AND pim.player_userid=? AND pim.player_urtauth=?");
+                     PreparedStatement updateStats = matchWrites.prepareStatement("UPDATE stats SET ip=?, status=? WHERE pim=?");
+                     PreparedStatement updateScore = matchWrites.prepareStatement(
+                             "UPDATE score SET kills=?, deaths=?, assists=?, caps=?, returns=?, fckills=?, stopcaps=?, protflag=? WHERE ID=?");
+                     PreparedStatement updatePlayer = matchWrites.prepareStatement(
+                             "UPDATE player SET elo=?, elochange=? WHERE userid=? AND urtauth=?")) {
+                    updateMatch.setString(1, match.getMatchState().name());
+                    updateMatch.setInt(2, match.getScoreRed());
+                    updateMatch.setInt(3, match.getScoreBlue());
+                    updateMatch.setInt(4, match.getID());
+                    if (updateMatch.executeUpdate() != 1) {
+                        throw new SQLException("Match not found: " + match.getID());
+                    }
 
-            for (Player player : match.getPlayerList()) {
-                // get ids
-                sql = "SELECT ID FROM player_in_match WHERE matchid=? AND player_userid=? AND player_urtauth=?";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, match.getID());
-                pstmt.setString(2, player.getDiscordUser().getId());
-                pstmt.setString(3, player.getUrtauth());
-                rs = pstmt.executeQuery();
-                rs.next();
-                int pim = rs.getInt("ID");
+                    for (Player player : match.getPlayerList()) {
+                        findPlayer.setInt(1, match.getID());
+                        findPlayer.setString(2, player.getDiscordUser().getId());
+                        findPlayer.setString(3, player.getUrtauth());
+                        int pim;
+                        int[] scoreIds;
+                        try (ResultSet rs = findPlayer.executeQuery()) {
+                            if (!rs.next()) {
+                                throw new SQLException("Player not found in match: " + match.getID());
+                            }
+                            pim = rs.getInt("ID");
+                            scoreIds = new int[]{rs.getInt("score_1"), rs.getInt("score_2")};
+                        }
 
-                sql = "SELECT score_1, score_2 FROM stats WHERE pim=?";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, pim);
-                rs = pstmt.executeQuery();
-                rs.next();
-                int[] scoreid = new int[]{rs.getInt("score_1"), rs.getInt("score_2")};
+                        MatchStats stats = match.getStats(player);
+                        updateStats.setString(1, stats.getIP());
+                        updateStats.setString(2, stats.getStatus().name());
+                        updateStats.setInt(3, pim);
+                        updateStats.executeUpdate();
 
-                // update ip & status (leaver etc)
-                sql = "UPDATE stats SET ip=?, status=? WHERE pim=?";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setString(1, match.getStats(player).getIP());
-                pstmt.setString(2, match.getStats(player).getStatus().name());
-                pstmt.setInt(3, pim);
-                pstmt.executeUpdate();
+                        for (int i = 0; i < 2; i++) {
+                            updateScore.setInt(1, stats.score[i].score);
+                            updateScore.setInt(2, stats.score[i].deaths);
+                            updateScore.setInt(3, stats.score[i].assists);
+                            updateScore.setInt(4, stats.score[i].caps);
+                            updateScore.setInt(5, stats.score[i].returns);
+                            updateScore.setInt(6, stats.score[i].fc_kills);
+                            updateScore.setInt(7, stats.score[i].stop_caps);
+                            updateScore.setInt(8, stats.score[i].protect_flag);
+                            updateScore.setInt(9, scoreIds[i]);
+                            updateScore.executeUpdate();
+                        }
 
-                // update playerscore
-                sql = "UPDATE score SET kills=?, deaths=?, assists=?, caps=?, returns=?, fckills=?, stopcaps=?, protflag=? WHERE ID=?";
-                pstmt = c.prepareStatement(sql);
-                for (int i = 0; i < 2; ++i) {
-                    pstmt.setInt(1, match.getStats(player).score[i].score);
-                    pstmt.setInt(2, match.getStats(player).score[i].deaths);
-                    pstmt.setInt(3, match.getStats(player).score[i].assists);
-                    pstmt.setInt(4, match.getStats(player).score[i].caps);
-                    pstmt.setInt(5, match.getStats(player).score[i].returns);
-                    pstmt.setInt(6, match.getStats(player).score[i].fc_kills);
-                    pstmt.setInt(7, match.getStats(player).score[i].stop_caps);
-                    pstmt.setInt(8, match.getStats(player).score[i].protect_flag);
-                    pstmt.setInt(9, scoreid[i]);
-                    pstmt.executeUpdate();
+                        updatePlayer.setInt(1, player.getElo());
+                        updatePlayer.setInt(2, player.getEloChange());
+                        updatePlayer.setString(3, player.getDiscordUser().getId());
+                        updatePlayer.setString(4, player.getUrtauth());
+                        updatePlayer.executeUpdate();
+                    }
                 }
+                return null;
+        });
+    }
 
-                // update elo change
-                sql = "UPDATE player SET elo=?, elochange=? WHERE userid=? AND urtauth=?";
-                pstmt = c.prepareStatement(sql);
-                pstmt.setInt(1, player.getElo());
-                pstmt.setInt(2, player.getEloChange());
-                pstmt.setString(3, player.getDiscordUser().getId());
-                pstmt.setString(4, player.getUrtauth());
-                pstmt.executeUpdate();
-                pstmt.close();
-                rs.close();
+    /** Escrow the stake in the same transaction as the open bet. Returns false if funds ran out. */
+    public synchronized boolean placeBet(Bet bet, boolean allIn) {
+        boolean placed = writeMatch("place bet for match " + bet.matchid, () -> {
+            try (PreparedStatement state = matchWrites.prepareStatement("SELECT state FROM match WHERE ID=?");
+                  PreparedStatement balance = matchWrites.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?");
+                  PreparedStatement existing = matchWrites.prepareStatement(
+                          "SELECT ID, amount, typeof(amount) FROM bets WHERE matchid=? AND player_userid=? AND player_urtauth=? AND team=? AND open=1");
+                 PreparedStatement debit = matchWrites.prepareStatement(
+                         "UPDATE player SET coins=coins-? WHERE userid=? AND urtauth=? AND coins>=?");
+                 PreparedStatement insert = matchWrites.prepareStatement(
+                         "INSERT INTO bets (player_userid, player_urtauth, matchid, team, won, amount, odds, open) VALUES (?, ?, ?, ?, 'false', ?, ?, 1)");
+                  PreparedStatement increase = matchWrites.prepareStatement("UPDATE bets SET amount=? WHERE ID=?")) {
+                state.setInt(1, bet.matchid);
+                try (ResultSet rs = state.executeQuery()) {
+                    if (!rs.next() || !(rs.getString(1).equals("Live") || rs.getString(1).equals("AwaitingServer"))) return false;
+                }
+                String user = bet.player.getDiscordUser().getId();
+                String auth = bet.player.getUrtauth();
+                balance.setString(1, user);
+                balance.setString(2, auth);
+                long coins;
+                try (ResultSet rs = balance.executeQuery()) {
+                    if (!rs.next()) throw new SQLException("Bet player not found: " + auth);
+                    coins = rs.getLong(1);
+                }
+                long amount = allIn ? coins : bet.amount;
+                if (amount <= 0 || amount > coins || (!allIn && amount > 1_000_000)
+                        || !Float.isFinite(bet.odds) || bet.odds <= 0
+                        || amount * (double) bet.odds >= Long.MAX_VALUE) return false;
+                int team = bet.color.equals("red") ? 0 : 1;
+                existing.setInt(1, bet.matchid);
+                existing.setString(2, user);
+                existing.setString(3, auth);
+                existing.setInt(4, team);
+                int existingId = 0;
+                long combinedAmount = amount;
+                try (ResultSet rs = existing.executeQuery()) {
+                    if (rs.next()) {
+                        existingId = rs.getInt(1);
+                        if (!"integer".equals(rs.getString(3))) {
+                            throw new SQLException("Invalid stored bet amount: " + existingId);
+                        }
+                        try {
+                            combinedAmount = Math.addExact(rs.getLong(2), amount);
+                        } catch (ArithmeticException overflow) {
+                            return false;
+                        }
+                        if (!allIn && combinedAmount > 1_000_000) return false;
+                    }
+                }
+                debit.setLong(1, amount);
+                debit.setString(2, user);
+                debit.setString(3, auth);
+                debit.setLong(4, amount);
+                if (debit.executeUpdate() != 1) return false;
+                if (existingId != 0) {
+                    increase.setLong(1, combinedAmount);
+                    increase.setInt(2, existingId);
+                    increase.executeUpdate(); // preserve the original odds
+                } else {
+                    insert.setString(1, user);
+                    insert.setString(2, auth);
+                    insert.setInt(3, bet.matchid);
+                    insert.setInt(4, team);
+                    insert.setLong(5, amount);
+                    insert.setFloat(6, bet.odds);
+                    insert.executeUpdate();
+                }
+                bet.amount = amount;
+                return true;
+            }
+        });
+        return placed;
+    }
+
+    /** One ledger row gates every wallet, spree and bet-history effect. Safe after uncertain commit. */
+    public synchronized void settleMatch(int matchId) {
+        writeMatch("settle match " + matchId, () -> {
+            try (PreparedStatement match = matchWrites.prepareStatement(
+                    "SELECT m.state, m.score_red, m.score_blue, m.gametype, s.teamsize, s.settled "
+                            + "FROM match m JOIN match_settlement s ON s.matchid=m.ID WHERE m.ID=?");
+                 PreparedStatement players = matchWrites.prepareStatement(
+                         "SELECT player_userid, player_urtauth, team FROM player_in_match WHERE matchid=?");
+                 PreparedStatement bets = matchWrites.prepareStatement(
+                         "SELECT ID, player_userid, player_urtauth, team, amount, odds FROM bets WHERE matchid=? AND open=1");
+                 PreparedStatement balance = matchWrites.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?");
+                  PreparedStatement credit = matchWrites.prepareStatement("UPDATE player SET coins=? WHERE userid=? AND urtauth=?");
+                  PreparedStatement spree = matchWrites.prepareStatement(
+                          "SELECT spree FROM spree WHERE player_userid=? AND player_urtauth=? AND gametype=? ORDER BY ID DESC LIMIT 1");
+                  PreparedStatement updateSpree = matchWrites.prepareStatement(
+                          "UPDATE spree SET spree=?, personal_best=max(personal_best, ?), personal_worst=min(personal_worst, ?) "
+                                  + "WHERE player_userid=? AND player_urtauth=? AND gametype=?");
+                 PreparedStatement insertSpree = matchWrites.prepareStatement(
+                         "INSERT INTO spree (player_userid, player_urtauth, gametype, spree, personal_best, personal_worst) VALUES (?, ?, ?, ?, ?, ?)");
+                 PreparedStatement closeBet = matchWrites.prepareStatement("UPDATE bets SET open=0, won=? WHERE ID=?");
+                 PreparedStatement deleteBet = matchWrites.prepareStatement("DELETE FROM bets WHERE ID=?");
+                 PreparedStatement done = matchWrites.prepareStatement("UPDATE match_settlement SET settled=1 WHERE matchid=? AND settled=0")) {
+                match.setInt(1, matchId);
+                String state, gt;
+                int red, blue, teamSize;
+                try (ResultSet rs = match.executeQuery()) {
+                    if (!rs.next()) throw new SQLException("No settlement record for match " + matchId);
+                    if (rs.getInt(6) != 0) return null;
+                    state = rs.getString(1);
+                    red = rs.getInt(2);
+                    blue = rs.getInt(3);
+                    gt = rs.getString(4);
+                    teamSize = rs.getInt(5);
+                    if (rs.wasNull() || teamSize < 0) {
+                        throw new SQLException("Match " + matchId + " has no reliable original team size; manual reconciliation required");
+                    }
+                }
+                boolean completed = state.equals("Done") || state.equals("Mercy");
+                if (!completed && !state.equals("Abort") && !state.equals("Abandon") && !state.equals("Surrender")) {
+                    throw new SQLException("Match not terminal: " + matchId + " (" + state + ")");
+                }
+                boolean decisive = completed && red != blue && teamSize > 0;
+                String winner = red > blue ? "red" : "blue";
+                String spreeGt = gt.equals("PROMOD") ? "TS" : gt;
+                Map<String, Long> deltas = new LinkedHashMap<>();
+                players.setInt(1, matchId);
+                try (ResultSet rs = players.executeQuery()) {
+                    while (rs.next()) {
+                        String user = rs.getString(1), auth = rs.getString(2), team = rs.getString(3);
+                        if (decisive) {
+                            deltas.merge(user + "\u0000" + auth, (long) (team.equals(winner) ? (state.equals("Mercy") ? 75 : 50) : 25), Math::addExact);
+                            spree.setString(1, user);
+                            spree.setString(2, auth);
+                            spree.setString(3, spreeGt);
+                            boolean exists = false;
+                            int previous = 0;
+                            try (ResultSet row = spree.executeQuery()) {
+                                if (row.next()) { exists = true; previous = row.getInt(1); }
+                            }
+                            boolean won = team.equals(winner);
+                            int next = won ? (previous > 0 ? previous + 1 : 1) : (previous < 0 ? previous - 1 : -1);
+                            if (exists) {
+                                updateSpree.setInt(1, next);
+                                updateSpree.setInt(2, next);
+                                updateSpree.setInt(3, next);
+                                updateSpree.setString(4, user);
+                                updateSpree.setString(5, auth);
+                                updateSpree.setString(6, spreeGt);
+                                updateSpree.addBatch();
+                            } else {
+                                insertSpree.setString(1, user);
+                                insertSpree.setString(2, auth);
+                                insertSpree.setString(3, spreeGt);
+                                insertSpree.setInt(4, next);
+                                insertSpree.setInt(5, Math.max(0, next));
+                                insertSpree.setInt(6, Math.min(0, next));
+                                insertSpree.addBatch();
+                            }
+                        }
+                    }
+                }
+                updateSpree.executeBatch();
+                insertSpree.executeBatch();
+                bets.setInt(1, matchId);
+                try (ResultSet rs = bets.executeQuery()) {
+                    while (rs.next()) {
+                        int id = rs.getInt(1);
+                        String user = rs.getString(2), auth = rs.getString(3);
+                        long amount = rs.getLong(5);
+                        if (amount <= 0) throw new SQLException("Invalid open bet " + id);
+                        if (decisive) {
+                            boolean won = rs.getInt(4) == (winner.equals("red") ? 0 : 1);
+                            if (won) deltas.merge(user + "\u0000" + auth, Math.round((double) amount * rs.getFloat(6)), Math::addExact);
+                            closeBet.setString(1, String.valueOf(won));
+                            closeBet.setInt(2, id);
+                            closeBet.addBatch();
+                        } else {
+                            deltas.merge(user + "\u0000" + auth, amount, Math::addExact);
+                            deleteBet.setInt(1, id);
+                            deleteBet.addBatch();
+                        }
+                    }
+                }
+                closeBet.executeBatch();
+                deleteBet.executeBatch();
+                for (var entry : deltas.entrySet()) {
+                    String[] key = entry.getKey().split("\u0000", -1);
+                    balance.setString(1, key[0]); balance.setString(2, key[1]);
+                    long current;
+                    try (ResultSet rs = balance.executeQuery()) {
+                        if (!rs.next()) throw new SQLException("Settlement player not found: " + entry.getKey());
+                        current = rs.getLong(1);
+                    }
+                    credit.setLong(1, Math.addExact(current, entry.getValue()));
+                    credit.setString(2, key[0]); credit.setString(3, key[1]);
+                    credit.addBatch();
+                }
+                credit.executeBatch();
+                done.setInt(1, matchId);
+                if (done.executeUpdate() != 1) throw new SQLException("Settlement already completed: " + matchId);
+                return null;
+            }
+        });
+    }
+
+    public synchronized void recoverSettlements() {
+        List<Integer> ids = new ArrayList<>();
+        try (PreparedStatement stmt = c.prepareStatement("SELECT s.matchid FROM match_settlement s JOIN match m ON m.ID=s.matchid "
+                + "WHERE s.settled=0 AND m.state IN ('Done','Mercy','Abort','Abandon','Surrender')");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) ids.add(rs.getInt(1));
+        } catch (SQLException e) {
+            throw new MatchPersistenceException("Unable to find pending settlements", e);
+        }
+        for (int id : ids) settleMatch(id);
+    }
+
+    public synchronized long walletBalance(Player player) {
+        try (PreparedStatement stmt = matchWrites.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?")) {
+            stmt.setString(1, player.getDiscordUser().getId());
+            stmt.setString(2, player.getUrtauth());
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) throw new SQLException("Wallet not found: " + player.getUrtauth());
+                return rs.getLong(1);
             }
         } catch (SQLException e) {
-            log.warn("Exception: ", e);
+            throw new MatchPersistenceException("Unable to read wallet", e);
         }
     }
 
@@ -1288,6 +1682,28 @@ public class Database {
             log.warn("Exception: ", e);
         }
         return list;
+    }
+
+    public record BanCount(String auth, int total, int active) { }
+
+    public List<BanCount> getTopBans(int number) {
+        List<BanCount> top = new ArrayList<>();
+        String sql = "SELECT player_urtauth, COUNT(*) AS total, "
+                + "SUM(CASE WHEN end > ? AND COALESCE(forgiven, 0) = 0 THEN 1 ELSE 0 END) AS active "
+                + "FROM banlist WHERE player_urtauth IS NOT NULL "
+                + "GROUP BY player_urtauth ORDER BY total DESC, player_urtauth COLLATE NOCASE LIMIT ?";
+        try (PreparedStatement stmt = c.prepareStatement(sql)) {
+            stmt.setLong(1, System.currentTimeMillis());
+            stmt.setInt(2, number);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    top.add(new BanCount(rs.getString("player_urtauth"), rs.getInt("total"), rs.getInt("active")));
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("Unable to load ban leaderboard", e);
+        }
+        return top;
     }
 
     public ArrayList<CountryRank> getTopCountries(int number) {
@@ -1394,9 +1810,8 @@ public class Database {
     }
 
     private int readWDLRankForPlayer(Player player, Gametype gt, Season season) throws SQLException {
-        int rank = -1;
         if (gt == null) {
-            return rank;
+            return -1;
         }
         int limit = 20;
         if (season.number == 0) {
@@ -1413,25 +1828,23 @@ public class Database {
             gametypeCondition = "AND m.gametype=?";
         }
 
-        // Drive from the season's matches. SQLite otherwise starts with every active
-        // player and walks their entire match history before applying the season filter.
-        String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'match' AS m CROSS JOIN 'player_in_match' AS pim CROSS JOIN 'player' AS p WHERE pim.matchid=m.id AND pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true' AND (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablewdl  WHERE winrate > t.winrate) as rowIndex FROM tablewdl t WHERE urtauth = ?";
-        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
-            int paramIndex = 1;
-            pstmt.setLong(paramIndex++, season.startdate);
-            pstmt.setLong(paramIndex++, season.enddate);
-            if (!gt.getName().equals("TS")) {
-                pstmt.setString(paramIndex++, gt.getName());
-            }
-            pstmt.setInt(paramIndex++, limit);
-            pstmt.setString(paramIndex, player.getUrtauth());
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    rank = rs.getInt("rowIndex");
+        int minimumGames = limit;
+        return cachedRank(player, gt, season, true, () -> {
+            // Drive from season matches, then rank all eligible players once per revision.
+            String sql = "WITH tablewdl (urtauth, matchcount, winrate) AS (SELECT urtauth, COUNT(urtauth) as matchcount, (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'match' AS m CROSS JOIN 'player_in_match' AS pim CROSS JOIN 'player' AS p WHERE pim.matchid=m.id AND pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true' AND (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ?) SELECT urtauth AS auth, CASE WHEN winrate IS NULL THEN 1 ELSE RANK() OVER (ORDER BY winrate DESC) END AS rowIndex FROM tablewdl";
+            try (PreparedStatement pstmt = c.prepareStatement(sql)) {
+                int paramIndex = 1;
+                pstmt.setLong(paramIndex++, season.startdate);
+                pstmt.setLong(paramIndex++, season.enddate);
+                if (!gt.getName().equals("TS")) {
+                    pstmt.setString(paramIndex++, gt.getName());
+                }
+                pstmt.setInt(paramIndex, minimumGames);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    return readRanks(rs);
                 }
             }
-        }
-        return rank;
+        });
     }
 
     public int getKDRRankForPlayer(Player player, Gametype gt, Season season) {
@@ -1444,7 +1857,6 @@ public class Database {
     }
 
     private int readKDRRankForPlayer(Player player, Gametype gt, Season season) throws SQLException {
-        int rank = -1;
         if (gt == null) {
             return -1;
         }
@@ -1466,23 +1878,23 @@ public class Database {
             gametypeCondition = "AND match.gametype=?";
         }
 
-        String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating_query + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim  INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id)  WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ? ORDER BY kdr DESC) SELECT ( SELECT COUNT(*) + 1  FROM tablekdr  WHERE kdr > t.kdr) as rowIndex FROM tablekdr t WHERE auth = ?";
-        try (PreparedStatement pstmt = c.prepareStatement(sql)) {
-            int paramIndex = 1;
-            if (!gt.getName().equals("TS")) {
-                pstmt.setString(paramIndex++, gt.getName());
-            }
-            pstmt.setLong(paramIndex++, season.startdate);
-            pstmt.setLong(paramIndex++, season.enddate);
-            pstmt.setInt(paramIndex++, limit);
-            pstmt.setString(paramIndex, player.getUrtauth());
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    rank = rs.getInt("rowIndex");
+        int minimumGames = limit;
+        String rating = rating_query;
+        return cachedRank(player, gt, season, false, () -> {
+            String sql = "WITH tablekdr (auth, matchcount, kdr) AS (SELECT player.urtauth AS auth, COUNT(player_in_match.player_urtauth)/2 as matchcount, " + rating + " AS kdr FROM (score INNER JOIN stats ON stats.score_1 = score.ID OR stats.score_2 = score.ID INNER JOIN player_in_match ON player_in_match.ID = stats.pim INNER JOIN player ON player_in_match.player_userid = player.userid INNER JOIN match ON player_in_match.matchid = match.id) WHERE player.active = 'true' AND (match.state = 'Done' OR match.state = 'Surrender' OR match.state = 'Mercy') " + gametypeCondition + " AND match.starttime > ? AND match.starttime < ? GROUP BY player_in_match.player_urtauth HAVING matchcount > ?) SELECT auth, CASE WHEN kdr IS NULL THEN 1 ELSE RANK() OVER (ORDER BY kdr DESC) END AS rowIndex FROM tablekdr";
+            try (PreparedStatement pstmt = c.prepareStatement(sql)) {
+                int paramIndex = 1;
+                if (!gt.getName().equals("TS")) {
+                    pstmt.setString(paramIndex++, gt.getName());
+                }
+                pstmt.setLong(paramIndex++, season.startdate);
+                pstmt.setLong(paramIndex++, season.enddate);
+                pstmt.setInt(paramIndex, minimumGames);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    return readRanks(rs);
                 }
             }
-        }
-        return rank;
+        });
     }
 
     public Map<Player, String> getTopWDL(int number, Gametype gt, Season season) {
@@ -1502,15 +1914,17 @@ public class Database {
                 gametypeCondition = "AND m.gametype=?";
             }
 
-            String sql = "SELECT urtauth, COUNT(urtauth) as matchcount, SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) as win, SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) as draw, SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) loss , (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'player_in_match' AS pim JOIN 'match' AS m ON m.id = pim.matchid JOIN 'player' AS p ON pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true'   WHERE (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') " + gametypeCondition + " AND m.starttime > ? AND m.starttime < ?) AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC LIMIT ?";
+            // Filter to the season's matches before walking player history, regardless of
+            // whether the database has fresh planner statistics.
+            String sql = "SELECT urtauth, COUNT(urtauth) as matchcount, SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) as win, SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) as draw, SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) loss , (CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)/2)/(CAST(SUM(CASE WHEN stat.myscore > stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)+ CAST(SUM(CASE WHEN stat.myscore = stat.oppscore THEN 1 ELSE 0 END) AS FLOAT) + CAST(SUM(CASE WHEN stat.myscore < stat.oppscore THEN 1 ELSE 0 END) AS FLOAT)) as winrate FROM (SELECT pim.player_urtauth AS urtauth, (CASE WHEN pim.team = 'red' THEN m.score_red ELSE m.score_blue END) AS myscore, (CASE WHEN pim.team = 'blue' THEN m.score_red ELSE m.score_blue END) AS oppscore FROM 'match' AS m CROSS JOIN 'player_in_match' AS pim CROSS JOIN 'player' AS p WHERE pim.matchid=m.id AND pim.player_urtauth=p.urtauth AND pim.player_userid=p.userid AND p.active='true' AND (m.state = 'Done' OR m.state = 'Surrender' OR m.state = 'Mercy') AND m.starttime > ? AND m.starttime < ? " + gametypeCondition + ") AS stat GROUP BY urtauth HAVING COUNT(urtauth) > ? ORDER BY winrate DESC LIMIT ?";
             PreparedStatement pstmt = getPreparedStatement(sql);
 
             int paramIndex = 1;
+            pstmt.setLong(paramIndex++, season.startdate);
+            pstmt.setLong(paramIndex++, season.enddate);
             if (!gt.getName().equals("TS")) {
                 pstmt.setString(paramIndex++, gt.getName());
             }
-            pstmt.setLong(paramIndex++, season.startdate);
-            pstmt.setLong(paramIndex++, season.enddate);
             pstmt.setLong(paramIndex++, limit);
             pstmt.setInt(paramIndex, number);
             ResultSet rs = pstmt.executeQuery();
@@ -1629,6 +2043,7 @@ public class Database {
             sql = "DELETE FROM player WHERE active='false'";
             stmt.executeUpdate(sql);
             stmt.close();
+            Player.invalidateSeasonStats();
         } catch (SQLException e) {
             log.warn("Exception: ", e);
         }
@@ -1762,17 +2177,64 @@ public class Database {
         return null;
     }
 
-    public void updatePlayerCoins(Player player) {
+    public synchronized long updatePlayerCoins(Player player, long delta) {
+        return writeMatch("update wallet", () -> {
+            try (PreparedStatement select = matchWrites.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?");
+                 PreparedStatement update = matchWrites.prepareStatement("UPDATE player SET coins=? WHERE userid=? AND urtauth=?")) {
+                String user = player.getDiscordUser().getId(), auth = player.getUrtauth();
+                select.setString(1, user); select.setString(2, auth);
+                long balance;
+                try (ResultSet rs = select.executeQuery()) {
+                    if (!rs.next()) throw new SQLException("Wallet not found: " + auth);
+                    balance = Math.addExact(rs.getLong(1), delta);
+                }
+                if (balance < 0) throw new SQLException("Insufficient wallet balance: " + auth);
+                update.setLong(1, balance); update.setString(2, user); update.setString(3, auth);
+                if (update.executeUpdate() != 1) throw new SQLException("Wallet not found: " + auth);
+                return balance;
+            }
+        });
+    }
+
+    public synchronized boolean transferCoins(Player sender, Player recipient, long amount) {
+        if (amount <= 0) return false;
         try {
-            String sql = "UPDATE player SET coins=? WHERE userid=? AND urtauth=?";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setLong(1, player.getCoins());
-            pstmt.setString(2, player.getDiscordUser().getId());
-            pstmt.setString(3, player.getUrtauth());
-            pstmt.executeUpdate();
-            pstmt.close();
+            if (!c.getAutoCommit()) throw new SQLException("Command connection already in a transaction");
+            String from = sender.getDiscordUser().getId(), to = recipient.getDiscordUser().getId();
+            String fromAuth = sender.getUrtauth(), toAuth = recipient.getUrtauth();
+            if (from.equals(to) && fromAuth.equals(toAuth)) {
+                try (PreparedStatement balance = c.prepareStatement("SELECT coins FROM player WHERE userid=? AND urtauth=?")) {
+                    balance.setString(1, from);
+                    balance.setString(2, fromAuth);
+                    try (ResultSet rs = balance.executeQuery()) {
+                        return rs.next() && rs.getLong(1) >= amount;
+                    }
+                }
+            }
+
+            // One SQLite statement is atomic without opening a transaction on the
+            // shared connection between calls, where unrelated commands could join it.
+            // Materialize eligibility once so updating the sender cannot change the
+            // recipient row's eligibility during the same UPDATE.
+            String sql = "WITH transfer AS MATERIALIZED (SELECT s.rowid AS sender_id, r.rowid AS recipient_id "
+                    + "FROM player s JOIN player r ON r.userid=? AND r.urtauth=? "
+                    + "WHERE s.userid=? AND s.urtauth=? AND s.coins>=? AND r.coins<=?) "
+                    + "UPDATE player SET coins=CASE WHEN rowid=(SELECT sender_id FROM transfer) "
+                    + "THEN coins-? ELSE coins+? END "
+                    + "WHERE rowid IN (SELECT sender_id FROM transfer UNION ALL SELECT recipient_id FROM transfer)";
+            try (PreparedStatement stmt = c.prepareStatement(sql)) {
+                stmt.setString(1, to);
+                stmt.setString(2, toAuth);
+                stmt.setString(3, from);
+                stmt.setString(4, fromAuth);
+                stmt.setLong(5, amount);
+                stmt.setLong(6, Long.MAX_VALUE - amount);
+                stmt.setLong(7, amount);
+                stmt.setLong(8, amount);
+                return stmt.executeUpdate() == 2;
+            }
         } catch (SQLException e) {
-            log.warn("Exception: ", e);
+            throw new MatchPersistenceException("Unable to transfer coins", e);
         }
     }
 
@@ -1785,24 +2247,6 @@ public class Database {
             pstmt.setInt(3, player.getMapBans());
             pstmt.setString(4, player.getDiscordUser().getId());
             pstmt.setString(5, player.getUrtauth());
-            pstmt.executeUpdate();
-            pstmt.close();
-        } catch (SQLException e) {
-            log.warn("Exception: ", e);
-        }
-    }
-
-    public void createBet(Bet bet) {
-        try {
-            String sql = "INSERT INTO bets (player_userid, player_urtauth, matchid, team, won, amount, odds) VALUES (?, ?, ?, ?, ?, ?, ?)";
-            PreparedStatement pstmt = c.prepareStatement(sql);
-            pstmt.setString(1, bet.player.getDiscordUser().getId());
-            pstmt.setString(2, bet.player.getUrtauth());
-            pstmt.setInt(3, bet.matchid);
-            pstmt.setInt(4, bet.color.equals("red") ? 0 : 1);
-            pstmt.setString(5, String.valueOf(bet.won));
-            pstmt.setLong(6, bet.amount);
-            pstmt.setFloat(7, bet.odds);
             pstmt.executeUpdate();
             pstmt.close();
         } catch (SQLException e) {
@@ -1846,14 +2290,14 @@ public class Database {
     public ArrayList<Bet> getBetHistory(Player p) {
         ArrayList<Bet> betList = new ArrayList<Bet>();
         try {
-            String sql = "SELECT * from bets WHERE bets.player_urtauth = ? ORDER BY bets.ID DESC LIMIT 10;";
+            String sql = "SELECT * from bets WHERE bets.player_urtauth = ? AND open=0 ORDER BY bets.ID DESC LIMIT 10;";
             PreparedStatement pstmt = c.prepareStatement(sql);
             pstmt.setString(1, p.getUrtauth());
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
                 int matchid = rs.getInt("matchid");
                 String color = rs.getInt("team") == 0 ? "red" : "blue";
-                int amount = rs.getInt("amount");
+                long amount = rs.getLong("amount");
                 float odds = rs.getFloat("odds");
                 Bet bet = new Bet(matchid, p, color, amount, odds);
                 bet.won = Boolean.parseBoolean(rs.getString("won"));

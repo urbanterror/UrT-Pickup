@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.Function;
 
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -26,8 +24,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -86,23 +82,23 @@ class DatabaseContentionHypothesisTest {
     }
 
     @Test
-    void actualCreateMatchSqlStepBlocksPlayerLookupOnDriverMonitorButNotIndependentWalReader() throws Exception {
+    void matchWriteTransactionDoesNotBlockSharedWalReader() throws Exception {
         String url = "jdbc:sqlite:" + temporaryDirectory.resolve("match-contention.db");
         try (Connection shared = DriverManager.getConnection(url);
+             Connection matchWriter = DriverManager.getConnection(url);
              Connection independent = DriverManager.getConnection(url)) {
             createSchema(shared);
             assertWalMode(shared);
+            assertWalMode(matchWriter);
             assertWalMode(independent);
             assertTrue(shared.getAutoCommit());
             Database database = databaseUsing(shared);
+            setField(database, "matchWrites", matchWriter);
             Match match = matchWithPlayers(4);
             CountDownLatch insideSqlStep = new CountDownLatch(1);
             CountDownLatch releaseSqlStep = new CountDownLatch(1);
             CountDownLatch lookupStarted = new CountDownLatch(1);
-            AtomicReference<Thread> writerThread = new AtomicReference<>();
-            AtomicReference<Thread> readerThread = new AtomicReference<>();
-
-            Function.create(shared, "hold_match_write", new Function() {
+            Function.create(matchWriter, "hold_match_write", new Function() {
                 @Override
                 protected void xFunc() throws SQLException {
                     insideSqlStep.countDown();
@@ -123,43 +119,36 @@ class DatabaseContentionHypothesisTest {
             ExecutorService workers = workers(3);
             try {
                 Future<Integer> writer = workers.submit(() -> {
-                    writerThread.set(Thread.currentThread());
                     return database.createMatch(match);
                 });
                 assertTrue(insideSqlStep.await(5, TimeUnit.SECONDS), "createMatch must reach the real SQL trigger");
                 Future<Player> reader = workers.submit(() -> {
-                    readerThread.set(Thread.currentThread());
                     lookupStarted.countDown();
                     // A cache-miss lookup exercises real prepare/execute without Discord hydration.
                     return database.loadPlayer(null, "missing-auth", true);
                 });
                 assertTrue(lookupStarted.await(5, TimeUnit.SECONDS));
-                ThreadInfo blocked = awaitDriverMonitor(readerThread.get(), writerThread.get());
-                assertEquals(Thread.State.BLOCKED, blocked.getThreadState());
-                assertTrue(blocked.getLockInfo().getClassName().startsWith("org.sqlite."), blocked.toString());
-                assertEquals(writerThread.get().threadId(), blocked.getLockOwnerId());
-                assertFalse(reader.isDone());
+                assertNull(reader.get(5, TimeUnit.SECONDS), "The match writer must not block the shared read connection");
+                assertEquals(0, scalar(shared, "SELECT COUNT(*) FROM match"));
 
                 // Same file/table, while a write step and its transaction are still active.
                 Future<Integer> independentRead = workers.submit(() -> scalar(independent, "SELECT COUNT(*) FROM score"));
                 assertEquals(0, independentRead.get(5, TimeUnit.SECONDS).intValue());
                 assertFalse(writer.isDone(), "WAL reader must finish before the held write is released");
-                assertFalse(reader.isDone(), "Independent reader completion must not release the shared monitor");
 
                 releaseSqlStep.countDown();
                 assertEquals(1, writer.get(5, TimeUnit.SECONDS).intValue());
-                assertNull(reader.get(5, TimeUnit.SECONDS));
                 assertEquals(8, scalar(shared, "SELECT COUNT(*) FROM score"));
                 assertEquals(4, scalar(shared, "SELECT COUNT(*) FROM player_in_match"));
                 assertEquals(4, scalar(shared, "SELECT COUNT(*) FROM stats"));
-                assertEquals(17, scalar(shared, "SELECT total_changes()"),
-                        "Actual createMatch performs one match insert plus four inserts per player");
-                assertTrue(shared.getAutoCommit(), "createMatch does not establish an explicit batch transaction");
+                assertEquals(18, scalar(matchWriter, "SELECT total_changes()"),
+                        "Actual createMatch also inserts a durable settlement marker");
+                assertTrue(matchWriter.getAutoCommit(), "createMatch must complete its transaction");
                 assertEquals(8, scalar(independent, "SELECT COUNT(*) FROM score"));
             } finally {
                 releaseSqlStep.countDown();
                 stopWorkers(workers);
-                Function.destroy(shared, "hold_match_write");
+                Function.destroy(matchWriter, "hold_match_write");
             }
         }
     }
@@ -301,6 +290,7 @@ class DatabaseContentionHypothesisTest {
         execute(connection, "PRAGMA journal_mode=WAL");
         execute(connection, "CREATE TABLE match (ID INTEGER PRIMARY KEY, state TEXT, gametype TEXT, server INTEGER, "
                 + "starttime INTEGER, map TEXT, elo_red INTEGER, elo_blue INTEGER)");
+        execute(connection, "CREATE TABLE match_settlement (matchid INTEGER PRIMARY KEY, settled INTEGER DEFAULT 0, teamsize INTEGER NOT NULL)");
         execute(connection, "CREATE TABLE score (ID INTEGER PRIMARY KEY, kills INTEGER, deaths INTEGER)");
         execute(connection, "CREATE TABLE player_in_match (ID INTEGER PRIMARY KEY, matchid INTEGER, "
                 + "player_userid TEXT, player_urtauth TEXT, team TEXT)");
@@ -309,21 +299,6 @@ class DatabaseContentionHypothesisTest {
                 + "country TEXT, enforce_ac TEXT, coins INTEGER, eloboost INTEGER, mapvote INTEGER, mapban INTEGER, proctf TEXT)");
         execute(connection, "CREATE TABLE banlist (player_userid TEXT, player_urtauth TEXT, start INTEGER, end INTEGER, "
                 + "reason TEXT, pardon TEXT, forgiven INTEGER)");
-    }
-
-    private static ThreadInfo awaitDriverMonitor(Thread reader, Thread writer) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        ThreadInfo info = null;
-        while (System.nanoTime() < deadline) {
-            info = ManagementFactory.getThreadMXBean().getThreadInfo(reader.threadId(), 32);
-            if (info != null && info.getThreadState() == Thread.State.BLOCKED
-                    && info.getLockOwnerId() == writer.threadId()
-                    && info.getLockInfo().getClassName().startsWith("org.sqlite.")) {
-                return info;
-            }
-            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
-        }
-        return fail("Expected reader blocked on SQLite monitor owned by held writer; last observation: " + info);
     }
 
     private static ExecutorService workers(int count) {

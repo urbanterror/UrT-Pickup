@@ -29,6 +29,7 @@ public class PickupLogic {
     public final FtwglApi ftwglApi;
     public PickupBot bot;
     public Database db;
+    private final StatsCommandCache statsCommandCache = new StatsCommandCache();
 
     private List<Server> serverList;
     private List<Server> gtvServerList;
@@ -104,6 +105,7 @@ public class PickupLogic {
             }
         }
         mapList = db.loadMaps(); // needs current gamemode list
+        db.recoverSettlements();
         ongoingMatches = new CopyOnWriteArrayList<>(db.loadOngoingMatches()); // need maps, servers and gamemodes
         activeTeams = new ArrayList<Team>();
 
@@ -492,6 +494,31 @@ public class PickupLogic {
         return new PickupReply(null, embed);
     }
 
+    public PickupReply cmdTopBan(int number) {
+        List<Database.BanCount> bans = db.getTopBans(number);
+        if (bans.isEmpty()) {
+            return new PickupReply("None");
+        }
+
+        DiscordEmbed embed = new DiscordEmbed();
+        embed.setTitle("Top " + number + " most banned players");
+        embed.setDescription("All-time ban records, including expired and forgiven bans. Active bans in parentheses.");
+        embed.setColor(7056881);
+        StringBuilder ranks = new StringBuilder();
+        StringBuilder players = new StringBuilder();
+        StringBuilder counts = new StringBuilder();
+        int rank = 1;
+        for (Database.BanCount ban : bans) {
+            ranks.append("**").append(rank++).append("**\n");
+            players.append(ban.auth()).append('\n');
+            counts.append(ban.total()).append(" (").append(ban.active()).append(")\n");
+        }
+        embed.addField("\u200b", ranks.toString(), true);
+        embed.addField("Player", players.toString(), true);
+        embed.addField("Bans (active)", counts.toString(), true);
+        return new PickupReply(null, embed);
+    }
+
     public PickupReply cmdTopWDL(int number, Gametype gt) {
         if (gt.getName().equalsIgnoreCase("div1")) {
             return new PickupReply(Config.div1_stats_blocked);
@@ -789,18 +816,21 @@ public class PickupLogic {
         if (p == null) {
             return "";
         }
+        PlayerStats stats = p.getCurrentSeasonStats(db, currentSeason);
+        StatsCommandCache.Values values = statsCommandCache.get(p, currentSeason,
+                !gt.getName().equals("CTF"), db, ftwglApi);
         String msg = Config.pkup_getelo;
         msg = msg.replace(".urtauth.", p.getUrtauth());
         msg = msg.replace(".elo.", String.valueOf(p.getElo()));
         if (gt.getName().equals("CTF")) {
-            msg = msg.replace(".wdl.", String.format("%.02f", p.stats.ctf_wdl.calcWinRatio() * 100d));
-            msg = msg.replace(".kdr.", String.format("%.02f", p.stats.ctf_rating));
+            msg = msg.replace(".wdl.", String.format("%.02f", stats.ctf_wdl.calcWinRatio() * 100d));
+            msg = msg.replace(".kdr.", String.format("%.02f", stats.ctf_rating));
         } else {
-            msg = msg.replace(".wdl.", String.format("%.02f", p.stats.ts_wdl.calcWinRatio() * 100d));
-            msg = msg.replace(".kdr.", String.format("%.02f", ftwglApi.getPlayerRatings(p)));
+            msg = msg.replace(".wdl.", String.format("%.02f", stats.ts_wdl.calcWinRatio() * 100d));
+            msg = msg.replace(".kdr.", String.format("%.02f", values.rating()));
         }
 
-        msg = msg.replace(".position.", String.valueOf(p.getEloRank()));
+        msg = msg.replace(".position.", String.valueOf(values.eloRank()));
         msg = msg.replace(".rank.", p.getRank().getEmoji().getMentionString());
 
 
@@ -890,6 +920,8 @@ public class PickupLogic {
     public DiscordEmbed getStatsEmbed(Player p) {
         // Current-season stats are hydrated on player load and refreshed when a match ends.
         PlayerStats stats = p.getCurrentSeasonStats(db, currentSeason);
+        StatsCommandCache.Values values = statsCommandCache.get(p, currentSeason,
+                stats.ts_wdl.getTotal() >= 5, db, ftwglApi);
         String country = "<:puma:849287183474884628>";
         if (!p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
             country = ":flag_" + p.getCountry().toLowerCase() + ":";
@@ -904,7 +936,7 @@ public class PickupLogic {
         if (p.hasBoostActive()) {
             boostActive = "\n**ELO BOOST** (Expires <t:" + p.getEloBoost() / 1000 + ":R>)";
         }
-        statsEmbed.setDescription(p.getRank().getEmoji().getMentionString() + " \u200b \u200b  **" + p.getElo() + "**  #" + p.getEloRank() + boostActive + "\n\n``Season " + currentSeason.number + "``");
+        statsEmbed.setDescription(p.getRank().getEmoji().getMentionString() + " \u200b \u200b  **" + p.getElo() + "**  #" + values.eloRank() + boostActive + "\n\n``Season " + currentSeason.number + "``");
 
         statsEmbed.setFooterIcon("https://cdn.discordapp.com/emojis/" + Bet.getCoinEmoji(p.getCoins()).id());
         statsEmbed.setFooterText(String.valueOf(p.getCoins()));
@@ -920,7 +952,7 @@ public class PickupLogic {
             // } else {
             // 	statsEmbed.addField("KDR", String.format("%.02f", stats.kdr) + " (#" + stats.kdrRank + ")", true);
             // }
-            statsEmbed.addField("Rating", String.format("%.02f", ftwglApi.getPlayerRatings(p)), true);
+            statsEmbed.addField("Rating", String.format("%.02f", values.rating()), true);
             if (stats.wdlRank == -1) {
                 statsEmbed.addField("Win %", Math.round(stats.ts_wdl.calcWinRatio() * 100d) + "%", true);
 
@@ -1299,7 +1331,7 @@ public class PickupLogic {
             List<Match> toRemove = new ArrayList<Match>();
             for (Match match : ongoingMatches) {
                 match.reset();
-                toRemove.add(match);
+                if (!match.isPersistencePending()) toRemove.add(match);
             }
             ongoingMatches.removeAll(toRemove);
             curMatch.keySet().forEach(this::invalidateMode);
@@ -1336,7 +1368,7 @@ public class PickupLogic {
                     for (Match match : ongoingMatches) {
                         if (match.getID() == idx) {
                             match.reset();
-                            toRemove.add(match);
+                            if (!match.isPersistencePending()) toRemove.add(match);
                             bot.sendMsg(getChannelByType(PickupChannelType.PUBLIC), Config.pkup_reset_id.replace(".id.", cmd));
                         }
                     }
@@ -1787,11 +1819,18 @@ public class PickupLogic {
     }
 
     public void matchRemove(Match match) {
+        if (match.isPersistencePending()) return;
         ongoingMatches.remove(match);
     }
 
     public boolean isOngoingMatch(Match match) {
         return ongoingMatches.contains(match);
+    }
+
+    public void retryPendingMatchSaves() {
+        for (Match match : ongoingMatches) {
+            match.retryPendingSave();
+        }
     }
 
     private void checkServer() {
@@ -2783,28 +2822,39 @@ public class PickupLogic {
             allIn = true;
         }
 
+        if (!color.equals("red") && !color.equals("blue")) {
+            command.respondEphemeral(Config.bets_notaccepting);
+            return;
+        }
         String otherTeam = color.equals("red") ? "blue" : "red";
         if (match.isInMatch(p) && match.getTeam(p).equals(otherTeam)) {
             command.respondEphemeral(Config.bets_otherteam);
             return;
         }
         float odds = color.equals("red") ? match.getOdds(0) : match.getOdds(1);
-        Bet bet = new Bet(match.getID(), p, color, amount, odds);
-        for (Bet matchBet : match.bets) {
-            if (matchBet.player.equals(p) && color.equals(matchBet.color)) {
-                if (!allIn && amount + matchBet.amount > 1000000) {
-                    command.respondEphemeral(Config.bets_above_limit);
-                    return;
-                }
-                matchBet.amount += amount;
-                bet.place(match);
+        synchronized (match) {
+            if (!match.acceptBets() || match.isPersistencePending()) {
+                command.respondEphemeral(Config.bets_notaccepting);
                 return;
             }
+            Bet bet = new Bet(match.getID(), p, color, amount, odds);
+            if (!db.placeBet(bet, allIn)) {
+                command.respondEphemeral(Config.bets_insufficient);
+                return;
+            }
+            p.refreshWallet();
+            for (Bet existing : match.bets) {
+                if (existing.player.getUrtauth().equals(p.getUrtauth()) && existing.color.equals(color)) {
+                    existing.amount = Math.addExact(existing.amount, bet.amount);
+                    bet.place(match, allIn);
+                    command.deleteDeferredReply();
+                    return;
+                }
+            }
+            match.bets.add(bet);
+            bet.place(match, allIn);
+            command.deleteDeferredReply();
         }
-        match.bets.add(bet);
-        bet.place(match);
-
-        command.deleteDeferredReply();
     }
 
     public void showBuys(DiscordInteraction interaction, Player p) {
@@ -3058,10 +3108,9 @@ public class PickupLogic {
             return new PickupReply(Config.bets_insufficient);
         }
 
-        p.spendCoins(amount);
-        p.saveWallet();
-        destP.addCoins(amount);
-        destP.saveWallet();
+        if (!db.transferCoins(p, destP, amount)) return new PickupReply(Config.bets_insufficient);
+        p.refreshWallet();
+        if (p != destP) destP.refreshWallet();
 
         DiscordEmoji coinEmoji = Bet.getCoinEmoji(amount);
         String msg = Config.donate_processed;
