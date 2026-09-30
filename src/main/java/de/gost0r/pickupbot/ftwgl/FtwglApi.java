@@ -36,7 +36,7 @@ public class FtwglApi {
             @Value("${app.ftw.key}") String apiKey,
             @Value("${app.ftw.connect-timeout:2s}") Duration connectTimeout,
             @Value("${app.ftw.read-timeout:5s}") Duration readTimeout,
-            @Value("${app.ftw.rental-read-timeout:1m}") Duration rentalReadTimeout
+            @Value("${app.ftw.rental-read-timeout:120s}") Duration rentalReadTimeout
     ) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(connectTimeout);
