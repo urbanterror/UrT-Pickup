@@ -70,6 +70,50 @@ For example, `rate(urt_discord_requests_total[5m])` shows requests/second and
 counters alone cannot predict Discord's available quota: the refresh policy also
 uses the recent request window and actual response headers.
 
+## GlitchTip error reporting
+
+Sentry Java SDK reporting is initialized before Spring starts. Set `SENTRY_DSN` in
+the deployment environment to send events to your GlitchTip project. Reporting is
+disabled when no DSN is supplied; the repository and built JAR contain no DSN.
+All **WARN and ERROR** logs become events, including handled database, FTW API,
+Discord, match and server-monitor exceptions. INFO logs are attached as breadcrumbs.
+Uncaught thread exceptions and startup failures are also captured. Error events
+are not sampled; the 1% tracing rate applies only to transactions, when created.
+The SDK flushes pending events on normal JVM shutdown.
+
+Exception grouping uses the deepest cause's type, throwing method and nearest
+application method, excluding changing messages, IDs, wrapper exceptions and line
+numbers. Different exception types or originating methods remain separate. For
+message-only logs, grouping uses the logger and unformatted message template.
+Full messages, parameters and stack traces remain visible on individual events.
+
+Defaults are packaged in `src/main/resources/sentry.properties`. Override them with:
+
+- `SENTRY_DSN`: the GlitchTip DSN; an empty value disables reporting.
+- `SENTRY_RELEASE`: the deployed application version or commit.
+- `SENTRY_ENVIRONMENT`: the environment (default `production`).
+- `SENTRY_TRACES_SAMPLE_RATE`: transaction sampling rate (default `0.01`).
+
+You can also use a working-directory `sentry.properties` file or `-Dsentry.*`
+system properties. Automated tests disable reporting to avoid sending test failures.
+
+The local s89 deployment uses an ignored, mode-600 `.sentry.env` file containing
+`SENTRY_DSN`. `deploy-local.sh` copies it to `/home/shawn/PickupDiscord/.sentry.env`
+and recreates the bot container with `--env-file` so the Java process receives the
+variable. Set `SENTRY_ENV_FILE` to use another local file. If no local file exists,
+the script uses the deployment's existing remote `.sentry.env`.
+
+Verify delivery without starting the Discord bot or opening the database:
+
+```bash
+./gradlew bootJar
+SENTRY_DSN='<your GlitchTip DSN>' SENTRY_ENVIRONMENT=integration-test java -jar build/libs/PickupBot.jar --sentry-test
+```
+
+This sends one `Test GlitchTip warning!` and two errors with different match IDs,
+prints the error event IDs and flushes before exiting. Check that the two errors
+appear in one GlitchTip issue, separate from the warning.
+
 ## Commands
 
 ### User Commands

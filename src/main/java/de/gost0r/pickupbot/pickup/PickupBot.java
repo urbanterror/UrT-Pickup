@@ -94,7 +94,7 @@ public class PickupBot {
         try {
             sendMsg(publicChannels, Config.bot_online);
         } catch (Exception e) {
-            log.warn("Failed to send startup message to PUBLIC channel(s): {}", e.getMessage());
+            log.warn("Failed to send startup message to PUBLIC channel(s)", e);
         }
         log.info("Bot online");
     }

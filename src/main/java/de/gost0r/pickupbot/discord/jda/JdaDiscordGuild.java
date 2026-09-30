@@ -37,7 +37,7 @@ public class JdaDiscordGuild implements DiscordGuild {
         try {
             guild.addRoleToMember(UserSnowflake.fromId(user.getId()), jdaRole).queue();
         } catch (IllegalArgumentException e) {
-            log.warn("Cannot add role {} to member {}: {}", role.getName(), user.getUsername(), e.getMessage());
+            log.warn("Cannot add role {} to member {}", role.getName(), user.getUsername(), e);
         }
     }
 
@@ -47,7 +47,7 @@ public class JdaDiscordGuild implements DiscordGuild {
         try {
             guild.removeRoleFromMember(UserSnowflake.fromId(user.getId()), jdaRole).queue();
         } catch (IllegalArgumentException e) {
-            log.warn("Cannot remove role {} from member {}: {}", role.getName(), user.getUsername(), e.getMessage());
+            log.warn("Cannot remove role {} from member {}", role.getName(), user.getUsername(), e);
         }
     }
 

@@ -54,7 +54,7 @@ public class JdaDiscordService implements DiscordService {
                         return new JdaDiscordUser(member);
                     }
                 } catch (ErrorResponseException e) {
-                    log.warn("Failed to retrieve member with id {} - {}", userId, e.getMessage());
+                    log.warn("Failed to retrieve member with id {}", userId, e);
                 }
             }
             User user = jda.getUserById(userId);

@@ -40,6 +40,8 @@ dependencies {
     implementation 'org.apache.commons:commons-lang3:3.17.0'
     implementation 'org.json:json:20250517'
     implementation 'org.xerial:sqlite-jdbc:3.50.2.0'
+    implementation 'io.sentry:sentry:8.58.0'
+    implementation 'io.sentry:sentry-logback:8.58.0'
 
     implementation("net.dv8tion:JDA:6.4.1") {
         exclude module: 'opus-java'
@@ -53,4 +55,6 @@ bootJar {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Tests must not send their deliberately induced failures to production.
+    systemProperty 'sentry.dsn', ''
 }

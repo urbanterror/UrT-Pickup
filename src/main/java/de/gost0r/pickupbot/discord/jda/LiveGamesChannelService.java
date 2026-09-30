@@ -107,8 +107,7 @@ public class LiveGamesChannelService {
                         // A timed-out send might still have succeeded. Recover history before sending again.
                         channels.remove(guild.getId());
                         budget.failedOperation();
-                        warn(logic, guild, "Live-games refresh failed; check the bot's channel permissions. Details: " + e.getMessage());
-                        log.warn("Live-games refresh failed in guild {}", guild.getId(), e);
+                        warn(logic, guild, "Live-games refresh failed; check the bot's channel permissions.", e);
                     }
                 }
             }
@@ -321,10 +320,17 @@ public class LiveGamesChannelService {
     }
 
     private void warn(PickupLogic logic, Guild guild, String message) {
+        warn(logic, guild, message, null);
+    }
+
+    private void warn(PickupLogic logic, Guild guild, String message, Throwable failure) {
+        // Report every failure, even when its Discord admin notification is throttled.
+        // Avoid a second message-only event for the same exception.
+        if (failure != null) log.warn("Live-games refresh failed in guild {}", guild.getId(), failure);
         long now = clock.millis();
         if (now < warnings.getOrDefault(guild.getId(), 0L)) return;
         warnings.put(guild.getId(), now + 3_600_000);
-        log.warn("Guild {}: {}", guild.getId(), message);
+        if (failure == null) log.warn("Guild {}: " + message, guild.getId());
         for (DiscordChannel admin : logic.getChannelByType(PickupChannelType.ADMIN)) {
             TextChannel target = jda.getTextChannelById(admin.getId());
             if (target != null && guild.getId().equals(target.getGuild().getId())
