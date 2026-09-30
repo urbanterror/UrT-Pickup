@@ -50,9 +50,9 @@ public class JdaDiscordInteraction implements DiscordInteraction {
 
     @Override
     public void publishMessage() {
-        event.getHook()
+        // A channel send avoids the interaction reply reference to the private message we delete.
+        event.getMessageChannel()
                 .sendMessageEmbeds(event.getMessage().getEmbeds())
-                .setEphemeral(false)
                 .queue(published -> deleteDeferredReply(), failure -> {
                     log.warn("Could not publish stats", failure);
                     respondEphemeral("Could not publish stats. Please try again.");

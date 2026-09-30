@@ -5,7 +5,7 @@ import de.gost0r.pickupbot.discord.jda.JdaDiscordInteraction;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
-import net.dv8tion.jda.api.requests.restaction.WebhookMessageCreateAction;
+import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
@@ -208,16 +208,15 @@ class PickupBotCommandRoutingTest {
                 .setDescription("All time stats").addField("Wins", "42", true).build());
         when(event.getMessage().getEmbeds()).thenReturn(snapshot);
         var hook = event.getHook();
-        WebhookMessageCreateAction<Message> post = hook.sendMessageEmbeds(snapshot);
-        when(post.setEphemeral(false)).thenReturn(post);
-        clearInvocations(event, hook, post);
+        MessageCreateAction post = event.getMessageChannel().sendMessageEmbeds(snapshot);
+        clearInvocations(event, hook, post, event.getMessageChannel());
 
         bot.recvInteraction(new JdaDiscordInteraction(event));
 
         verify(event).deferEdit();
         verify(event, never()).deferReply();
-        verify(hook).sendMessageEmbeds(same(snapshot));
-        verify(post).setEphemeral(false);
+        verify(event.getMessageChannel()).sendMessageEmbeds(same(snapshot));
+        verify(hook, never()).sendMessageEmbeds(anyList());
         verify(hook, never()).deleteOriginal();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Consumer<Message>> success = ArgumentCaptor.forClass(Consumer.class);

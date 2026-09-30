@@ -12,7 +12,7 @@ import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
 import net.dv8tion.jda.api.interactions.InteractionHook;
-import net.dv8tion.jda.api.requests.restaction.WebhookMessageCreateAction;
+import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import net.dv8tion.jda.api.requests.restaction.WebhookMessageEditAction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,7 +30,7 @@ class JdaDiscordInteractionTest {
     private GenericComponentInteractionCreateEvent event;
     private InteractionHook hook;
     private List<MessageEmbed> embeds;
-    private WebhookMessageCreateAction<Message> action;
+    private MessageCreateAction action;
     private JdaDiscordInteraction interaction;
 
     @BeforeEach
@@ -44,22 +44,21 @@ class JdaDiscordInteractionTest {
                 .addField("Wins", "7", true)
                 .build());
         when(event.getMessage().getEmbeds()).thenReturn(embeds);
-        action = hook.sendMessageEmbeds(embeds);
-        when(action.setEphemeral(false)).thenReturn(action);
+        action = event.getMessageChannel().sendMessageEmbeds(embeds);
         interaction = new JdaDiscordInteraction(event);
         // Do not count calls made while arranging deep-stub return values.
-        clearInvocations(event, hook, action);
+        clearInvocations(event, hook, action, event.getMessageChannel());
     }
 
     @Test
-    void publishesDisplayedStatsPubliclyBeforeDeletingPrivateMessage() {
+    void publishesDisplayedStatsWithoutReplyReferenceBeforeDeletingPrivateMessage() {
         interaction.deferEdit();
         interaction.publishMessage();
 
         verify(event).deferEdit();
         verify(event, never()).deferReply();
-        verify(action).setEphemeral(false);
-        verify(hook).sendMessageEmbeds(same(embeds));
+        verify(event.getMessageChannel()).sendMessageEmbeds(same(embeds));
+        verify(hook, never()).sendMessageEmbeds(anyList());
         // Only the embeds are published, so the private Publish button is not copied.
         verify(hook, never()).deleteOriginal();
 
@@ -94,7 +93,7 @@ class JdaDiscordInteractionTest {
         onSuccess.getValue().accept(mock(Message.class));
 
         verify(hook).deleteOriginal();
-        verify(hook, times(2)).sendMessageEmbeds(same(embeds));
+        verify(event.getMessageChannel(), times(2)).sendMessageEmbeds(same(embeds));
     }
 
     @Test
@@ -102,14 +101,15 @@ class JdaDiscordInteractionTest {
         MessageEmbed secondEmbed = new EmbedBuilder().setDescription("Additional stats").build();
         List<MessageEmbed> snapshot = List.of(embeds.get(0), secondEmbed);
         when(event.getMessage().getEmbeds()).thenReturn(snapshot);
-        WebhookMessageCreateAction<Message> snapshotAction = hook.sendMessageEmbeds(snapshot);
-        when(snapshotAction.setEphemeral(false)).thenReturn(snapshotAction);
-        clearInvocations(hook, snapshotAction);
+        MessageCreateAction snapshotAction = event.getMessageChannel().sendMessageEmbeds(snapshot);
+        clearInvocations(hook, snapshotAction, event.getMessageChannel());
 
         interaction.publishMessage();
 
-        verify(hook).sendMessageEmbeds(same(snapshot));
-        verify(snapshotAction).setEphemeral(false);
+        verify(event.getMessageChannel()).sendMessageEmbeds(same(snapshot));
+        verify(hook, never()).sendMessageEmbeds(anyList());
+        verify(snapshotAction).queue(any(), any());
+        verifyNoMoreInteractions(snapshotAction);
         verify(hook, never()).editOriginalEmbeds(anyList());
     }
 
