@@ -3,6 +3,8 @@ package de.gost0r.pickupbot.pickup;
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -265,6 +267,42 @@ class StatsCommandCacheTest {
         verify(db, never()).getPlayerStats(any(), any());
         verify(db, never()).tryGetPlayerStats(any(), any());
         verify(ftw).getPlayerRatings(List.of(player));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 2, 3, 4, 5})
+    void commandsShowRatingsBeforeAndAfterSeasonPlacements(int games) {
+        results(player, 3, 1.25f);
+        PickupLogic logic = spy(new PickupLogic(null, ftw, null, null, null));
+        logic.db = db;
+        logic.currentSeason = season;
+        doReturn(null).when(logic).getGametypeByString(anyString());
+        PlayerStats stats = new PlayerStats();
+        stats.ts_wdl.win = games;
+        stats.ctf_wdl.win = games;
+        stats.ctf_rating = 2.5f;
+        stats.ctfRank = -1;
+        player.setCurrentSeasonStats(stats, season, Player.currentSeasonStatsRevision());
+
+        var embed = logic.cmdGetStats(player).getEmbed();
+        assertEquals(List.of(String.format("%.02f", 1.25f), String.format("%.02f", 2.5f)),
+                embed.getFields().stream().filter(field -> field.name().equals("Rating"))
+                        .map(field -> field.value()).toList());
+        if (games < 5) {
+            assertTrue(embed.getFields().stream().anyMatch(field ->
+                    field.value().equals("**TS**: ``" + games + "/5`` placement games")));
+            assertTrue(embed.getFields().stream().anyMatch(field ->
+                    field.value().equals("**CTF**: ``" + games + "/5`` placement games")));
+        } else {
+            assertFalse(embed.getFields().stream().anyMatch(field -> field.value().contains("placement games")));
+        }
+        assertTrue(logic.cmdGetElo(player, new Gametype("TS", 5, true, false))
+                .endsWith(String.format("%.02f", 1.25f)));
+        assertTrue(logic.cmdGetElo(player, new Gametype("CTF", 5, true, false))
+                .endsWith(String.format("%.02f", 2.5f)));
+        verify(ftw).getPlayerRatings(List.of(player));
+        verify(db, never()).getPlayerStats(any(), any());
+        verify(db, never()).tryGetPlayerStats(any(), any());
     }
 
     private static Player player(String id, String auth) {

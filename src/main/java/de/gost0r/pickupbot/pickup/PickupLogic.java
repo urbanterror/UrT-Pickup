@@ -925,7 +925,7 @@ public class PickupLogic {
         // Current-season stats are hydrated on player load and refreshed when a match ends.
         PlayerStats stats = p.getCurrentSeasonStats(db, currentSeason);
         StatsCommandCache.Values values = statsCommandCache.get(p, currentSeason,
-                stats.ts_wdl.getTotal() >= 5, db, ftwglApi);
+                true, db, ftwglApi);
         String country = "<:puma:849287183474884628>";
         if (!p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
             country = ":flag_" + p.getCountry().toLowerCase() + ":";
@@ -947,6 +947,7 @@ public class PickupLogic {
 
         if (stats.ts_wdl.getTotal() < 5) {
             statsEmbed.addField("\u200b", "**TS**: ``" + stats.ts_wdl.getTotal() + "/5`` placement games", false);
+            statsEmbed.addField("Rating", String.format("%.02f", values.rating()), true);
         } else {
             statsEmbed.addField("\u200b", "TS <:lr:401457276478554112>", false);
             statsEmbed.addField("Played", String.valueOf(stats.ts_wdl.getTotal()), true);
@@ -977,6 +978,7 @@ public class PickupLogic {
 
         if (stats.ctf_wdl.getTotal() < 5) {
             statsEmbed.addField("\u200b", "**CTF**: ``" + stats.ctf_wdl.getTotal() + "/5`` placement games", false);
+            statsEmbed.addField("Rating", String.format("%.02f", stats.ctf_rating), true);
         } else {
             statsEmbed.addField("\u200b", "CTF <:red_flag:400778174415503371>", false);
             statsEmbed.addField("Played", String.valueOf(stats.ctf_wdl.getTotal()), true);
