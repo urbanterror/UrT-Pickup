@@ -280,7 +280,6 @@ public class Match implements Runnable {
                     cleanUp();
                     sendAftermath();
                     announceRefunds();
-                    logic.matchRemove(this);
                 });
             }
         }
@@ -322,7 +321,6 @@ public class Match implements Runnable {
                 gtvServer.sendRcon("gtv_disconnect 1");
             }
             announceRefunds();
-            logic.matchRemove(this);
         });
     }
 
@@ -342,7 +340,6 @@ public class Match implements Runnable {
             }
 
             sendAftermath(status, involvedPlayers);
-            logic.matchRemove(this);
             announceRefunds();
         });
     }
@@ -357,7 +354,6 @@ public class Match implements Runnable {
         persistResult(() -> {
             cleanUp();
             sendAftermath();
-            logic.matchRemove(this);
             if (gametype.getTeamSize() > 0) {
                 announceSettlement();
             }
@@ -405,6 +401,8 @@ public class Match implements Runnable {
             return;
         }
         pendingCompletion = null;
+        // Release players before cleanup or notifications, which may block or fail.
+        logic.matchRemove(this);
         if (state == MatchState.Done || state == MatchState.Mercy || state == MatchState.Surrender) {
             // Saved results must become visible even if cleanup or notifications fail.
             Player.invalidateSeasonStats();

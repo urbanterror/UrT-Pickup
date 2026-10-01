@@ -15,6 +15,7 @@ import java.lang.reflect.Field;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -158,7 +159,6 @@ class MatchPersistenceRetryTest {
         logic.db = mock(Database.class);
         logic.currentSeason = new Season(11, 0, 1000);
         doNothing().when(logic).matchEnded();
-        doNothing().when(logic).matchRemove(any());
         doReturn(List.of()).when(logic).getChannelByType(any());
         doReturn(null).when(logic).getGametypeByString(anyString());
         Executor executor = mock(Executor.class);
@@ -190,11 +190,15 @@ class MatchPersistenceRetryTest {
         setField(Match.class, match, "playerStats", Map.of(player, new MatchStats()));
         setField(Match.class, match, "surrender", new int[]{0, 4});
         doReturn(new DiscordEmbed()).when(match).getMatchEmbed(false);
+        setField(PickupLogic.class, logic, "ongoingMatches", new CopyOnWriteArrayList<>(List.of(match)));
         RuntimeException failure = new IllegalStateException("completion failed");
         if (failurePoint.equals("cleanup")) {
             doThrow(failure).when(server).free();
         } else {
-            doThrow(failure).when(bot).sendMsg(anyList(), anyString(), any(DiscordEmbed.class));
+            doAnswer(invocation -> {
+                assertNull(logic.playerInActiveMatch(player), "Players must be released before the result is posted");
+                throw failure;
+            }).when(bot).sendMsg(anyList(), anyString(), any(DiscordEmbed.class));
         }
         // Retry must retain the same guarantees as an immediately successful save.
         doThrow(new MatchPersistenceException("disk unavailable"))
@@ -202,6 +206,7 @@ class MatchPersistenceRetryTest {
         if (state == MatchState.Surrender) match.checkSurrender();
         else match.end();
         assertTrue(match.isPersistencePending());
+        assertSame(match, logic.playerInActiveMatch(player));
         assertEquals(revision, Player.currentSeasonStatsRevision());
         verifyNoInteractions(executor);
 
@@ -215,6 +220,8 @@ class MatchPersistenceRetryTest {
         assertSame(failure, assertThrows(IllegalStateException.class, match::retryPendingSave));
         assertEquals(state, match.getMatchState());
         assertFalse(match.isPersistencePending());
+        assertNull(logic.playerInActiveMatch(player));
+        assertFalse(logic.isOngoingMatch(match));
         assertEquals(revision + 1, Player.currentSeasonStatsRevision());
         var order = inOrder(logic.db, executor, server, bot);
         order.verify(logic.db).saveMatch(match);
