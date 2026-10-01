@@ -139,17 +139,18 @@ class PickupBotCommandRoutingTest {
         verify(interaction, never()).publishMessage();
     }
 
-    @Test void seasonSelectionKeepsSeasonalStatsPrivateWithoutPublishButton() {
+    @Test void seasonSelectionShowsSeasonalStatsPrivatelyWithPublishButton() {
         DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSELECTED + "_bravo", users.get("alpha"));
         when(interaction.getValues()).thenReturn(List.of("1"));
 
         bot.recvInteraction(interaction);
 
         ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
-        verify(interaction).respondEphemeral(isNull(), embed.capture());
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), embed.capture(), components.capture());
         assertTrue(embed.getValue().getDescription().startsWith("Season 1 "));
         assertTrue(embed.getValue().getTitle().contains("bravo"));
-        verify(interaction, never()).respondEphemeral(any(), any(), any());
+        assertPublishButton(components.getValue());
         verify(interaction).deferReply();
         verify(interaction, never()).publishMessage();
     }
