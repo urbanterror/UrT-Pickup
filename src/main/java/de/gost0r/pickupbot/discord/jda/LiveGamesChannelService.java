@@ -123,7 +123,8 @@ public class LiveGamesChannelService {
     }
 
     void reconcile(PickupLogic logic, Guild guild, List<Match> matches, long interval) throws IOException {
-        String marker = "urt-pickup:live-games:" + jda.getSelfUser().getId() + ":" + guild.getId();
+        String botId = jda.getSelfUser().getId();
+        String marker = "urt-pickup:live-games:" + botId + ":" + guild.getId();
         ChannelState state = channels.get(guild.getId());
         if (state != null && guild.getTextChannelById(state.channel.getId()) == null
                 && clock.millis() - state.createdAt > 30_000) {
@@ -131,9 +132,16 @@ public class LiveGamesChannelService {
             state = null;
         }
         if (state == null) {
-            TextChannel existing = guild.getTextChannels().stream()
-                    .filter(channel -> marker.equals(channel.getTopic())).findFirst().orElse(null);
+            String channelId = budget.liveChannelId(botId, guild.getId());
+            TextChannel existing = channelId == null ? null : guild.getTextChannelById(channelId);
+            if (existing == null) {
+                // Migrate older channels and recover uncertain creates before removing their marker.
+                existing = guild.getTextChannels().stream().filter(channel -> marker.equals(channel.getTopic())
+                        || (channel.getTopic() != null && channel.getTopic().endsWith("\n" + marker)))
+                        .findFirst().orElse(null);
+            }
             if (existing != null) {
+                budget.rememberLiveChannel(botId, guild.getId(), existing.getId());
                 state = new ChannelState(existing, false, clock.millis());
                 channels.put(guild.getId(), state);
             }
@@ -156,10 +164,12 @@ public class LiveGamesChannelService {
             if (budget.tryAcquire()) {
                 budget.reserveRename(guild.getId());
                 TextChannel channel = guild.createTextChannel(channelName(matches))
-                        .setTopic(marker)
+                        // Keep a temporary marker so failed/uncertain creates can be rediscovered.
+                        .setTopic(channelTopic(matches) + "\n" + marker)
                         .addPermissionOverride(guild.getPublicRole(), Permission.VIEW_CHANNEL.getRawValue(), WRITE_PERMISSIONS)
                         .addPermissionOverride(self, BOT_PERMISSIONS, 0)
                         .reason("Read-only live match previews").complete();
+                budget.rememberLiveChannel(botId, guild.getId(), channel.getId());
                 channels.put(guild.getId(), new ChannelState(channel, true, clock.millis()));
             }
             return;
@@ -201,7 +211,7 @@ public class LiveGamesChannelService {
         if (!channel.getName().equals(name) && budget.canRename(guild.getId())) {
             if (budget.tryAcquire()) {
                 budget.reserveRename(guild.getId());
-                channel.getManager().setName(name).complete();
+                channel.getManager().setName(name).setTopic(channelTopic(matches)).complete();
             }
             return;
         }
@@ -305,11 +315,23 @@ public class LiveGamesChannelService {
 
     static String channelName(List<Match> matches) {
         if (matches.isEmpty()) return "pickup-live-0";
+        return "pickup-live-" + String.join("-", gametypeCounts(matches).entrySet().stream()
+                .map(entry -> entry.getKey() + entry.getValue()).toList());
+    }
+
+    static String channelTopic(List<Match> matches) {
+        if (matches.isEmpty()) return "No live pickup matches right now. New matches appear here automatically.";
+        String modes = String.join(" • ", gametypeCounts(matches).entrySet().stream()
+                .map(entry -> entry.getKey().toUpperCase(Locale.ROOT) + " × " + entry.getValue()).toList());
+        return "Live now: " + modes + " | " + matches.size() + (matches.size() == 1 ? " match." : " matches.")
+                + " Read-only match previews and live scoreboard links.";
+    }
+
+    private static Map<String, Integer> gametypeCounts(List<Match> matches) {
         Map<String, Integer> counts = new LinkedHashMap<>();
         matches.stream().sorted(Comparator.comparingInt(Match::getID)).forEach(match ->
                 counts.merge(match.getGametype().getName().toLowerCase(Locale.ROOT), 1, Integer::sum));
-        return "pickup-live-" + String.join("-", counts.entrySet().stream()
-                .map(entry -> entry.getKey() + entry.getValue()).toList());
+        return counts;
     }
 
     static MessageEmbed preview(Match match, String guildId) {

@@ -110,6 +110,7 @@ class LiveGamesChannelServiceTest {
     void reusesOwnedChannelAndRecoversPreviewAfterRestart() throws Exception {
         Match match = match(42, "TS - ut4_casa — LIVE (3-2)");
         existingChannel();
+        when(budget.canRename("200")).thenReturn(true);
         Message previous = mock(Message.class);
         when(previous.getId()).thenReturn("400");
         when(previous.getAuthor()).thenReturn(user);
@@ -122,6 +123,9 @@ class LiveGamesChannelServiceTest {
         verify(guild, never()).createTextChannel(anyString());
         verify(channel, never()).sendMessageEmbeds(any(MessageEmbed.class));
         verify(channel, never()).editMessageEmbedsById(anyString(), any(MessageEmbed.class));
+        verify(manager, never()).setName(anyString());
+        verify(manager, never()).setTopic(anyString());
+        verify(manager, never()).complete();
     }
 
     @Test
@@ -134,7 +138,7 @@ class LiveGamesChannelServiceTest {
         TextChannel created = mock(TextChannel.class);
         when(create.complete()).thenReturn(created);
         service.reconcile(logic, guild, List.of(), 0);
-        verify(create).setTopic("urt-pickup:live-games:100:200");
+        verify(create).setTopic(LiveGamesChannelService.channelTopic(List.of()) + "\nurt-pickup:live-games:100:200");
         verify(create).complete();
         verify(channel, never()).delete();
         verify(channel, never()).getManager();
@@ -263,6 +267,79 @@ class LiveGamesChannelServiceTest {
         service.reconcile(logic, guild, List.of(ts, aim), 30_000);
 
         verify(manager).setName("pickup-live-ts1-aim1");
+        verify(manager).setTopic("Live now: TS × 1 • AIM × 1 | 2 matches. Read-only match previews and live scoreboard links.");
+        verify(manager, times(1)).complete();
+        verify(guild, never()).createTextChannel(anyString());
+        verify(channel, never()).delete();
+    }
+
+    @Test
+    void readableTopicUsesLiveCountsAndEmptyState() {
+        Match ts = match(42, "live");
+        Match aim = match(43, "live");
+        when(aim.getGametype().getName()).thenReturn("AIM");
+        assertEquals("Live now: TS × 1 • AIM × 1 | 2 matches. Read-only match previews and live scoreboard links.",
+                LiveGamesChannelService.channelTopic(List.of(ts, aim)));
+        assertEquals("Live now: TS × 1 | 1 match. Read-only match previews and live scoreboard links.",
+                LiveGamesChannelService.channelTopic(List.of(ts)));
+        assertEquals("No live pickup matches right now. New matches appear here automatically.",
+                LiveGamesChannelService.channelTopic(List.of()));
+    }
+
+    @Test
+    void savesLegacyChannelIdentityBeforeReplacingTopicInOneRequest() throws Exception {
+        existingChannel();
+        when(channel.getName()).thenReturn("live-games-1");
+        when(budget.canRename("200")).thenReturn(true);
+        Match match = match(42, "live");
+        service.reconcile(logic, guild, List.of(match), 0);
+        service.reconcile(logic, guild, List.of(match), 0);
+
+        var order = inOrder(budget, manager);
+        order.verify(budget).rememberLiveChannel("100", "200", "300");
+        order.verify(manager).setName("pickup-live-ts1");
+        order.verify(manager).setTopic("Live now: TS × 1 | 1 match. Read-only match previews and live scoreboard links.");
+        order.verify(manager).complete();
+        verify(manager, times(1)).complete();
+        verify(guild, never()).createTextChannel(anyString());
+    }
+
+    @Test
+    void identityCheckpointFailureLeavesLegacyMarkerIntact() throws Exception {
+        existingChannel();
+        doThrow(new java.io.IOException("Checkpoint unavailable")).when(budget)
+                .rememberLiveChannel("100", "200", "300");
+        assertThrows(java.io.IOException.class, () -> service.reconcile(logic, guild, List.of(), 0));
+        verify(manager, never()).setTopic(anyString());
+        verify(manager, never()).complete();
+        verify(guild, never()).createTextChannel(anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void failedIdentityCheckpointAfterCreationRecoversTemporaryMarkerWithoutDuplicate() throws Exception {
+        ChannelAction<TextChannel> create = mock(ChannelAction.class, RETURNS_SELF);
+        when(guild.createTextChannel("pickup-live-0")).thenReturn(create);
+        when(create.complete()).thenReturn(channel);
+        doThrow(new java.io.IOException("Checkpoint unavailable")).doNothing().when(budget)
+                .rememberLiveChannel("100", "200", "300");
+        assertThrows(java.io.IOException.class, () -> service.reconcile(logic, guild, List.of(), 0));
+
+        when(guild.getTextChannels()).thenReturn(List.of(channel));
+        when(channel.getTopic()).thenReturn(LiveGamesChannelService.channelTopic(List.of()) + "\nurt-pickup:live-games:100:200");
+        service.reconcile(logic, guild, List.of(), 0);
+        verify(guild, times(1)).createTextChannel(anyString());
+        verify(channel.getHistory().retrievePast(100)).complete();
+    }
+
+    @Test
+    void savedChannelIdRecoversOwnedChannelWithoutTopicMarker() throws Exception {
+        when(budget.liveChannelId("100", "200")).thenReturn("300");
+        when(channel.getTopic()).thenReturn("No live pickup matches right now. New matches appear here automatically.");
+        when(channel.getName()).thenReturn("pickup-live-0");
+        service.reconcile(logic, guild, List.of(), 0);
+        service.reconcile(logic, guild, List.of(), 0);
+        verify(budget).rememberLiveChannel("100", "200", "300");
         verify(guild, never()).createTextChannel(anyString());
         verify(channel, never()).delete();
     }

@@ -39,8 +39,43 @@ class DiscordRequestBudgetTest {
         assertFalse(restarted.tryAcquire());
         clock.advance(1);
         assertTrue(restarted.tryAcquire());
-        clock.advance(600_000);
+        clock.advance(295_749);
+        assertFalse(restarted.canRename("guild"));
+        clock.advance(1);
         assertTrue(restarted.canRename("guild"));
+    }
+
+    @Test
+    void fiveMinuteRenameSpacingStillHonorsLongerDiscordBackoff() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        budget.reserveRename("guild");
+        budget.recordResponse(429, "0", "600", "600");
+        clock.advance(300_000);
+        assertTrue(budget.canRename("guild"));
+        assertFalse(budget.tryAcquire());
+        clock.advance(301_000);
+        assertTrue(budget.tryAcquire());
+    }
+
+    @Test
+    void liveChannelIdentitySurvivesRestartAndIsScopedToBotAndGuild() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        budget.rememberLiveChannel("100", "200", "300");
+        DiscordRequestBudget restarted = new DiscordRequestBudget(directory, clock);
+        assertEquals("300", restarted.liveChannelId("100", "200"));
+        assertNull(restarted.liveChannelId("101", "200"));
+        assertNull(restarted.liveChannelId("100", "201"));
+    }
+
+    @Test
+    void failedIdentityCheckpointDoesNotLeaveAnUnpersistedOwnershipClaim() throws Exception {
+        DiscordRequestBudget budget = new DiscordRequestBudget(directory, clock);
+        Files.createDirectory(directory.resolve("state.properties.tmp"));
+        assertThrows(java.io.IOException.class, () -> budget.rememberLiveChannel("100", "200", "300"));
+        assertNull(budget.liveChannelId("100", "200"));
+        Files.delete(directory.resolve("state.properties.tmp"));
+        budget.rememberLiveChannel("100", "200", "300");
+        assertEquals("300", new DiscordRequestBudget(directory, clock).liveChannelId("100", "200"));
     }
 
     @Test

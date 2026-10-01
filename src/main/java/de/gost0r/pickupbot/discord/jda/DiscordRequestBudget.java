@@ -115,9 +115,29 @@ public class DiscordRequestBudget implements Interceptor {
         return clock.millis() >= value("rename_after_" + guildId);
     }
 
-    /** Save before submission so a restart cannot bypass Discord's tight channel rename bucket. */
+    public synchronized String liveChannelId(String botId, String guildId) {
+        return state.getProperty("live_channel_" + botId + "_" + guildId);
+    }
+
+    /** Checkpoint ownership before replacing the topic marker with a readable description. */
+    public synchronized void rememberLiveChannel(String botId, String guildId, String channelId) throws IOException {
+        String key = "live_channel_" + botId + "_" + guildId;
+        String previous = state.getProperty(key);
+        if (channelId.equals(previous)) return;
+        state.setProperty(key, channelId);
+        try {
+            saveState();
+        } catch (IOException e) {
+            if (previous == null) state.remove(key);
+            else state.setProperty(key, previous);
+            throw e;
+        }
+    }
+
+    /** Space renames five minutes apart; Discord response backoff still takes precedence. */
     public synchronized void reserveRename(String guildId) throws IOException {
-        put("rename_after_" + guildId, clock.millis() + 600_000);
+        // Save before submission so a restart cannot bypass the spacing policy.
+        put("rename_after_" + guildId, clock.millis() + 300_000);
         saveState();
     }
 
@@ -167,7 +187,7 @@ public class DiscordRequestBudget implements Interceptor {
 
     private void saveState() throws IOException {
         StringWriter writer = new StringWriter();
-        state.store(writer, "Discord counters and live-channel rename deadlines");
+        state.store(writer, "Discord counters, live-channel IDs and metadata update deadlines");
         atomicWrite(directory.resolve("state.properties"), writer.toString());
     }
 

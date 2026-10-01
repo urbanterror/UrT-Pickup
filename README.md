@@ -29,9 +29,11 @@ public live matches remain.
 
 - Previews refresh approximately every **30 seconds**, slowing down as match count
   or Discord traffic increases. Unchanged previews do not cause edits.
-- Channel names update at most once every **10 minutes**, because Discord applies
-  particularly restrictive limits to renames. The count in the name can lag; the
-  previews continue updating. Rename deadlines survive restarts.
+- Channel names and readable topics update together in one request at most once
+  every **5 minutes** under the bot's spacing policy. Discord's rate-limit
+  responses can delay updates further. No metadata update is sent when the target
+  name already matches, even if the topic differs. The count in
+  the name can lag; previews continue updating. Rename deadlines survive restarts.
 - The channel denies sending messages, creating/sending in threads, application
   commands and adding reactions to everyone except the bot. Conflicting role/member
   sending overrides are repaired. Discord administrators can bypass these denies.
@@ -39,8 +41,11 @@ public live matches remain.
   **Send Messages**, **Embed Links** and **Read Message History**. Missing permissions
   produce a log warning and, when possible, a warning in the configured ADMIN
   channel (at most hourly per guild).
-- Restarts rediscover owned channels by their topic marker and recover preview
-  messages from history. Keep the bot-managed topic intact.
+- Topics summarize the live gametypes and counts, or explain that no matches are
+  live. Restarts rediscover owned channels using IDs persisted in `state.properties`
+  and recover preview messages from history. Existing topic markers are migrated
+  automatically; new channels keep a temporary marker until ownership is saved
+  and the next name change removes it. Keep the state directory persistent.
 
 Set `DISCORD_LIVE_GAMES_ENABLED=false` to disable channel management (existing
 channels remain). `DISCORD_LIVE_STATE_DIRECTORY` defaults to `./data/discord-live`;

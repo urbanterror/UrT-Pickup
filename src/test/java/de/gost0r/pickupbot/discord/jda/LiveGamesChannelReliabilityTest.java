@@ -212,7 +212,7 @@ class LiveGamesChannelReliabilityTest {
         budget = new DiscordRequestBudget(directory, clock);
         service = new LiveGamesChannelService(jda, bot, budget, true, clock, worker);
         tick(); // recover both previews
-        advanceAndTick(renamedAt + 600_000 - clock.millis() - 1);
+        advanceAndTick(renamedAt + 300_000 - clock.millis() - 1);
         verify(guild.manager, never()).setName("pickup-live-ts2");
         verify(guild.send, times(2)).complete();
         advanceAndTick(1);
@@ -456,7 +456,17 @@ class LiveGamesChannelReliabilityTest {
             when(create.complete()).thenAnswer(ignored -> { exists = true; return channel; });
             when(channel.getId()).thenReturn(id + "0");
             when(channel.getName()).thenReturn("pickup-live-ts1");
-            when(channel.getTopic()).thenReturn("urt-pickup:live-games:100:" + id);
+            when(channel.getTopic()).thenReturn("Live now: TS × 1 | 1 match. Read-only match previews and live scoreboard links.");
+            try {
+                budget.rememberLiveChannel("100", id, id + "0");
+            } catch (java.io.IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            when(manager.setTopic(anyString())).thenAnswer(invocation -> {
+                String topic = invocation.getArgument(0);
+                when(channel.getTopic()).thenReturn(topic);
+                return manager;
+            });
             when(channel.getGuild()).thenReturn(guild);
             when(channel.getManager()).thenReturn(manager);
             List<PermissionOverride> overrides = List.of(
