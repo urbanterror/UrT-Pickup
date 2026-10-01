@@ -298,6 +298,8 @@ public class Config {
     public static final String pkup_aftermath_rank = ".player. was ranked .updown. to **.rank.**";
     public static final String pkup_aftermath_abandon_1 = "Match was abandoned due to **.reason.**.";
     public static final String pkup_aftermath_abandon_2 = ".players. .be. punished accordingly.";
+    public static final String pkup_aftermath_abandon_noshow_unpunished = ".players. did not join the server. No automatic ban applies to this game mode.";
+    public static final String pkup_aftermath_abandon_leave_unpunished = ".players. left the match. No automatic ban applies to this game mode.";
 
     public static final String pkup_config_list = "Gameconfig for .gametype.\n.configlist.";
 

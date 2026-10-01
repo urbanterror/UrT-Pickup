@@ -534,6 +534,11 @@ public class Match implements Runnable {
             String be = involvedPlayers.size() == 1 ? "was" : "were";
 
             msg = Config.pkup_aftermath_abandon_2;
+            if (gametype.getTeamSize() <= 2) {
+                msg = status == Status.NOSHOW
+                        ? Config.pkup_aftermath_abandon_noshow_unpunished
+                        : Config.pkup_aftermath_abandon_leave_unpunished;
+            }
             msg = msg.replace(".players.", playerlist.toString());
             msg = msg.replace(".be.", be);
             fullmsg += "\n" + msg;
