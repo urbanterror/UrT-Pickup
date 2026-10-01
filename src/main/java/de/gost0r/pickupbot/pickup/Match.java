@@ -18,6 +18,7 @@ public class Match implements Runnable {
     private Gametype gametype;
     private MatchState state;
     private int id;
+    private SeasonGameNumber seasonGameNumber;
 
     private Map<String, List<Player>> teamList;
     private Map<GameMap, Integer> mapVotes;
@@ -92,8 +93,17 @@ public class Match implements Runnable {
     public Match(int id, long startTime, GameMap map, int[] score, int[] elo,
                  Map<String, List<Player>> teamList, MatchState state, Gametype gametype, Server server,
                  Map<Player, MatchStats> playerStats, PickupLogic logic, PermissionService permissionService) {
+        this(id, startTime, map, score, elo, teamList, state, gametype, server,
+                playerStats, logic, permissionService, null);
+    }
+
+    public Match(int id, long startTime, GameMap map, int[] score, int[] elo,
+                 Map<String, List<Player>> teamList, MatchState state, Gametype gametype, Server server,
+                 Map<Player, MatchStats> playerStats, PickupLogic logic, PermissionService permissionService,
+                 SeasonGameNumber seasonGameNumber) {
         this();
         this.id = id;
+        this.seasonGameNumber = seasonGameNumber;
         this.startTime = startTime;
         this.serverReadyTime = startTime;
         this.map = map;
@@ -455,7 +465,7 @@ public class Match implements Runnable {
 
     private void sendAftermath() {
         StringBuilder fullmsg = new StringBuilder(Config.pkup_aftermath_head);
-        fullmsg = new StringBuilder(fullmsg.toString().replace(".gamenumber.", String.valueOf(id)).replace(".gametype.", gametype.getName()).replace(".map.", map.name));
+        fullmsg = new StringBuilder(insertMatchNumber(fullmsg.toString()).replace(".gametype.", gametype.getName()).replace(".map.", map.name));
         for (int i = 0; i < 2; ++i) {
             int opp = (i + 1) % 2;
             String teamname = (i == 0) ? "Red" : "Blue";
@@ -506,7 +516,7 @@ public class Match implements Runnable {
     private void sendAftermath(Status status, List<Player> involvedPlayers) {
         String fullmsg = Config.pkup_aftermath_head;
         fullmsg = fullmsg.replace(".gametype.", gametype.getName());
-        fullmsg = fullmsg.replace(".gamenumber.", String.valueOf(id));
+        fullmsg = insertMatchNumber(fullmsg);
         fullmsg = fullmsg.replace(".map.", map.name);
 
         String msg = Config.pkup_aftermath_abandon_1;
@@ -935,24 +945,8 @@ public class Match implements Runnable {
 
         // MESSAGE HYPE
 
-        String msg = Config.pkup_go_pub_head;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
-        msg = msg.replace(".gametype.", gametype.getName());
-        msg = msg.replace(".elo.", String.valueOf((elo[0] + elo[1]) / 2));
-        if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
-            msg = msg.replace(".region.", Country.getCountryFlag(server.country) + " ``" + server.city + "``");
-        } else if (server.region == Region.NAE || server.region == Region.NAW) {
-            msg = msg.replace(".region.", ":flag_us:");
-        } else if (server.region == Region.EU) {
-            msg = msg.replace(".region.", ":flag_eu:");
-        } else if (server.region == Region.OC) {
-            msg = msg.replace(".region.", ":flag_au:");
-        } else if (server.region == Region.SA) {
-            msg = msg.replace(".region.", ":flag_br:");
-        } else {
-            msg = msg.replace(".region.", server.region.name());
-        }
-        StringBuilder fullmsg = new StringBuilder(msg);
+        StringBuilder fullmsg = new StringBuilder(buildStartAnnouncementHead());
+        String msg;
 
         msg = Config.pkup_map_list;
         msg = msg.replace(".gametype.", gametype.getName());
@@ -1036,13 +1030,13 @@ public class Match implements Runnable {
         buttons.add(button);
 
         msg = Config.pkup_go_player;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
+        msg = insertMatchNumber(msg);
         msg = msg.replace(".server.", server.getAddress());
         msg = msg.replace(".password.", server.password);
         for (String team : teamList.keySet()) {
             for (Player player : teamList.get(team)) {
                 if (player.getEnforceAC()) {
-                    String acMsg = Config.pkup_go_player_ac.replace(".gamenumber.", String.valueOf(id));
+                    String acMsg = insertMatchNumber(Config.pkup_go_player_ac);
                     player.getDiscordUser().sendPrivateMessage(acMsg, null, buttons);
                     continue;
                 }
@@ -1054,7 +1048,7 @@ public class Match implements Runnable {
         serverReadyTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
+        msg = insertMatchNumber(msg);
         msg = msg.replace(".gametype.", gametype.getName());
         for (DiscordMessage announceMsg : pubAnnounceMsgs) {
             announceMsg.reply(msg, null, buttons);
@@ -1196,6 +1190,37 @@ public class Match implements Runnable {
         return id;
     }
 
+    void setSeasonGameNumber(SeasonGameNumber number) {
+        this.seasonGameNumber = number;
+    }
+
+    public SeasonGameNumber getSeasonGameNumber() {
+        return seasonGameNumber;
+    }
+
+    private String getSeasonGameSuffix() {
+        return seasonGameNumber == null ? "" : " · " + seasonGameNumber.label(gametype.getName());
+    }
+
+    String insertMatchNumber(String template) {
+        return template.replace(".gamenumber.", id + getSeasonGameSuffix());
+    }
+
+    String buildStartAnnouncementHead() {
+        String msg = insertMatchNumber(Config.pkup_go_pub_head).replace(".gametype.", gametype.getName());
+        msg = msg.replace(".elo.", String.valueOf((elo[0] + elo[1]) / 2));
+        if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
+            return msg.replace(".region.", Country.getCountryFlag(server.country) + " ``" + server.city + "``");
+        }
+        if (server.region == Region.NAE || server.region == Region.NAW) {
+            return msg.replace(".region.", ":flag_us:");
+        }
+        if (server.region == Region.EU) return msg.replace(".region.", ":flag_eu:");
+        if (server.region == Region.OC) return msg.replace(".region.", ":flag_au:");
+        if (server.region == Region.SA) return msg.replace(".region.", ":flag_br:");
+        return msg.replace(".region.", server.region.name());
+    }
+
     public void setLogic(PickupLogic logic) {
         this.logic = logic;
     }
@@ -1312,7 +1337,7 @@ public class Match implements Runnable {
         }
 
         String msg = Config.pkup_match_print_info;
-        msg = msg.replace(".gamenumber.", id == 0 ? String.valueOf(logic.db.getLastMatchID() + 1) : String.valueOf(id));
+        msg = id == 0 ? msg.replace(".gamenumber.", String.valueOf(logic.db.getLastMatchID() + 1)) : insertMatchNumber(msg);
         if (gametype.getPrivate()) {
             msg = msg.replace(".gametype.", ":lock:" + gametype.getName().toUpperCase());
         } else {
@@ -1340,9 +1365,9 @@ public class Match implements Runnable {
         }
 
         if (serverState == ServerState.LIVE && state == MatchState.Live && server != null) {
-            embed.setTitle(region_flag + " Match #" + id + " (" + server.getServerMonitor().getGameTime() + ")");
+            embed.setTitle(region_flag + " Match #" + id + getSeasonGameSuffix() + " (" + server.getServerMonitor().getGameTime() + ")");
         } else {
-            embed.setTitle(region_flag + " Match #" + id);
+            embed.setTitle(region_flag + " Match #" + id + getSeasonGameSuffix());
         }
 
         embed.setColor(7056881);

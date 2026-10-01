@@ -258,6 +258,8 @@ public class Database {
                     + "PRIMARY KEY (number) )";
             stmt.executeUpdate(sql);
 
+            migrateSeasonGameNumbers();
+
             sql = "CREATE TABLE IF NOT EXISTS bets (ID INTEGER PRIMARY KEY AUTOINCREMENT,"
                     + "player_userid TEXT,"
                     + "player_urtauth TEXT,"
@@ -336,6 +338,36 @@ public class Database {
 
         } catch (SQLException e) {
             log.warn("Exception: ", e);
+        }
+    }
+
+    private void migrateSeasonGameNumbers() throws SQLException {
+        boolean addSeason = !columnExists("match", "season_number");
+        boolean addGameNumber = !columnExists("match", "season_game_number");
+        if (!addSeason && !addGameNumber) return;
+
+        // Schema and historical numbering commit together so a failed migration can
+        // be retried. Later startups neither scan history nor renumber existing games.
+        c.setAutoCommit(false);
+        try (Statement stmt = c.createStatement()) {
+            if (addSeason) stmt.executeUpdate("ALTER TABLE match ADD COLUMN season_number INTEGER");
+            if (addGameNumber) stmt.executeUpdate("ALTER TABLE match ADD COLUMN season_game_number INTEGER");
+            stmt.executeUpdate("WITH seasons AS (SELECT m.ID, m.gametype, "
+                    + "(SELECT s.number FROM season s WHERE m.starttime >= s.startdate "
+                    + "AND m.starttime < s.enddate ORDER BY s.number DESC LIMIT 1) AS season_number FROM match m), "
+                    + "numbered AS (SELECT ID, season_number, "
+                    + "ROW_NUMBER() OVER (PARTITION BY season_number, gametype ORDER BY ID) AS game_number "
+                    + "FROM seasons WHERE season_number IS NOT NULL) "
+                    + "UPDATE match SET season_number=n.season_number, season_game_number=n.game_number "
+                    + "FROM numbered n WHERE match.ID=n.ID AND match.season_number IS NULL");
+            stmt.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_match_season_game_number "
+                    + "ON match (season_number, gametype, season_game_number)");
+            c.commit();
+        } catch (SQLException e) {
+            c.rollback();
+            throw e;
+        } finally {
+            c.setAutoCommit(true);
         }
     }
 
@@ -526,9 +558,12 @@ public class Database {
         throw new IllegalStateException("Unreachable match write retry state");
     }
 
+    private record CreatedMatch(int id, SeasonGameNumber number) { }
+
     public synchronized int createMatch(Match match) {
-        return writeMatch("create match", () -> {
+        CreatedMatch created = writeMatch("create match", () -> {
                 int id;
+                SeasonGameNumber number = null;
                 try (PreparedStatement insertMatch = matchWrites.prepareStatement(
                         "INSERT INTO match (state, gametype, server, starttime, map, elo_red, elo_blue) VALUES (?, ?, ?, ?, ?, ?, ?)");
                      PreparedStatement insertScore = matchWrites.prepareStatement("INSERT INTO score (kills, deaths) VALUES (0, 0)");
@@ -545,6 +580,27 @@ public class Database {
                     insertMatch.setInt(7, match.getEloBlue());
                     insertMatch.executeUpdate();
                     id = lastInsertId(matchWrites);
+
+                    try (PreparedStatement numbering = matchWrites.prepareStatement(
+                            "UPDATE match SET season_number=?, season_game_number=? WHERE ID=?");
+                         PreparedStatement next = matchWrites.prepareStatement(
+                                 "SELECT s.number, COALESCE((SELECT MAX(m.season_game_number) FROM match m "
+                                         + "WHERE m.season_number=s.number AND m.gametype=?), 0)+1 "
+                                         + "FROM season s WHERE ? >= s.startdate AND ? < s.enddate "
+                                         + "ORDER BY s.number DESC LIMIT 1")) {
+                        next.setString(1, match.getGametype().getName());
+                        next.setLong(2, match.getStartTime());
+                        next.setLong(3, match.getStartTime());
+                        try (ResultSet row = next.executeQuery()) {
+                            if (row.next()) {
+                                number = new SeasonGameNumber(row.getInt(1), row.getInt(2));
+                                numbering.setInt(1, number.season());
+                                numbering.setInt(2, number.gameNumber());
+                                numbering.setInt(3, id);
+                                numbering.executeUpdate();
+                            }
+                        }
+                    }
 
                     try (PreparedStatement pending = matchWrites.prepareStatement(
                             "INSERT INTO match_settlement (matchid, teamsize) VALUES (?, ?)")) {
@@ -571,8 +627,10 @@ public class Database {
                         insertStats.executeUpdate();
                     }
                 }
-                return id;
+                return new CreatedMatch(id, number);
         });
+        match.setSeasonGameNumber(created.number());
+        return created.id();
     }
 
     private static int lastInsertId(Connection connection) throws SQLException {
@@ -799,6 +857,7 @@ public class Database {
         try {
             // Single query with JOINs to fetch match + all player data in one round-trip
             String sql = "SELECT m.starttime, m.map, m.gametype, m.score_red, m.score_blue, m.elo_red, m.elo_blue, m.state, m.server,"
+                    + " m.season_number, m.season_game_number,"
                     + " pim.player_userid, pim.player_urtauth, pim.team,"
                     + " st.ip, st.status,"
                     + " s1.kills AS s1_kills, s1.deaths AS s1_deaths, s1.assists AS s1_assists, s1.caps AS s1_caps, s1.returns AS s1_returns, s1.fckills AS s1_fckills, s1.stopcaps AS s1_stopcaps, s1.protflag AS s1_protflag,"
@@ -827,6 +886,7 @@ public class Database {
             int matchScoreRed = 0, matchScoreBlue = 0;
             int matchEloRed = 0, matchEloBlue = 0;
             boolean matchFound = false;
+            SeasonGameNumber matchNumber = null;
 
             while (rs.next()) {
                 if (!matchFound) {
@@ -840,6 +900,9 @@ public class Database {
                     matchEloBlue = rs.getInt("elo_blue");
                     matchStateStr = rs.getString("state");
                     matchServer = rs.getInt("server");
+                    if (rs.getObject("season_number") != null) {
+                        matchNumber = new SeasonGameNumber(rs.getInt("season_number"), rs.getInt("season_game_number"));
+                    }
                 }
 
                 // Player data (may be null if LEFT JOIN found no players)
@@ -934,7 +997,8 @@ public class Database {
                         server,
                         stats,
                         logic,
-                        permissionService);
+                        permissionService,
+                        matchNumber);
                 if (state == MatchState.Live) {
                     try (PreparedStatement open = c.prepareStatement(
                             "SELECT player_urtauth, team, amount, odds FROM bets WHERE matchid=? AND open=1")) {
@@ -1004,6 +1068,7 @@ public class Database {
     public MatchSummary loadMatchSummary(int matchId) {
         try {
             String sql = "SELECT m.starttime, m.map, m.gametype, m.score_red, m.score_blue, m.state, m.server,"
+                    + " m.season_number, m.season_game_number,"
                     + " pim.player_urtauth, pim.team,"
                     + " p.country,"
                     + " (s1.kills + s2.kills) AS total_kills,"
@@ -1033,7 +1098,9 @@ public class Database {
                             rs.getInt("score_red"),
                             rs.getInt("score_blue"),
                             rs.getString("state"),
-                            rs.getInt("server")
+                            rs.getInt("server"),
+                            rs.getObject("season_number") == null ? null
+                                    : new SeasonGameNumber(rs.getInt("season_number"), rs.getInt("season_game_number"))
                     );
                 }
 

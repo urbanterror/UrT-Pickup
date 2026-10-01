@@ -17,10 +17,16 @@ public class MatchSummary {
     public final int scoreBlue;
     public final String state;
     public final int serverId;
+    public final SeasonGameNumber seasonGameNumber;
     public final List<PlayerLine> players;
 
     public MatchSummary(int id, long starttime, String map, String gametype,
                         int scoreRed, int scoreBlue, String state, int serverId) {
+        this(id, starttime, map, gametype, scoreRed, scoreBlue, state, serverId, null);
+    }
+
+    public MatchSummary(int id, long starttime, String map, String gametype,
+                        int scoreRed, int scoreBlue, String state, int serverId, SeasonGameNumber seasonGameNumber) {
         this.id = id;
         this.starttime = starttime;
         this.map = map;
@@ -29,6 +35,7 @@ public class MatchSummary {
         this.scoreBlue = scoreBlue;
         this.state = state;
         this.serverId = serverId;
+        this.seasonGameNumber = seasonGameNumber;
         this.players = new ArrayList<>();
     }
 

@@ -1721,7 +1721,8 @@ public class PickupLogic {
         if (server != null) {
             regionFlag = server.getRegionFlag(getDynamicServers() || (gametype != null && gametype.getTeamSize() == 0), true);
         }
-        embed.setTitle(regionFlag + " Match #" + summary.id);
+        embed.setTitle(regionFlag + " Match #" + summary.id
+                + (summary.seasonGameNumber == null ? "" : " · " + summary.seasonGameNumber.label(summary.gametype)));
         embed.setColor(7056881);
 
         if (map != null && gametype != null) {

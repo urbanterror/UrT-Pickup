@@ -289,7 +289,8 @@ class DatabaseContentionHypothesisTest {
         // Deliberately minimal test schema; never invoke production initTable/migrations.
         execute(connection, "PRAGMA journal_mode=WAL");
         execute(connection, "CREATE TABLE match (ID INTEGER PRIMARY KEY, state TEXT, gametype TEXT, server INTEGER, "
-                + "starttime INTEGER, map TEXT, elo_red INTEGER, elo_blue INTEGER)");
+                + "starttime INTEGER, map TEXT, elo_red INTEGER, elo_blue INTEGER, season_number INTEGER, season_game_number INTEGER)");
+        execute(connection, "CREATE TABLE season (number INTEGER PRIMARY KEY, startdate INTEGER, enddate INTEGER)");
         execute(connection, "CREATE TABLE match_settlement (matchid INTEGER PRIMARY KEY, settled INTEGER DEFAULT 0, teamsize INTEGER NOT NULL)");
         execute(connection, "CREATE TABLE score (ID INTEGER PRIMARY KEY, kills INTEGER, deaths INTEGER)");
         execute(connection, "CREATE TABLE player_in_match (ID INTEGER PRIMARY KEY, matchid INTEGER, "
