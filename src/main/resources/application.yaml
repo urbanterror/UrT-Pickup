@@ -3,9 +3,15 @@ app:
   discord:
     token: ${DISCORD_TOKEN}
     application-id: ${DISCORD_APPLICATION_ID}
+    live-games:
+      enabled: ${DISCORD_LIVE_GAMES_ENABLED:true}
+      state-directory: ${DISCORD_LIVE_STATE_DIRECTORY:./data/discord-live}
   ftw:
     url: ${FTW_URL}
     key: ${FTW_KEY}
+    connect-timeout: ${FTW_CONNECT_TIMEOUT:2s}
+    read-timeout: ${FTW_READ_TIMEOUT:5s}
+    rental-read-timeout: ${FTW_RENTAL_READ_TIMEOUT:120s}
 
 logging:
   level:

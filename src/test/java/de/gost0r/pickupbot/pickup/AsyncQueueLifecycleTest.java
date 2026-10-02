@@ -1,0 +1,1056 @@
+package de.gost0r.pickupbot.pickup;
+
+import de.gost0r.pickupbot.discord.DiscordInteraction;
+import de.gost0r.pickupbot.discord.DiscordEmbed;
+import de.gost0r.pickupbot.discord.DiscordChannel;
+import de.gost0r.pickupbot.discord.DiscordMessage;
+import de.gost0r.pickupbot.discord.DiscordService;
+import de.gost0r.pickupbot.discord.DiscordUser;
+import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.permission.PermissionService;
+import de.gost0r.pickupbot.permission.PickupRoleCache;
+import de.gost0r.pickupbot.pickup.server.Server;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Field;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Executor;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+class AsyncQueueLifecycleTest {
+    private final ManualExecutor queue = new ManualExecutor();
+    private final ManualExecutor io = new ManualExecutor();
+    private final ManualExecutor pickIo = new ManualExecutor();
+    private FtwglApi ftw;
+    private PickupLogic logic;
+    private Player player;
+    private Match match;
+    private Gametype gametype;
+    private Map<Gametype, Match> current;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        ftw = mock(FtwglApi.class);
+        PickupBot bot = new PickupBot("test", ftw, mock(DiscordService.class),
+                mock(PermissionService.class), mock(PickupRoleCache.class), Runnable::run, queue, io, pickIo);
+        logic = new PickupLogic(bot, ftw, mock(DiscordService.class),
+                mock(PermissionService.class), mock(PickupRoleCache.class));
+        gametype = new Gametype("TS", 5, true, false);
+        match = mock(Match.class);
+        when(match.getGametype()).thenReturn(gametype);
+        when(match.getMatchState()).thenReturn(MatchState.Signup);
+        current = new HashMap<>();
+        current.put(gametype, match);
+        set(logic, "curMatch", current);
+        set(logic, "ongoingMatches", new ArrayList<Match>());
+        set(logic, "activeTeams", new ArrayList<Team>());
+        set(logic, "teamsQueued", new HashMap<Team, Gametype>());
+        set(logic, "awaitingServer", new ArrayDeque<Match>());
+        set(logic, "serverList", new ArrayList<Server>());
+        set(logic, "mapList", new ArrayList<GameMap>());
+        set(logic, "channels", new HashMap<PickupChannelType, List<de.gost0r.pickupbot.discord.DiscordChannel>>());
+        set(logic, "dynamicServers", true);
+        logic.db = mock(Database.class);
+
+        DiscordUser user = mock(DiscordUser.class);
+        when(user.getId()).thenReturn("123");
+        player = mock(Player.class);
+        when(player.getDiscordUser()).thenReturn(user);
+        when(player.getUrtauth()).thenReturn("alpha");
+        when(player.getEnforceAC()).thenReturn(true);
+        when(ftw.checkIfPingStored(player)).thenReturn(true);
+        when(ftw.hasLauncherOn(player)).thenReturn(true);
+    }
+
+    @Test
+    void slowJoinDoesNotBlockOtherQueueWorkOrCaptainPick() {
+        List<PickupReply> replies = new ArrayList<>();
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        DiscordInteraction interaction = mock(DiscordInteraction.class);
+        queue.execute(() -> logic.cmdPick(interaction, player, "expired-draft", 1, 0));
+
+        queue.runNext();
+        verify(interaction).respondEphemeral("This pick is no longer available. Use the latest buttons.");
+        verifyNoInteractions(ftw);
+        verify(match, never()).addPlayer(any());
+
+        io.runNext();
+        queue.runNext();
+        verify(match).addPlayer(player);
+        assertEquals(1, replies.size());
+    }
+
+    @Test
+    void alreadyQueuedRepliesImmediatelyWithoutFtwValidation() {
+        when(match.isInMatch(player)).thenReturn(true);
+        List<PickupReply> replies = new ArrayList<>();
+
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+
+        assertEquals("You are already queued for: TS", replies.get(0).getMessage());
+        assertEquals(1, replies.size());
+        assertEquals(0, io.size());
+        verifyNoInteractions(ftw);
+    }
+
+    @Test
+    void alreadyQueuedModeDoesNotDelayJoiningAnotherMode() {
+        Gametype ctf = new Gametype("CTF", 5, true, false);
+        Match ctfMatch = mock(Match.class);
+        when(ctfMatch.getMatchState()).thenReturn(MatchState.Signup);
+        current.put(ctf, ctfMatch);
+        when(match.isInMatch(player)).thenReturn(true);
+        List<PickupReply> replies = new ArrayList<>();
+
+        logic.queueAddPlayer(player, List.of(gametype, ctf), false, replies::add);
+
+        assertEquals("You are already queued for: TS", replies.get(0).getMessage());
+        assertEquals(1, io.size());
+        verifyNoInteractions(ftw);
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+        verify(ctfMatch).addPlayer(player);
+        verify(ftw).checkIfPingStored(player);
+        verify(ftw).hasLauncherOn(player);
+        assertEquals(2, replies.size());
+    }
+
+    @Test
+    void removingWhenAlreadyOutOfQueueRepliesEveryTime() {
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        assertEquals("You are not added to any of those queues.",
+                logic.cmdRemovePlayer(player, List.of(gametype)).getMessage());
+        verifyNoInteractions(ftw);
+    }
+
+    @Test
+    void removingPendingJoinAcknowledgesAndStillCancelsIt() {
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+        assertEquals(Config.player_already_removed, logic.cmdRemovePlayer(player, null).getMessage());
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+    }
+
+    @Test
+    void removeOrResetWhileValidationRunsCannotReaddPlayer() {
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+        logic.cmdRemovePlayer(player, null);
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+        logic.cmdReset("cur", "TS");
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+    }
+
+    @Test
+    void joinValidatedDuringNormalMatchRolloverJoinsTheNewSignupQueue() {
+        List<PickupReply> replies = new ArrayList<>();
+        when(player.getDiscordUser().getMentionString()).thenReturn("alpha");
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        logic.matchStarted(match); // the old queue filled while validation was pending
+        Match nextSignup = current.get(gametype);
+
+        io.runNext();
+        queue.runNext();
+
+        verify(match, never()).addPlayer(any());
+        assertTrue(nextSignup.isInMatch(player));
+        assertEquals(1, replies.size());
+    }
+
+    @Test
+    void queueFillingDuringValidationCarriesReleasedPlayerIntoNextGame() throws Exception {
+        joinWhileAnotherPlayerTakesSlot(true);
+    }
+
+    @Test
+    void joinDuringValidationSucceedsWhenAnotherPlayerLeavesOneSlotAvailable() throws Exception {
+        joinWhileAnotherPlayerTakesSlot(false);
+    }
+
+    private void joinWhileAnotherPlayerTakesSlot(boolean fillsQueue) throws Exception {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        doNothing().when(queueLogic).warmStatsCommandCache(anyMap(), any(), anyLong());
+        when(player.getDiscordUser().getId()).thenReturn("762295010233155604");
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@762295010233155604>");
+        when(player.getUrtauth()).thenReturn("saphira666");
+        player.spree = new HashMap<>();
+        Player other = mock(Player.class);
+        DiscordUser otherUser = mock(DiscordUser.class);
+        when(otherUser.getId()).thenReturn("326886294313631745");
+        when(otherUser.getMentionString()).thenReturn("<@326886294313631745>");
+        when(other.getDiscordUser()).thenReturn(otherUser);
+        when(other.getUrtauth()).thenReturn("morphuscol");
+        when(ftw.checkIfPingStored(other)).thenReturn(true);
+        other.spree = new HashMap<>();
+
+        // She participated in the previous game, which completes through the real end path.
+        Match previous = spy(new Match(queueLogic, gametype, List.of(), mock(PermissionService.class)));
+        previous.addPlayer(player);
+        previous.addPlayer(other);
+        set(previous, "state", MatchState.Live);
+        set(previous, "server", mock(Server.class, RETURNS_DEEP_STUBS));
+        set(previous, "map", new GameMap("ut4_hostel_b4"));
+        set(previous, "score", new int[]{17, 18});
+        set(previous, "teamList", Map.of("red", List.of(player), "blue", List.of(other)));
+        doReturn(new DiscordEmbed()).when(previous).getMatchEmbed(false);
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(previous);
+        assertSame(previous, queueLogic.playerInActiveMatch(player));
+        assertSame(previous, queueLogic.playerInActiveMatch(other));
+
+        previous.end();
+
+        assertEquals(MatchState.Done, previous.getMatchState());
+        verify(queueLogic.db).saveMatch(previous);
+        verify(queueLogic.db).settleMatch(previous.getID());
+        assertFalse(queueLogic.isOngoingMatch(previous));
+        assertNull(queueLogic.playerInActiveMatch(player));
+        assertNull(queueLogic.playerInActiveMatch(other));
+        io.runNext(); // Finish the previous game's background stats refresh.
+
+        Match signup = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, signup);
+        for (int i = 0; i < (fillsQueue ? 9 : 8); i++) {
+            signup.addPlayer(mock(Player.class));
+        }
+        assertNull(queueLogic.playerInActiveMatch(player));
+        assertFalse(signup.isInMatch(player));
+        List<PickupReply> replies = new ArrayList<>();
+
+        queueLogic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        assertTrue(replies.isEmpty());
+        verifyNoInteractions(ftw);
+
+        // Another former participant's later request validates before Saphi's.
+        List<PickupReply> otherReplies = new ArrayList<>();
+        queueLogic.queueAddPlayer(other, List.of(gametype), false, otherReplies::add);
+        io.runLast();
+        queue.runNext();
+        assertTrue(signup.isInMatch(other));
+        assertEquals(List.of(PickupReply.NONE), otherReplies);
+        assertEquals(fillsQueue ? MatchState.AwaitingServer : MatchState.Signup, signup.getMatchState());
+        assertFalse(signup.isInMatch(player));
+
+        io.runNext();
+        queue.runNext();
+
+        verify(ftw).checkIfPingStored(player);
+        verify(ftw).hasLauncherOn(player);
+        assertNull(queueLogic.playerInActiveMatch(player), "No old match is blocking this join");
+        assertEquals(10, signup.getPlayerCount());
+        if (fillsQueue) {
+            assertFalse(signup.isInMatch(player));
+            assertTrue(replies.isEmpty(), "The validated join waits for the next signup queue");
+            queueLogic.matchStarted(signup);
+            Match nextSignup = current.get(gametype);
+            assertTrue(nextSignup.isInMatch(player));
+            assertEquals(1, nextSignup.getPlayerCount());
+            assertNull(queueLogic.playerInActiveMatch(player));
+        } else {
+            assertTrue(signup.isInMatch(player));
+        }
+        assertEquals(List.of(PickupReply.NONE), replies);
+    }
+
+    @Test
+    void eleventhValidatedPlayerQueuesForNextGameWhenFullMatchLaunches() {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        Match fullMatch = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, fullMatch);
+        List<Player> players = new ArrayList<>();
+        List<List<PickupReply>> replies = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            Player participant = mock(Player.class);
+            DiscordUser user = mock(DiscordUser.class);
+            when(user.getId()).thenReturn("player-" + i);
+            when(user.getMentionString()).thenReturn("<@player-" + i + ">");
+            when(participant.getDiscordUser()).thenReturn(user);
+            when(participant.getUrtauth()).thenReturn("auth-" + i);
+            when(ftw.checkIfPingStored(participant)).thenReturn(true);
+            players.add(participant);
+            replies.add(new ArrayList<>());
+            queueLogic.queueAddPlayer(participant, List.of(gametype), false, replies.get(i)::add);
+        }
+        for (int i = 0; i < 11; i++) {
+            io.runNext();
+            queue.runNext();
+        }
+        assertEquals(10, fullMatch.getPlayerCount());
+        assertEquals(MatchState.AwaitingServer, fullMatch.getMatchState());
+        assertFalse(fullMatch.isInMatch(players.get(10)));
+        assertTrue(replies.get(10).isEmpty());
+
+        fullMatch.launch(mock(Server.class));
+
+        Match nextSignup = current.get(gametype);
+        assertEquals(MatchState.Signup, nextSignup.getMatchState());
+        assertEquals(1, nextSignup.getPlayerCount());
+        assertTrue(nextSignup.isInMatch(players.get(10)));
+        assertNull(queueLogic.playerInActiveMatch(players.get(10)));
+        for (int i = 0; i < 10; i++) {
+            assertSame(fullMatch, queueLogic.playerInActiveMatch(players.get(i)));
+            assertFalse(nextSignup.isInMatch(players.get(i)));
+        }
+        replies.forEach(reply -> assertEquals(List.of(PickupReply.NONE), reply));
+    }
+
+    @Test
+    void removingDeferredJoinPreventsJoiningAfterRollover() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+        Match fullMatch = current.get(gametype);
+
+        queueLogic.cmdRemovePlayer(player, List.of(gametype));
+        fullMatch.launch(mock(Server.class));
+
+        assertFalse(current.get(gametype).isInMatch(player));
+        assertTrue(replies.isEmpty());
+    }
+
+    @Test
+    void resettingModeCancelsDeferredJoin() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+
+        queueLogic.cmdReset("cur", "TS");
+
+        assertEquals(MatchState.Signup, current.get(gametype).getMatchState());
+        assertFalse(current.get(gametype).isInMatch(player));
+        assertFalse(queue.hasTasks());
+        assertTrue(replies.isEmpty());
+    }
+
+    @Test
+    void deferredJoinTakesReopenedSlotWhenFullQueueLosesPlayer() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+        Match fullMatch = current.get(gametype);
+        Player leaving = fullMatch.getPlayerList().get(0);
+
+        fullMatch.removePlayer(leaving, false);
+        assertEquals(MatchState.Signup, fullMatch.getMatchState());
+        queue.runNext();
+
+        assertTrue(fullMatch.isInMatch(player));
+        assertFalse(fullMatch.isInMatch(leaving));
+        assertEquals(10, fullMatch.getPlayerCount());
+        assertEquals(List.of(PickupReply.NONE), replies);
+    }
+
+    private PickupLogic fullQueueWithDeferredJoin(List<PickupReply> replies) {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        Match fullMatch = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, fullMatch);
+        for (int i = 0; i < 10; i++) fullMatch.addPlayer(mock(Player.class));
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        queueLogic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        io.runNext();
+        queue.runNext();
+        assertTrue(replies.isEmpty());
+        assertFalse(fullMatch.isInMatch(player));
+        return queueLogic;
+    }
+
+    @Test
+    void removingOneModeDoesNotCancelPendingJoinToAnotherMode() {
+        Gametype ctf = new Gametype("CTF", 5, true, false);
+        Match ctfMatch = mock(Match.class);
+        when(ctfMatch.getMatchState()).thenReturn(MatchState.Signup);
+        current.put(ctf, ctfMatch);
+        logic.queueAddPlayer(player, List.of(gametype, ctf), false, reply -> {});
+        logic.cmdRemovePlayer(player, List.of(gametype));
+
+        io.runNext();
+        queue.runNext();
+
+        verify(match, never()).addPlayer(any());
+        verify(ctfMatch).addPlayer(player);
+    }
+
+    @Test
+    void resettingOneModeDoesNotCancelPendingJoinToAnotherMode() {
+        Gametype ctf = new Gametype("CTF", 5, true, false);
+        Match ctfMatch = mock(Match.class);
+        when(ctfMatch.getMatchState()).thenReturn(MatchState.Signup);
+        current.put(ctf, ctfMatch);
+        logic.queueAddPlayer(player, List.of(gametype, ctf), false, reply -> {});
+        logic.cmdReset("TS");
+
+        io.runNext();
+        queue.runNext();
+
+        verify(match, never()).addPlayer(any());
+        verify(ctfMatch).addPlayer(player);
+    }
+
+    @Test
+    void overlappingJoinsCanBothCompleteAndValidateOncePerRequest() {
+        Gametype ctf = new Gametype("CTF", 5, true, false);
+        Match second = mock(Match.class);
+        when(second.getMatchState()).thenReturn(MatchState.Signup);
+        current.put(ctf, second);
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+        logic.queueAddPlayer(player, List.of(gametype, ctf), false, reply -> {});
+        io.runNext();
+        queue.runNext();
+        verify(match).addPlayer(player);
+        io.runNext();
+        queue.runNext();
+        verify(match, times(2)).addPlayer(player);
+        verify(second).addPlayer(player);
+        verify(ftw, times(2)).checkIfPingStored(player);
+        verify(ftw, times(2)).hasLauncherOn(player);
+    }
+
+    @Test
+    void lockAppliedWhileValidationRunsRejectsTheJoin() {
+        List<PickupReply> replies = new ArrayList<>();
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        logic.cmdLock();
+
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+        assertEquals(Config.pkup_lock, replies.get(0).getMessage());
+    }
+
+    @Test
+    void failedPingCheckDoesNotAddPlayerAndSendsPingInstructions() {
+        when(ftw.checkIfPingStored(player)).thenReturn(false);
+        when(ftw.requestPingUrl(player)).thenReturn("https://example.test/ping");
+        List<PickupReply> replies = new ArrayList<>();
+        logic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).addPlayer(any());
+        verify(player.getDiscordUser()).sendPrivateMessage(contains("https://example.test/ping"));
+        assertEquals(Config.ftw_error_noping, replies.get(0).getMessage());
+    }
+
+    @Test
+    void pickPromptUsesSeparateExecutorFromPendingJoin() throws Exception {
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        logic.queueAddPlayer(player, List.of(gametype), false, reply -> {});
+
+        draft.checkTeams();
+
+        assertEquals(1, io.size());
+        assertEquals(1, pickIo.size());
+        assertFalse(queue.hasTasks());
+    }
+
+    @Test
+    void afkCheckSkipsDraftUntilCaptainsAreSelected() throws Exception {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of());
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(match);
+
+        logic.afkCheck();
+
+        verify(match, never()).reset();
+    }
+
+    @Test
+    void rentalRunsOutsideQueueAndOnlyOneRequestLaunches() {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player));
+        when(match.getPlayerCount()).thenReturn(1);
+        Server server = mock(Server.class);
+        server.country = "US";
+        server.city = "New York";
+        when(ftw.spawnDynamicServer(any())).thenReturn(server);
+
+        logic.requestServer(match);
+        logic.requestServer(match);
+        assertEquals(1, io.size());
+        verify(ftw, never()).spawnDynamicServer(any());
+        queue.execute(() -> {});
+        queue.runNext();
+        io.runNext();
+        queue.runNext();
+        verify(ftw).spawnDynamicServer(List.of(player));
+        verify(match).launch(server);
+    }
+
+    @Test
+    void cancelledOrReplacedMatchDiscardsLateRental() {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player));
+        when(match.getPlayerCount()).thenReturn(1);
+        Server server = mock(Server.class);
+        when(ftw.spawnDynamicServer(any())).thenReturn(server);
+        logic.requestServer(match);
+        io.runNext();
+        logic.cancelRequestServer(match);
+        queue.runNext();
+        verify(match, never()).launch(any());
+        verify(server).free();
+
+        logic.requestServer(match);
+        current.put(gametype, mock(Match.class));
+        io.runNext();
+        queue.runNext();
+        verify(match, never()).launch(any());
+        verify(server, times(2)).free();
+    }
+
+    @Test
+    void cancelledRentalStillRunningCannotClearRefilledMatchRequestWhenACompletesFirst() {
+        overlappingRentals(false);
+    }
+
+    @Test
+    void cancelledRentalStillRunningCannotLaunchAfterRefilledMatchRequestCompletesFirst() {
+        overlappingRentals(true);
+    }
+
+    private void overlappingRentals(boolean replacementCompletesFirst) {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player)); // same roster after leaving and rejoining
+        when(match.getPlayerCount()).thenReturn(1);
+        Server stale = mock(Server.class);
+        Server replacement = mock(Server.class);
+        replacement.country = "US";
+        replacement.city = "New York";
+        when(ftw.spawnDynamicServer(List.of(player))).thenReturn(stale, replacement);
+
+        logic.requestServer(match);
+        io.runNext(); // A has rented, but its queue callback has not run
+        logic.cancelRequestServer(match);
+        logic.requestServer(match);
+        logic.requestServer(match); // duplicate request must not launch a third rental
+        assertEquals(1, io.size());
+        io.runNext(); // both A and B callbacks are queued
+
+        if (replacementCompletesFirst) {
+            queue.runLast();
+            queue.runNext();
+        } else {
+            queue.runNext();
+            logic.requestServer(match); // A must not have cleared B's pending flag
+            assertEquals(0, io.size());
+            queue.runNext();
+        }
+
+        verify(ftw, times(2)).spawnDynamicServer(List.of(player));
+        verify(match, times(1)).launch(any());
+        verify(match).launch(replacement);
+        verify(stale).free();
+        verify(replacement, never()).free();
+        assertFalse(queue.hasTasks());
+        assertFalse(io.hasTasks());
+    }
+
+    @Test
+    void cancellationBeforeRentalStartsSkipsTheObsoleteSpawn() {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player));
+        when(match.getPlayerCount()).thenReturn(1);
+        Server replacement = mock(Server.class);
+        replacement.country = "US";
+        replacement.city = "New York";
+        when(ftw.spawnDynamicServer(List.of(player))).thenReturn(replacement);
+
+        logic.requestServer(match);
+        logic.cancelRequestServer(match);
+        logic.requestServer(match);
+        io.runNext(); // cancelled A is still queued on the IO executor
+        verify(ftw, never()).spawnDynamicServer(any());
+        io.runNext();
+        queue.runNext();
+
+        verify(ftw).spawnDynamicServer(List.of(player));
+        verify(match).launch(replacement);
+        assertFalse(queue.hasTasks());
+    }
+
+    @Test
+    void sameSizedRosterChangeDiscardsTheOldRental() {
+        Player replacementPlayer = mock(Player.class);
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player), List.of(replacementPlayer));
+        when(match.getPlayerCount()).thenReturn(1);
+        Server stale = mock(Server.class);
+        when(ftw.spawnDynamicServer(any())).thenReturn(stale);
+
+        logic.requestServer(match);
+        io.runNext();
+        queue.runNext();
+
+        verify(match, never()).launch(any());
+        verify(stale).free();
+    }
+
+    @Test
+    void changedPlayerListDiscardsRental() {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player), List.of());
+        when(match.getPlayerCount()).thenReturn(0);
+        Server server = mock(Server.class);
+        when(ftw.spawnDynamicServer(any())).thenReturn(server);
+        logic.requestServer(match);
+        io.runNext();
+        queue.runNext();
+        assertFalse(queue.hasTasks());
+        verify(match, never()).launch(any());
+        verify(server).free();
+    }
+
+    @Test
+    void failedRentalResetsTheFullQueueWithoutLaunching() {
+        when(match.getMatchState()).thenReturn(MatchState.AwaitingServer);
+        when(match.getPlayerList()).thenReturn(List.of(player));
+        when(match.getPlayerCount()).thenReturn(1);
+        when(ftw.spawnDynamicServer(any())).thenReturn(null);
+        logic.requestServer(match);
+
+        io.runNext();
+        queue.runNext();
+        verify(match).reset();
+        verify(match, never()).launch(any());
+    }
+
+    @Test
+    void latePickPromptIsRemovedRatherThanReplacingCurrentButtons() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage old = mock(DiscordMessage.class);
+        DiscordMessage currentPrompt = mock(DiscordMessage.class);
+        doReturn(List.of(old), List.of(currentPrompt)).when(bot).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        when(player.getRank()).thenReturn(PlayerRank.SILVER);
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(draft);
+
+        draft.checkTeams();
+        draft.checkTeams();
+        pickIo.runNext();
+        pickIo.runNext();
+        queue.runNext();
+        queue.runNext();
+
+        verify(old).delete();
+        verify(currentPrompt, never()).delete();
+        assertEquals(List.of(currentPrompt), get(draft, "pickMessages"));
+    }
+
+    @Test
+    void captainCannotTimeOutBeforeButtonsAreDelivered() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage prompt = mock(DiscordMessage.class);
+        doReturn(List.of(prompt)).when(bot).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        when(player.getRank()).thenReturn(PlayerRank.SILVER);
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        set(draft, "timeLastPick", System.currentTimeMillis() - 10 * 60_000L);
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(draft);
+        when(match.getPlayerList()).thenReturn(List.of());
+
+        draft.checkTeams();
+        logic.afkCheck();
+        assertTrue(ongoing.contains(draft), "The captain has not received a prompt yet");
+        assertTrue(draft.getTimeLastPick() > System.currentTimeMillis() - 60_000L);
+
+        pickIo.runNext();
+        queue.runNext();
+        assertEquals(false, get(draft, "pickPromptPending"));
+        assertTrue(draft.getTimeLastPick() > System.currentTimeMillis() - 60_000L);
+    }
+
+    @Test
+    void failedPickPromptCancelsDraftWithoutBanningCaptain() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        doThrow(new IllegalStateException("Discord unavailable")).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        when(player.getRank()).thenReturn(PlayerRank.SILVER);
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(draft);
+
+        draft.checkTeams();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            assertTrue(ongoing.contains(draft));
+            pickIo.runNext();
+            queue.runNext();
+        }
+
+        assertFalse(ongoing.contains(draft));
+        assertEquals(MatchState.Signup, draft.getMatchState());
+        assertEquals(0, pickIo.size());
+        verify(bot, times(3)).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        verify(logic.db, never()).createBan(any());
+    }
+
+    @Test
+    void failedAndEmptyPickPromptsRetryUntilDelivered() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage prompt = mock(DiscordMessage.class);
+        doThrow(new IllegalStateException("Discord unavailable"))
+                .doReturn(List.of()).doReturn(List.of(prompt)).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+        set(draft, "timeLastPick", System.currentTimeMillis() - 10 * 60_000L);
+        when(match.getPlayerList()).thenReturn(List.of());
+        draft.checkTeams();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            pickIo.runNext();
+            queue.runNext();
+            logic.afkCheck();
+            assertEquals(true, get(draft, "pickPromptPending"));
+            assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+            assertTrue(logic.isOngoingMatch(draft));
+        }
+        pickIo.runNext();
+        queue.runNext();
+
+        assertEquals(List.of(prompt), get(draft, "pickMessages"));
+        assertEquals(false, get(draft, "pickPromptPending"));
+        assertEquals(1, get(draft, "pickPromptGeneration"));
+        assertTrue(draft.getTimeLastPick() > System.currentTimeMillis() - 60_000L);
+        assertEquals(0, pickIo.size());
+        verify(logic.db, never()).createBan(any());
+    }
+
+    @Test
+    void failedStalePickPromptDoesNotRetry() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        doThrow(new IllegalStateException("Discord unavailable")).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+        draft.checkTeams();
+        pickIo.runNext();
+        draft.reset();
+        queue.runNext();
+
+        assertEquals(0, pickIo.size());
+        assertEquals(MatchState.Signup, draft.getMatchState());
+    }
+
+    @Test
+    void failedOlderPromptDoesNotRetryOrReplaceNewerPrompt() throws Exception {
+        PickupBot bot = spy(logic.bot);
+        logic.bot = bot;
+        DiscordMessage currentPrompt = mock(DiscordMessage.class);
+        doThrow(new IllegalStateException("Discord unavailable"))
+                .doReturn(List.of(currentPrompt)).when(bot)
+                .sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+        Match draft = pendingDraft();
+
+        draft.checkTeams();
+        pickIo.runNext(); // The failed send's callback is still waiting on the queue.
+        draft.checkTeams();
+        queue.runNext();
+        assertEquals(1, pickIo.size(), "Only the newer prompt should be scheduled");
+        pickIo.runNext();
+        queue.runNext();
+
+        assertEquals(0, pickIo.size());
+        assertEquals(List.of(currentPrompt), get(draft, "pickMessages"));
+        assertEquals(false, get(draft, "pickPromptPending"));
+        assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+        verify(currentPrompt, never()).delete();
+        verify(bot, times(2)).sendMsgToEdit(anyList(), anyString(), isNull(), anyList());
+    }
+
+    private Match pendingDraft() throws Exception {
+        when(player.getRank()).thenReturn(PlayerRank.SILVER);
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "captains", new Player[]{player, player});
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(draft);
+        return draft;
+    }
+
+    @Test
+    void ratingFailureRetriesWithoutCreatingDuplicateThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"))
+                .thenReturn(Map.of());
+        Match draft = spy(pendingDraft());
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        doNothing().when(draft).sortPlayers(anyMap(), any());
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+        ongoing.add(draft);
+
+        draft.launch(mock(Server.class));
+        io.runNext();
+        queue.runNext();
+        assertEquals(MatchState.AwaitingServer, draft.getMatchState());
+        io.runNext();
+        queue.runNext();
+
+        verify(channel).createThread(any(), eq(true));
+        verify(thread, never()).delete();
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), logic.currentSeason);
+        verify(draft).sortPlayers(anyMap(), any());
+        assertEquals(List.of(thread), draft.threadChannels);
+    }
+
+    @Test
+    void repeatedSetupFailureCancelsAndDeletesPartialThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"));
+        Match draft = pendingDraft();
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+        draft.launch(mock(Server.class));
+        for (int attempt = 0; attempt < 3; attempt++) {
+            io.runNext();
+            queue.runNext();
+        }
+
+        verify(channel).createThread(any(), eq(true));
+        verify(thread).delete();
+        verify(ftw, times(3)).getPlayerRatings(anyList(), any());
+        assertEquals(MatchState.Signup, draft.getMatchState());
+        assertFalse(logic.isOngoingMatch(draft));
+        assertEquals(0, io.size());
+    }
+
+    @Test
+    void threadCreationFailureRetriesOnlyMissingThreads() throws Exception {
+        DiscordChannel first = mock(DiscordChannel.class);
+        DiscordChannel second = mock(DiscordChannel.class);
+        DiscordChannel firstThread = mock(DiscordChannel.class);
+        DiscordChannel secondThread = mock(DiscordChannel.class);
+        when(first.createThread(any(), eq(true))).thenReturn(firstThread);
+        when(second.createThread(any(), eq(true))).thenThrow(new IllegalStateException("Discord unavailable"))
+                .thenReturn(secondThread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(first, second)));
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
+        Match draft = spy(pendingDraft());
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        doNothing().when(draft).sortPlayers(anyMap(), any());
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.clear();
+
+        draft.launch(mock(Server.class));
+        io.runNext();
+        queue.runNext();
+        io.runNext();
+        queue.runNext();
+
+        verify(first).createThread(any(), eq(true));
+        verify(second, times(2)).createThread(any(), eq(true));
+        verify(draft).sortPlayers(anyMap(), any());
+        assertEquals(List.of(firstThread, secondThread), draft.threadChannels);
+    }
+
+    @Test
+    void resetAfterSetupFailurePreventsRetryAndDeletesPartialThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"));
+        Match draft = pendingDraft();
+        draft.launch(mock(Server.class));
+        io.runNext();
+        draft.reset();
+        queue.runNext();
+
+        verify(thread).delete();
+        verify(ftw).getPlayerRatings(anyList(), any());
+        assertEquals(0, io.size());
+        assertEquals(MatchState.Signup, draft.getMatchState());
+    }
+
+    @Test
+    void threadCreationAndRatingLookupHappenAfterQueueLaunchReturns() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        PickupLogic draftLogic = mock(PickupLogic.class);
+        set(draftLogic, "ftwglApi", ftw);
+        draftLogic.bot = logic.bot;
+        draftLogic.db = mock(Database.class);
+        when(draftLogic.getChannelByType(PickupChannelType.PUBLIC)).thenReturn(List.of(channel));
+        when(draftLogic.getDynamicServers()).thenReturn(true);
+        when(draftLogic.isOngoingMatch(any())).thenReturn(true);
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
+        Match draft = spy(new Match(draftLogic, gametype, List.of(), mock(PermissionService.class)));
+        set(draft, "state", MatchState.AwaitingServer);
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        doNothing().when(draft).sortPlayers(anyMap(), any());
+        Server server = mock(Server.class);
+
+        draft.launch(server);
+        verifyNoInteractions(channel);
+        verify(ftw, never()).getPlayerRatings(anyList(), any());
+        assertEquals(1, io.size());
+
+        io.runNext();
+        verify(channel).createThread(any(), eq(true));
+        verify(ftw).getPlayerRatings(List.of(player), draftLogic.currentSeason);
+        verify(draft, never()).sortPlayers(anyMap(), any());
+        queue.runNext();
+        verify(draft).sortPlayers(anyMap(), any());
+    }
+
+    @Test
+    void resetDuringThreadCreationDiscardsCreatedThreads() throws Exception {
+        DiscordChannel channel = mock(DiscordChannel.class);
+        DiscordChannel thread = mock(DiscordChannel.class);
+        when(channel.createThread(any(), eq(true))).thenReturn(thread);
+        PickupLogic draftLogic = mock(PickupLogic.class);
+        set(draftLogic, "ftwglApi", ftw);
+        draftLogic.bot = logic.bot;
+        draftLogic.db = mock(Database.class);
+        when(draftLogic.getChannelByType(PickupChannelType.PUBLIC)).thenReturn(List.of(channel));
+        when(draftLogic.isOngoingMatch(any())).thenReturn(false);
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
+        Match draft = spy(new Match(draftLogic, gametype, List.of(), mock(PermissionService.class)));
+        set(draft, "state", MatchState.AwaitingServer);
+        doReturn(List.of(player)).when(draft).getPlayerList();
+        Server server = mock(Server.class);
+
+        draft.launch(server);
+        draft.reset();
+        io.runNext();
+        queue.runNext();
+
+        verify(thread).delete();
+        verify(draft, never()).sortPlayers(anyMap(), any());
+    }
+
+    @Test
+    void staleOrOutOfRangePickCannotBeApplied() throws Exception {
+        Match draft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(draft, "state", MatchState.AwaitingServer);
+        set(draft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(draft, "pickPromptGeneration", 2);
+        String draftToken = (String) get(draft, "draftToken");
+
+        assertTrue(draft.canPick(draftToken, 2, 0));
+        assertFalse(draft.canPick("another-draft", 2, 0));
+        assertFalse(draft.canPick(draftToken, 1, 0));
+        assertFalse(draft.canPick(draftToken, 2, 1));
+        assertFalse(draft.canPick(draftToken, 2, -1));
+        set(draft, "state", MatchState.Signup);
+        assertFalse(draft.canPick(draftToken, 2, 0));
+    }
+
+    @Test
+    void oldDraftButtonCannotPickInAnotherMatchWithTheSameCaptain() throws Exception {
+        Match previous = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        Match currentDraft = new Match(logic, gametype, List.of(), mock(PermissionService.class));
+        set(currentDraft, "state", MatchState.AwaitingServer);
+        set(currentDraft, "sortedPlayers", new ArrayList<>(List.of(player)));
+        set(currentDraft, "captains", new Player[]{player, player});
+        set(currentDraft, "pickPromptGeneration", 2);
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(currentDraft);
+        DiscordInteraction interaction = mock(DiscordInteraction.class);
+
+        logic.cmdPick(interaction, player, (String) get(previous, "draftToken"), 2, 0);
+
+        verify(interaction).respondEphemeral("This pick is no longer available. Use the latest buttons.");
+        assertTrue(currentDraft.canPick((String) get(currentDraft, "draftToken"), 2, 0));
+    }
+
+    private static void set(Object object, String name, Object value) throws Exception {
+        Field field = object.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(object, value);
+    }
+
+    private static Object get(Object object, String name) throws Exception {
+        Field field = object.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(object);
+    }
+
+    private static class ManualExecutor implements Executor {
+        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+
+        @Override
+        public void execute(Runnable task) {
+            tasks.add(task);
+        }
+
+        void runNext() {
+            assertTrue(hasTasks(), "Expected a queued task");
+            tasks.remove().run();
+        }
+
+        void runLast() {
+            assertTrue(hasTasks(), "Expected a queued task");
+            tasks.removeLast().run();
+        }
+
+        boolean hasTasks() {
+            return !tasks.isEmpty();
+        }
+
+        int size() {
+            return tasks.size();
+        }
+    }
+}

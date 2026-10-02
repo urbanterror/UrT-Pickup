@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.server.Server;
@@ -8,13 +9,17 @@ import de.gost0r.pickupbot.pickup.server.ServerMonitor.ServerState;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
+import java.util.concurrent.RejectedExecutionException;
 
 @Slf4j
 public class Match implements Runnable {
 
+    private static final int DRAFT_MAX_ATTEMPTS = 3;
+
     private Gametype gametype;
     private MatchState state;
     private int id;
+    private SeasonGameNumber seasonGameNumber;
 
     private Map<String, List<Player>> teamList;
     private Map<GameMap, Integer> mapVotes;
@@ -44,6 +49,10 @@ public class Match implements Runnable {
     private long timeLastPick;
     private boolean pickReminderSent;
     private List<DiscordMessage> pickMessages = new ArrayList<DiscordMessage>();
+    private int pickPromptGeneration;
+    private boolean pickPromptPending = true;
+    private int draftSetupGeneration;
+    private final String draftToken = UUID.randomUUID().toString();
 
     private PickupLogic logic;
     private PermissionService permissionService;
@@ -85,8 +94,17 @@ public class Match implements Runnable {
     public Match(int id, long startTime, GameMap map, int[] score, int[] elo,
                  Map<String, List<Player>> teamList, MatchState state, Gametype gametype, Server server,
                  Map<Player, MatchStats> playerStats, PickupLogic logic, PermissionService permissionService) {
+        this(id, startTime, map, score, elo, teamList, state, gametype, server,
+                playerStats, logic, permissionService, null);
+    }
+
+    public Match(int id, long startTime, GameMap map, int[] score, int[] elo,
+                 Map<String, List<Player>> teamList, MatchState state, Gametype gametype, Server server,
+                 Map<Player, MatchStats> playerStats, PickupLogic logic, PermissionService permissionService,
+                 SeasonGameNumber seasonGameNumber) {
         this();
         this.id = id;
+        this.seasonGameNumber = seasonGameNumber;
         this.startTime = startTime;
         this.serverReadyTime = startTime;
         this.map = map;
@@ -113,12 +131,14 @@ public class Match implements Runnable {
     }
 
     public void reset() {
+        if (pendingCompletion != null) return;
         if (state == MatchState.Signup) {
             resetSignup();
         } else if (state == MatchState.AwaitingServer) {
             resetAwaitingServer();
         } else if (state == MatchState.Live) {
             resetLive();
+            return; // abort refunds bets after the match state has been persisted
         }
         refundBets();
     }
@@ -141,6 +161,8 @@ public class Match implements Runnable {
     }
 
     private void resetAwaitingServer() {
+        draftSetupGeneration++;
+        pickPromptGeneration++;
         logic.cancelRequestServer(this);
         resetSignup();
         state = MatchState.Signup;
@@ -191,6 +213,7 @@ public class Match implements Runnable {
                     player.voteMap(gametype, null);
                 }
             }
+            logic.recordMapVote(player, gametype);
             mapVotes.put(map, mapVotes.get(map) + number);
             player.voteMap(gametype, map);
             String msg = Config.pkup_map;
@@ -242,7 +265,8 @@ public class Match implements Runnable {
         return PickupReply.NONE;
     }
 
-    public void checkSurrender() {
+    public synchronized void checkSurrender() {
+        if (pendingCompletion != null) return;
         for (int i = 0; i < 2; ++i) {
             if (surrender[i] <= 0) {
                 state = MatchState.Surrender;
@@ -253,10 +277,11 @@ public class Match implements Runnable {
                 } catch (Exception e) {
                     log.warn("Exception: ", e);
                 }
-                cleanUp();
-                logic.db.saveMatch(this);
-                sendAftermath();
-                logic.matchRemove(this);
+                persistResult(() -> {
+                    cleanUp();
+                    sendAftermath();
+                    announceRefunds();
+                });
             }
         }
     }
@@ -282,68 +307,141 @@ public class Match implements Runnable {
         }
     }
 
-    public void abort() {
+    public synchronized void abort() {
+        if (pendingCompletion != null) return;
         state = MatchState.Abort;
-        cleanUp();
-        logic.db.saveMatch(this);
+        persistResult(() -> {
+            cleanUp();
 
 //		for (DiscordChannel threadChannel : threadChannels){
 //			threadChannel.archive();
 //		}
 
-        if (gtvServer != null) {
-            gtvServer.free();
-            gtvServer.sendRcon("gtv_disconnect 1");
-        }
-        refundBets();
+            if (gtvServer != null) {
+                gtvServer.free();
+                gtvServer.sendRcon("gtv_disconnect 1");
+            }
+            announceRefunds();
+        });
     }
 
-    public void abandon(Status status, List<Player> involvedPlayers) {
+    public synchronized void abandon(Status status, List<Player> involvedPlayers) {
+        if (pendingCompletion != null) return;
         state = MatchState.Abandon;
-        cleanUp();
-        logic.db.saveMatch(this);
+        persistResult(() -> {
+            cleanUp();
 
 //		for (DiscordChannel threadChannel : threadChannels){
 //			threadChannel.archive();
 //		}
 
-        if (gtvServer != null) {
-            gtvServer.free();
-            gtvServer.sendRcon("gtv_disconnect 1");
-        }
+            if (gtvServer != null) {
+                gtvServer.free();
+                gtvServer.sendRcon("gtv_disconnect 1");
+            }
 
-        sendAftermath(status, involvedPlayers);
-        logic.matchRemove(this);
-        refundBets();
+            sendAftermath(status, involvedPlayers);
+            announceRefunds();
+        });
     }
 
-    public void end() {
+    public synchronized void end() {
+        if (pendingCompletion != null) return;
         state = MatchState.Done;
         if (server.getServerMonitor().noMercyIssued) {
             state = MatchState.Mercy;
             payWin = 75;
         }
-        cleanUp();
+        persistResult(() -> {
+            cleanUp();
+            sendAftermath();
+            if (gametype.getTeamSize() > 0) {
+                announceSettlement();
+            }
+            if (gtvServer != null) {
+                gtvServer.free();
+                gtvServer.sendRcon("gtv_disconnect 1");
+            }
+        });
+    }
 
-        sendAftermath();
+    private volatile Runnable pendingCompletion;
+    private boolean persistenceAlertSent;
+
+    public boolean isPersistencePending() {
+        return pendingCompletion != null;
+    }
+
+    private void persistResult(Runnable completion) {
+        pendingCompletion = completion;
+        retryPendingSave();
+    }
+
+    public synchronized void retryPendingSave() {
+        Runnable completion = pendingCompletion;
+        if (completion == null) return;
+        try {
+            logic.db.saveMatch(this);
+            logic.db.settleMatch(id);
+            for (Player p : playerStats.keySet()) p.refreshWallet();
+            for (Bet bet : bets) bet.player.refreshWallet();
+            if ((state == MatchState.Done || state == MatchState.Mercy) && score[0] != score[1]) {
+                for (Player p : playerStats.keySet()) logic.db.loadSpree(p);
+            }
+        } catch (MatchPersistenceException e) {
+            log.error("Match {} result/settlement could not be saved; retaining it and retrying on the next tick", id, e);
+            if (!persistenceAlertSent) {
+                persistenceAlertSent = true;
+                try {
+                    logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.ADMIN),
+                            "ERROR: Match #" + id + " result/settlement could not be saved. Retrying automatically; check the database before restarting.");
+                } catch (RuntimeException alertFailure) {
+                    log.warn("Unable to alert admins about unsaved match {}", id, alertFailure);
+                }
+            }
+            return;
+        }
+        pendingCompletion = null;
+        // Release players before cleanup or notifications, which may block or fail.
         logic.matchRemove(this);
-
-        if (gametype.getTeamSize() > 0) {
-            updateSpree();
-            payPlayers();
+        if (state == MatchState.Done || state == MatchState.Mercy || state == MatchState.Surrender) {
+            // Saved results must become visible even if cleanup or notifications fail.
+            Player.invalidateSeasonStats();
+            schedulePlayerStatsRefresh();
         }
-
-        logic.db.saveMatch(this);
-        // Update player stats
-        for (Player p : playerStats.keySet()) {
-            p.stats = logic.db.getPlayerStats(p, logic.currentSeason);
-            p.setRank(logic.db.getRankForPlayer(p));
+        if (persistenceAlertSent) {
+            log.info("Match {} result saved on retry", id);
+            try {
+                logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.ADMIN),
+                        "Match #" + id + " result has been saved successfully.");
+            } catch (RuntimeException alertFailure) {
+                log.warn("Unable to notify admins about recovered match {}", id, alertFailure);
+            }
         }
+        completion.run();
+    }
 
-        if (gtvServer != null) {
-            gtvServer.free();
-            gtvServer.sendRcon("gtv_disconnect 1");
+    private void schedulePlayerStatsRefresh() {
+        List<Player> participants = List.copyOf(playerStats.keySet());
+        try {
+            logic.bot.pickupIoExecutor.execute(() -> refreshPlayerStatsAfterResult(participants));
+        } catch (RejectedExecutionException e) {
+            // Requests can still refresh the invalidated caches on demand.
+            log.warn("Unable to schedule post-match stats refresh", e);
         }
+    }
+
+    private void refreshPlayerStatsAfterResult(List<Player> participants) {
+        long revision = Player.currentSeasonStatsRevision();
+        Season season = logic.currentSeason;
+        Map<Player, Integer> ranks = new LinkedHashMap<>();
+        for (Player p : participants) {
+            p.refreshCurrentSeasonStats(logic.db, season);
+            int rank = logic.db.getRankForPlayer(p);
+            p.setRank(rank);
+            ranks.put(p, rank);
+        }
+        logic.warmStatsCommandCache(ranks, season, revision);
     }
 
     public void cancelStart() {
@@ -366,7 +464,7 @@ public class Match implements Runnable {
 
     private void sendAftermath() {
         StringBuilder fullmsg = new StringBuilder(Config.pkup_aftermath_head);
-        fullmsg = new StringBuilder(fullmsg.toString().replace(".gamenumber.", String.valueOf(id)).replace(".gametype.", gametype.getName()).replace(".map.", map.name));
+        fullmsg = new StringBuilder(insertMatchNumber(fullmsg.toString()).replace(".gametype.", gametype.getName()).replace(".map.", map.name));
         for (int i = 0; i < 2; ++i) {
             int opp = (i + 1) % 2;
             String teamname = (i == 0) ? "Red" : "Blue";
@@ -417,7 +515,7 @@ public class Match implements Runnable {
     private void sendAftermath(Status status, List<Player> involvedPlayers) {
         String fullmsg = Config.pkup_aftermath_head;
         fullmsg = fullmsg.replace(".gametype.", gametype.getName());
-        fullmsg = fullmsg.replace(".gamenumber.", String.valueOf(id));
+        fullmsg = insertMatchNumber(fullmsg);
         fullmsg = fullmsg.replace(".map.", map.name);
 
         String msg = Config.pkup_aftermath_abandon_1;
@@ -435,6 +533,11 @@ public class Match implements Runnable {
             String be = involvedPlayers.size() == 1 ? "was" : "were";
 
             msg = Config.pkup_aftermath_abandon_2;
+            if (gametype.getTeamSize() <= 2) {
+                msg = status == Status.NOSHOW
+                        ? Config.pkup_aftermath_abandon_noshow_unpunished
+                        : Config.pkup_aftermath_abandon_leave_unpunished;
+            }
             msg = msg.replace(".players.", playerlist.toString());
             msg = msg.replace(".be.", be);
             fullmsg += "\n" + msg;
@@ -467,19 +570,59 @@ public class Match implements Runnable {
 
             String threadTitle = Config.pkup_go_pub_threadtitle;
             threadTitle = threadTitle.replace(".ID.", String.valueOf(logic.db.getLastMatchID() + 1));
-
-            for (DiscordChannel publicChannel : logic.getChannelByType(PickupChannelType.PUBLIC)) {
-                threadChannels.add(publicChannel.createThread(threadTitle, true));
-            }
+            String draftThreadTitle = threadTitle;
 
             logic.matchStarted(this);
-            timeLastPick = System.currentTimeMillis();
-            sortPlayers();
+            List<Player> players = List.copyOf(getPlayerList());
+            int generation = ++draftSetupGeneration;
+            startDraft(generation, players, List.copyOf(logic.getChannelByType(PickupChannelType.PUBLIC)),
+                    draftThreadTitle, new ArrayList<>(), 1);
 
         }
     }
 
-    public void sortPlayers() {
+    private void startDraft(int generation, List<Player> players, List<DiscordChannel> destinations,
+                            String threadTitle, List<DiscordChannel> threads, int attempt) {
+        logic.bot.pickupIoExecutor.execute(() -> {
+            Map<Player, PlayerRating> ratings = Map.of();
+            String compareUrl = null;
+            boolean success = false;
+            try {
+                // Retain threads already created so a retry cannot create duplicate lobbies.
+                for (int i = threads.size(); i < destinations.size(); i++) {
+                    threads.add(Objects.requireNonNull(destinations.get(i).createThread(threadTitle, true)));
+                }
+                ratings = logic.ftwglApi.getPlayerRatings(players, logic.currentSeason);
+                compareUrl = logic.ftwglApi.getComparePageUrl(players);
+                success = true;
+            } catch (Exception e) {
+                log.warn("Unable to start match draft (attempt {}/{})", attempt, DRAFT_MAX_ATTEMPTS, e);
+            }
+            Map<Player, PlayerRating> loadedRatings = ratings;
+            String loadedCompareUrl = compareUrl;
+            boolean ready = success;
+            logic.bot.queueExecutor.execute(() -> {
+                if (generation != draftSetupGeneration || state != MatchState.AwaitingServer || !logic.isOngoingMatch(this)) {
+                    threads.forEach(DiscordChannel::delete);
+                    return;
+                }
+                if (!ready) {
+                    if (attempt < DRAFT_MAX_ATTEMPTS) {
+                        startDraft(generation, players, destinations, threadTitle, threads, attempt + 1);
+                    } else {
+                        threads.forEach(DiscordChannel::delete);
+                        reset();
+                        logic.matchRemove(this);
+                    }
+                    return;
+                }
+                threadChannels.addAll(threads);
+                sortPlayers(loadedRatings, loadedCompareUrl);
+            });
+        });
+    }
+
+    public void sortPlayers(Map<Player, PlayerRating> lobbyRatings, String compareUrl) {
         // Sort players by elo
         List<Player> playerList = new ArrayList<Player>(playerStats.keySet());
 
@@ -497,8 +640,8 @@ public class Match implements Runnable {
             return;
         }
 
-        // Fetch FTWGL ratings for all players to use in captain selection
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(playerList);
+        // Keep both ranges for display; captain selection uses the higher FTW rating.
+        Map<Player, Float> playerRatings = captainRatings(lobbyRatings);
         boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
         if (!useFtwOnly) playerRatings.clear();
 
@@ -536,7 +679,10 @@ public class Match implements Runnable {
             } else {
                 captainAnnouncement += "\n**Server:** " + server.getRegionFlag(false, false) + "``" + server.region.name() + "``";
             }
-            logic.bot.sendMsg(threadChannels, captainAnnouncement, getLobbyEmbed());
+            String announcement = captainAnnouncement;
+            DiscordEmbed lobby = getLobbyEmbed(List.copyOf(sortedPlayers), lobbyRatings, compareUrl);
+            List<DiscordChannel> destinations = List.copyOf(threadChannels);
+            logic.bot.pickupIoExecutor.execute(() -> logic.bot.sendMsg(destinations, announcement, lobby));
 
             String captainDm = Config.pkup_go_captains;
             captains[0].getDiscordUser().sendPrivateMessage(captainDm);
@@ -597,39 +743,89 @@ public class Match implements Runnable {
 
     public void checkTeams() {
         if (sortedPlayers.isEmpty() && state == MatchState.AwaitingServer) {
+            pickPromptGeneration++;
             state = MatchState.Live;
             new Thread(this).start(); // do important changes that affect possibly other matches/servers/playerlists outside the thread!
         } else {
-            List<DiscordComponent> buttons = new ArrayList<DiscordComponent>();
-            int choiceNumber = 10;
-            if (sortedPlayers.size() < choiceNumber) {
-                choiceNumber = sortedPlayers.size();
-            }
-            for (int i = 0; i < choiceNumber; i++) {
-                DiscordButton button = new DiscordButton(DiscordButtonStyle.PURPLE);
-                button.setCustomId(Config.INT_PICK + "_" + i);
-                button.setLabel(sortedPlayers.get(i).getUrtauth() + " (" + sortedPlayers.get(i).getElo() + ")");
-                button.setEmoji(sortedPlayers.get(i).getRank().getEmoji());
+            int generation = ++pickPromptGeneration;
+            pickPromptPending = true;
+            List<Player> choices = List.copyOf(sortedPlayers);
+            List<DiscordChannel> destinations = List.copyOf(threadChannels);
+            Player captain = captains[captainTurn];
+            logic.bot.pickIoExecutor.execute(() -> sendPickPrompt(generation, choices, destinations, captain, 1));
+        }
+    }
+
+    private List<DiscordMessage> createPickPrompt(int generation, List<Player> choices,
+                                                  List<DiscordChannel> destinations, Player captain) {
+        List<DiscordComponent> buttons = new ArrayList<>();
+        int choiceNumber = Math.min(10, choices.size());
+        for (int i = 0; i < choiceNumber; i++) {
+            DiscordButton button = new DiscordButton(DiscordButtonStyle.PURPLE);
+            button.setCustomId(Config.INT_PICK + "_" + draftToken + "_" + generation + "_" + i);
+            button.setLabel(choices.get(i).getUrtauth() + " (" + choices.get(i).getElo() + ")");
+            button.setEmoji(choices.get(i).getRank().getEmoji());
+            buttons.add(button);
+        }
+
+        // Include new players beyond the first ten as additional choices.
+        for (int i = choiceNumber; i < choices.size(); i++) {
+            if (logic.db.getNumberOfGames(choices.get(i)) < 30) {
+                DiscordButton button = new DiscordButton(DiscordButtonStyle.GREY);
+                button.setCustomId(Config.INT_PICK + "_" + draftToken + "_" + generation + "_" + i);
+                button.setLabel(choices.get(i).getUrtauth());
+                button.setEmoji(new DiscordEmoji(null, "\u2753"));
                 buttons.add(button);
             }
+        }
 
-            // Include in the choices players that played less than 10 games to allow for new player skill uncertainty
-            if (choiceNumber < sortedPlayers.size()) {
-                for (int i = choiceNumber; i < sortedPlayers.size(); i++) {
-                    int matchPlayed = logic.db.getNumberOfGames(sortedPlayers.get(i));
-                    if (matchPlayed < 30) {
-                        DiscordButton button = new DiscordButton(DiscordButtonStyle.GREY);
-                        button.setCustomId(Config.INT_PICK + "_" + i);
-                        button.setLabel(sortedPlayers.get(i).getUrtauth());
-                        button.setEmoji(new DiscordEmoji(null, "\u2753"));
-                        buttons.add(button);
-                    }
+        String prompt = Config.pkup_go_pub_pick.replace(".captain.", captain.getDiscordUser().getMentionString());
+        return logic.bot.sendMsgToEdit(destinations, prompt, null, buttons);
+    }
+
+    private void sendPickPrompt(int generation, List<Player> choices, List<DiscordChannel> destinations,
+                                Player captain, int attempt) {
+        List<DiscordMessage> sent;
+        try {
+            sent = createPickPrompt(generation, choices, destinations, captain);
+        } catch (Exception e) {
+            log.warn("Unable to send pick prompt (attempt {}/{})", attempt, DRAFT_MAX_ATTEMPTS, e);
+            logic.bot.queueExecutor.execute(() -> retryPickPrompt(generation, choices, destinations, captain, attempt));
+            return;
+        }
+        logic.bot.queueExecutor.execute(() -> {
+            if (generation == pickPromptGeneration && state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+                if (sent.isEmpty()) {
+                    retryPickPrompt(generation, choices, destinations, captain, attempt);
+                } else {
+                    pickMessages = sent;
+                    timeLastPick = System.currentTimeMillis();
+                    pickReminderSent = false;
+                    pickPromptPending = false;
                 }
+            } else {
+                sent.forEach(DiscordMessage::delete);
             }
+        });
+    }
 
-            String pickPromptMsg = Config.pkup_go_pub_pick;
-            pickPromptMsg = pickPromptMsg.replace(".captain.", captains[captainTurn].getDiscordUser().getMentionString());
-            pickMessages = logic.bot.sendMsgToEdit(threadChannels, pickPromptMsg, null, buttons);
+    private void retryPickPrompt(int generation, List<Player> choices, List<DiscordChannel> destinations,
+                                 Player captain, int attempt) {
+        if (generation == pickPromptGeneration && state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+            if (attempt < DRAFT_MAX_ATTEMPTS) {
+                logic.bot.pickIoExecutor.execute(() -> sendPickPrompt(generation, choices, destinations, captain, attempt + 1));
+            } else {
+                failPickPrompt(generation);
+            }
+        }
+    }
+
+    private void failPickPrompt(int generation) {
+        if (generation == pickPromptGeneration && state == MatchState.AwaitingServer && logic.isOngoingMatch(this)) {
+            reset();
+            logic.matchRemove(this);
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC),
+                    "Draft canceled: unable to send pick buttons.");
         }
     }
 
@@ -638,6 +834,15 @@ public class Match implements Runnable {
             return false;
         }
         return captains[captainTurn].getUrtauth().equals(player.getUrtauth());
+    }
+
+    public boolean hasDraftToken(String token) {
+        return draftToken.equals(token);
+    }
+
+    public boolean canPick(String token, int generation, int pick) {
+        return hasDraftToken(token) && state == MatchState.AwaitingServer && generation == pickPromptGeneration
+                && pick >= 0 && pick < sortedPlayers.size();
     }
 
     public Player getCaptainsTurn() {
@@ -680,7 +885,8 @@ public class Match implements Runnable {
     }
 
     public long getTimeLastPick() {
-        return timeLastPick;
+        // No captain can be timed out before their current buttons are available.
+        return pickPromptPending ? System.currentTimeMillis() : timeLastPick;
     }
 
     public boolean getPickReminderSent() {
@@ -726,29 +932,24 @@ public class Match implements Runnable {
         log.info("Team Red: {} {}", elo[0], Arrays.toString(teamList.get("red").toArray()));
         log.info("Team Blue: {} {}", elo[1], Arrays.toString(teamList.get("blue").toArray()));
 
-        id = logic.db.createMatch(this);
+        try {
+            id = logic.db.createMatch(this);
+        } catch (MatchPersistenceException e) {
+            log.error("Unable to create match; cancelling game start", e);
+            if (gtvServer != null) {
+                gtvServer.free();
+            }
+            cancelStart();
+            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC),
+                    "Unable to start the match because its database record could not be saved. Please requeue.");
+            return;
+        }
         server.matchid = id;
 
         // MESSAGE HYPE
 
-        String msg = Config.pkup_go_pub_head;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
-        msg = msg.replace(".gametype.", gametype.getName());
-        msg = msg.replace(".elo.", String.valueOf((elo[0] + elo[1]) / 2));
-        if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
-            msg = msg.replace(".region.", Country.getCountryFlag(server.country) + " ``" + server.city + "``");
-        } else if (server.region == Region.NAE || server.region == Region.NAW) {
-            msg = msg.replace(".region.", ":flag_us:");
-        } else if (server.region == Region.EU) {
-            msg = msg.replace(".region.", ":flag_eu:");
-        } else if (server.region == Region.OC) {
-            msg = msg.replace(".region.", ":flag_au:");
-        } else if (server.region == Region.SA) {
-            msg = msg.replace(".region.", ":flag_br:");
-        } else {
-            msg = msg.replace(".region.", server.region.name());
-        }
-        StringBuilder fullmsg = new StringBuilder(msg);
+        StringBuilder fullmsg = new StringBuilder(buildStartAnnouncementHead());
+        String msg;
 
         msg = Config.pkup_map_list;
         msg = msg.replace(".gametype.", gametype.getName());
@@ -832,13 +1033,13 @@ public class Match implements Runnable {
         buttons.add(button);
 
         msg = Config.pkup_go_player;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
+        msg = insertMatchNumber(msg);
         msg = msg.replace(".server.", server.getAddress());
         msg = msg.replace(".password.", server.password);
         for (String team : teamList.keySet()) {
             for (Player player : teamList.get(team)) {
                 if (player.getEnforceAC()) {
-                    String acMsg = Config.pkup_go_player_ac.replace(".gamenumber.", String.valueOf(id));
+                    String acMsg = insertMatchNumber(Config.pkup_go_player_ac);
                     player.getDiscordUser().sendPrivateMessage(acMsg, null, buttons);
                     continue;
                 }
@@ -850,7 +1051,7 @@ public class Match implements Runnable {
         serverReadyTime = System.currentTimeMillis();
 
         msg = Config.pkup_go_pub_sent;
-        msg = msg.replace(".gamenumber.", String.valueOf(id));
+        msg = insertMatchNumber(msg);
         msg = msg.replace(".gametype.", gametype.getName());
         for (DiscordMessage announceMsg : pubAnnounceMsgs) {
             announceMsg.reply(msg, null, buttons);
@@ -992,6 +1193,37 @@ public class Match implements Runnable {
         return id;
     }
 
+    void setSeasonGameNumber(SeasonGameNumber number) {
+        this.seasonGameNumber = number;
+    }
+
+    public SeasonGameNumber getSeasonGameNumber() {
+        return seasonGameNumber;
+    }
+
+    private String getSeasonGameSuffix() {
+        return seasonGameNumber == null ? "" : " · " + seasonGameNumber.label();
+    }
+
+    String insertMatchNumber(String template) {
+        return template.replace(".gamenumber.", id + getSeasonGameSuffix());
+    }
+
+    String buildStartAnnouncementHead() {
+        String msg = insertMatchNumber(Config.pkup_go_pub_head).replace(".gametype.", gametype.getName());
+        msg = msg.replace(".elo.", String.valueOf((elo[0] + elo[1]) / 2));
+        if (logic.getDynamicServers() || gametype.getTeamSize() == 0) {
+            return msg.replace(".region.", Country.getCountryFlag(server.country) + " ``" + server.city + "``");
+        }
+        if (server.region == Region.NAE || server.region == Region.NAW) {
+            return msg.replace(".region.", ":flag_us:");
+        }
+        if (server.region == Region.EU) return msg.replace(".region.", ":flag_eu:");
+        if (server.region == Region.OC) return msg.replace(".region.", ":flag_au:");
+        if (server.region == Region.SA) return msg.replace(".region.", ":flag_br:");
+        return msg.replace(".region.", server.region.name());
+    }
+
     public void setLogic(PickupLogic logic) {
         this.logic = logic;
     }
@@ -1108,7 +1340,7 @@ public class Match implements Runnable {
         }
 
         String msg = Config.pkup_match_print_info;
-        msg = msg.replace(".gamenumber.", id == 0 ? String.valueOf(logic.db.getLastMatchID() + 1) : String.valueOf(id));
+        msg = id == 0 ? msg.replace(".gamenumber.", String.valueOf(logic.db.getLastMatchID() + 1)) : insertMatchNumber(msg);
         if (gametype.getPrivate()) {
             msg = msg.replace(".gametype.", ":lock:" + gametype.getName().toUpperCase());
         } else {
@@ -1136,14 +1368,14 @@ public class Match implements Runnable {
         }
 
         if (serverState == ServerState.LIVE && state == MatchState.Live && server != null) {
-            embed.setTitle(region_flag + " Match #" + id + " (" + server.getServerMonitor().getGameTime() + ")");
+            embed.setTitle(region_flag + " Match #" + id + getSeasonGameSuffix() + " (" + server.getServerMonitor().getGameTime() + ")");
         } else {
-            embed.setTitle(region_flag + " Match #" + id);
+            embed.setTitle(region_flag + " Match #" + id + getSeasonGameSuffix());
         }
 
         embed.setColor(7056881);
 
-        String mapName = map != null ? "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")" : null;
+        String mapName = map != null ? map.name + " (" + map.getDiscordDownloadLink() + ")" : null;
         if (gametype.getPrivate()) {
             embed.setDescription(":lock: " + mapName);
         } else {
@@ -1317,33 +1549,6 @@ public class Match implements Runnable {
         return squadList.size() > 0;
     }
 
-    public void updateSpree() {
-        Gametype gt = gametype;
-        if (gametype.getName().equals("PROMOD")) {
-            gt = logic.getGametypeByString("TS");
-        }
-        String winningTeam = "";
-        if (score[0] > score[1]) {
-            winningTeam = "red";
-        } else if (score[1] > score[0]) {
-            winningTeam = "blue";
-        }
-
-        // If game result was corrupted and created a draw
-        if (winningTeam.equals("")) {
-            return;
-        }
-
-        for (Player redP : teamList.get("red")) {
-            redP.saveSpree(gt, winningTeam.equals("red"));
-            sendSpreeMsg(redP);
-        }
-        for (Player blueP : teamList.get("blue")) {
-            blueP.saveSpree(gt, winningTeam.equals("blue"));
-            sendSpreeMsg(blueP);
-        }
-    }
-
     public void sendSpreeMsg(Player p) {
         Gametype gt = gametype;
         if (gametype.getName().equals("PROMOD")) {
@@ -1364,51 +1569,29 @@ public class Match implements Runnable {
         }
     }
 
-    public void payPlayers() {
-
-        String winningTeam = "";
-        int redPay = payLose;
-        int bluePay = payLose;
-        if (score[0] > score[1]) {
-            winningTeam = "red";
-            redPay = payWin;
-        } else if (score[1] > score[0]) {
-            winningTeam = "blue";
-            bluePay = payWin;
-        }
-
-        // If game result was corrupted and created a draw
-        if (winningTeam.equals("")) {
-            refundBets();
+    private void announceSettlement() {
+        if (score[0] == score[1]) {
+            announceRefunds();
             return;
         }
-
-        for (Player redP : teamList.get("red")) {
-            redP.addCoins(redPay);
-            redP.saveWallet();
-        }
-        for (Player blueP : teamList.get("blue")) {
-            blueP.addCoins(bluePay);
-            blueP.saveWallet();
-        }
-
-        String betMsg = "";
+        String winner = score[0] > score[1] ? "red" : "blue";
+        for (Player p : teamList.get("red")) sendSpreeMsg(p);
+        for (Player p : teamList.get("blue")) sendSpreeMsg(p);
+        StringBuilder messages = new StringBuilder();
         for (Bet bet : bets) {
-            bet.enterResult(bet.color.equals(winningTeam));
-            if (bet.won) {
-                int wonAmount = Math.round(bet.amount * bet.odds);
-                DiscordEmoji emoji = Bet.getCoinEmoji(wonAmount);
-                String msg = Config.bets_won;
-                msg = msg.replace(".player.", bet.player.getDiscordUser().getMentionString());
-                msg = msg.replace(".amount.", String.format("%,d", wonAmount));
-                msg = msg.replace(".emojiname.", emoji.name());
-                msg = msg.replace(".emojiid.", emoji.id());
-                betMsg = betMsg + msg + '\n';
-            }
+            if (!bet.color.equals(winner)) continue;
+            long amount = Math.round((double) bet.amount * bet.odds);
+            DiscordEmoji emoji = Bet.getCoinEmoji(amount);
+            messages.append(Config.bets_won.replace(".player.", bet.player.getDiscordUser().getMentionString())
+                    .replace(".amount.", String.format("%,d", amount))
+                    .replace(".emojiname.", emoji.name()).replace(".emojiid.", emoji.id())).append('\n');
         }
-        if (!betMsg.equals("")) {
-            logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), betMsg);
-        }
+        if (!messages.isEmpty()) logic.bot.sendMsg(logic.getChannelByType(PickupChannelType.PUBLIC), messages.toString());
+        bets.clear();
+    }
+
+    private void announceRefunds() {
+        for (Bet bet : bets) bet.announceRefund(this);
         bets.clear();
     }
 
@@ -1430,7 +1613,7 @@ public class Match implements Runnable {
         List<Player> allPlayers = new ArrayList<>();
         allPlayers.addAll(teamList.get("red"));
         allPlayers.addAll(teamList.get("blue"));
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(allPlayers);
+        Map<Player, Float> playerRatings = captainRatings(logic.ftwglApi.getPlayerRatings(allPlayers, logic.currentSeason));
         boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
         if (!useFtwOnly) playerRatings.clear();
 
@@ -1467,11 +1650,7 @@ public class Match implements Runnable {
     }
 
     public void refundBets() {
-        for (Bet bet : bets) {
-            bet.refund(this);
-            bet.player.saveWallet();
-        }
-        bets.clear();
+        if (!bets.isEmpty()) throw new IllegalStateException("Persisted bets must be refunded by match settlement");
     }
 
     public void banMap(GameMap map) {
@@ -1480,7 +1659,13 @@ public class Match implements Runnable {
         }
     }
 
-    private DiscordEmbed getLobbyEmbed() {
+    private static Map<Player, Float> captainRatings(Map<Player, PlayerRating> ratings) {
+        Map<Player, Float> result = new HashMap<>();
+        ratings.forEach((player, rating) -> result.put(player, rating.captainRating()));
+        return result;
+    }
+
+    private DiscordEmbed getLobbyEmbed(List<Player> lobbyPlayers, Map<Player, PlayerRating> playerRatings, String compareUrl) {
         DiscordEmbed embed = new DiscordEmbed();
         embed.setTitle("Lobby");
         embed.setColor(7056881);
@@ -1489,9 +1674,7 @@ public class Match implements Runnable {
         StringBuilder rating_wdl_string = new StringBuilder();
         StringBuilder ping_string = new StringBuilder();
 
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(sortedPlayers);
-
-        for (Player p : sortedPlayers) {
+        for (Player p : lobbyPlayers) {
             StringBuilder player_string = new StringBuilder();
             player_string.append(p.getRank().getEmoji().getMentionString());
             if (p.getCountry().equalsIgnoreCase("NOT_DEFINED")) {
@@ -1510,7 +1693,8 @@ public class Match implements Runnable {
                 rating = String.format("%.02f", p.stats.ctf_rating);
             } else {
                 wdl = String.valueOf(Math.round(p.stats.ts_wdl.calcWinRatio() * 100d));
-                rating = String.format("%.02f", playerRatings.get(p));
+                PlayerRating ftwRating = playerRatings.getOrDefault(p, PlayerRating.ZERO);
+                rating = String.format("%.02f / %.02f", ftwRating.season(), ftwRating.allTime());
             }
 
             rating_wdl_string.append("``").append(rating).append("`` | ``").append(wdl).append("``\n");
@@ -1520,10 +1704,10 @@ public class Match implements Runnable {
         }
 
         embed.addField("Players", lobby_players_string.toString(), true);
-        embed.addField("Rating | Win%", rating_wdl_string.toString(), true);
+        embed.addField(gametype.getName().equals("CTF") ? "Rating | Win%" : "R: Season / All-time | Win%",
+                rating_wdl_string.toString(), true);
         embed.addField("Ping", ping_string.toString(), true);
 
-        String compareUrl = logic.ftwglApi.getComparePageUrl(sortedPlayers);
         if (compareUrl != null) {
             embed.addField("\u200b", "[Compare on FTW](" + compareUrl + ")", false);
         }

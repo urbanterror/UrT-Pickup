@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Player {
 
@@ -23,7 +25,47 @@ public class Player {
 
     private float kdr = 0.0f;
 
-    public PlayerStats stats = new PlayerStats();
+    public volatile PlayerStats stats = new PlayerStats();
+    private volatile int statsSeason = -1;
+    private volatile long statsRevision = -1;
+    private static final AtomicLong seasonStatsRevision = new AtomicLong();
+
+    static long currentSeasonStatsRevision() {
+        return seasonStatsRevision.get();
+    }
+
+    static void invalidateSeasonStats() {
+        seasonStatsRevision.incrementAndGet();
+    }
+
+    void setCurrentSeasonStats(PlayerStats updated, Season season, long revision) {
+        setKdr(updated.kdr);
+        stats = updated;
+        statsRevision = revision;
+        statsSeason = season.number;
+    }
+
+    /** SQL failure keeps the last complete snapshot, invalid for the next command's retry. */
+    public synchronized void refreshCurrentSeasonStats(Database database, Season season) {
+        long revision = currentSeasonStatsRevision();
+        // Even a forced refresh of a current snapshot must remain retryable on failure.
+        statsRevision = -1;
+        PlayerStats updated = database.tryGetPlayerStats(this, season);
+        if (updated != null) {
+            setCurrentSeasonStats(updated, season, revision);
+        }
+    }
+
+    public PlayerStats getCurrentSeasonStats(Database database, Season season) {
+        if (statsSeason != season.number || statsRevision != currentSeasonStatsRevision()) {
+            synchronized (this) {
+                if (statsSeason != season.number || statsRevision != currentSeasonStatsRevision()) {
+                    refreshCurrentSeasonStats(database, season);
+                }
+            }
+        }
+        return stats;
+    }
 
     private List<PlayerBan> bans = new ArrayList<PlayerBan>();
     public Map<Gametype, Integer> spree = new HashMap<Gametype, Integer>();
@@ -40,14 +82,29 @@ public class Player {
     private String country = "NOT_DEFINED";
 
     private long coins = 1000;
+    private long unsavedCoinDelta;
     private long eloBoost = 0;
     private int additionalMapVotes = 0;
     private int mapBans = 0;
 
     public Player(DiscordUser user, String urtauth) {
+        this(user, urtauth, true);
+    }
+
+    private Player(DiscordUser user, String urtauth, boolean register) {
         this.user = user;
         this.setUrtauth(urtauth);
-        playerList.add(this);
+        if (register) {
+            synchronized (Player.class) {
+                invalidatedAt.put(identity(), ++lifecycleSequence);
+                playerList.add(this);
+            }
+        }
+    }
+
+    // Database hydration must finish before this instance becomes cache-visible.
+    static Player detached(DiscordUser user, String urtauth) {
+        return new Player(user, urtauth, false);
     }
 
     public void voteMap(Gametype gametype, GameMap map) {
@@ -254,31 +311,102 @@ public class Player {
 
     private static List<Player> playerList = new ArrayList<Player>();
 
-    public static Player get(String urtauth) {
-        for (Player player : playerList) {
-            if (player.getUrtauth().equals(urtauth) && player.getActive())
-                return player;
+    private record Identity(String discordId, String auth) {}
+
+    // Guarded by Player.class. Only lifecycle changes advance the sequence; loading
+    // an unrelated identity cannot invalidate a successful in-flight load.
+    private static long lifecycleSequence;
+    private static final Map<Identity, Long> invalidatedAt = new HashMap<>();
+    // Guarded by Player.class. Prevent parallel commands from hydrating the same player repeatedly.
+    private static final Map<String, CompletableFuture<Player>> loadingByDiscordId = new HashMap<>();
+
+    private Identity identity() {
+        return new Identity(user.getId(), urtauth);
+    }
+
+    static synchronized long beginLoad() {
+        return lifecycleSequence;
+    }
+
+    /** Atomically canonicalize a fully hydrated snapshot, or reject an obsolete one. */
+    static synchronized Player publishLoaded(Player loaded, long startedAt, boolean onlyActive) {
+        Identity identity = loaded.identity();
+        // Prefer the newest public registration, retaining the constructor's
+        // historical behavior of allowing duplicate entries.
+        for (int i = playerList.size() - 1; i >= 0; i--) {
+            Player cached = playerList.get(i);
+            if (identity.equals(cached.identity())) {
+                return !onlyActive || cached.getActive() ? cached : null;
+            }
         }
-        Player p = db.loadPlayer(urtauth); // can be valid or null
-        return p;
+        if (invalidatedAt.getOrDefault(identity, 0L) > startedAt
+                || (onlyActive && !loaded.getActive())) {
+            return null;
+        }
+        playerList.add(loaded);
+        return loaded;
+    }
+
+    public static Player get(String urtauth) {
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getUrtauth().equals(urtauth) && player.getActive())
+                    return player;
+            }
+        }
+        return db.loadPlayer(urtauth);
     }
 
     public static Player get(DiscordUser user) {
-        for (Player player : playerList) {
-            if (player.getDiscordUser().equals(user) && player.getActive())
-                return player;
+        CompletableFuture<Player> pending;
+        boolean loadHere = false;
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getDiscordUser().getId().equals(user.getId()) && player.getActive())
+                    return player;
+            }
+            pending = loadingByDiscordId.get(user.getId());
+            if (pending == null) {
+                pending = new CompletableFuture<>();
+                loadingByDiscordId.put(user.getId(), pending);
+                loadHere = true;
+            }
         }
-        Player p = db.loadPlayer(user); // can be valid or null
-        return p;
+        if (!loadHere) {
+            return pending.join();
+        }
+        try {
+            Player loaded = db.loadPlayer(user);
+            pending.complete(loaded);
+            return loaded;
+        } catch (Throwable failure) {
+            pending.completeExceptionally(failure);
+            throw failure;
+        } finally {
+            synchronized (Player.class) {
+                loadingByDiscordId.remove(user.getId(), pending);
+            }
+        }
+    }
+
+    /** Message formatting must not hydrate players or fetch Discord members on the queue worker. */
+    static synchronized Player getCachedByDiscordId(String discordId) {
+        for (Player player : playerList) {
+            if (player.getActive() && player.getDiscordUser().getId().equals(discordId)) {
+                return player;
+            }
+        }
+        return null;
     }
 
     public static Player get(DiscordUser user, String urtauth) {
-        for (Player player : playerList) {
-            if (player.getUrtauth().equals(urtauth) && player.getDiscordUser().equals(user))
-                return player;
+        synchronized (Player.class) {
+            for (Player player : playerList) {
+                if (player.getUrtauth().equals(urtauth) && player.getDiscordUser().getId().equals(user.getId()))
+                    return player;
+            }
         }
-        Player p = db.loadPlayer(user, urtauth, false); // can be valid or null
-        return p;
+        return db.loadPlayer(user, urtauth, false);
     }
 
     @Override
@@ -313,10 +441,17 @@ public class Player {
         this.country = country;
     }
 
-    public static void remove(Player player) {
-        if (playerList.contains(player)) {
-            playerList.remove(player);
-        }
+    public static synchronized void remove(Player player) {
+        Identity identity = player.identity();
+        invalidatedAt.put(identity, ++lifecycleSequence);
+        player.setActive(false);
+        playerList.removeIf(candidate -> {
+            if (!identity.equals(candidate.identity())) {
+                return false;
+            }
+            candidate.setActive(false);
+            return true;
+        });
     }
 
     public boolean getEnforceAC() {
@@ -371,53 +506,81 @@ public class Player {
         return db.getRankForPlayer(this);
     }
 
-    public long getCoins() {
+    public synchronized long getCoins() {
         return coins;
     }
 
-    public void setCoins(long coins) {
+    public synchronized void setCoins(long coins) {
         this.coins = coins;
+        unsavedCoinDelta = 0;
     }
 
-    public void addCoins(long amount) {
-        coins += amount;
+    public synchronized void addCoins(long amount) {
+        coins = Math.addExact(coins, amount);
+        unsavedCoinDelta = Math.addExact(unsavedCoinDelta, amount);
     }
 
-    public void spendCoins(long amount) {
-        coins -= amount;
+    public synchronized void spendCoins(long amount) {
+        coins = Math.subtractExact(coins, amount);
+        unsavedCoinDelta = Math.subtractExact(unsavedCoinDelta, amount);
     }
 
-    public void saveWallet() {
-        db.updatePlayerCoins(this);
+    public synchronized void saveWallet() {
+        if (unsavedCoinDelta != 0) {
+            long current = db.updatePlayerCoins(this, unsavedCoinDelta);
+            unsavedCoinDelta = 0;
+            coins = current;
+        }
     }
 
-    public long getEloBoost() {
+    public synchronized void refreshWallet() {
+        long balance = db.walletBalance(this);
+        coins = Math.addExact(balance, unsavedCoinDelta);
+    }
+
+    public synchronized Database.PerkPurchase purchasePerk(Database.Perk perk, int quantity) {
+        Database.PerkPurchase purchase = db.purchasePerk(this, perk, quantity);
+        // The database has already applied a successful debit. Never add it to
+        // unsavedCoinDelta, including when funds or ownership reject the purchase.
+        coins = Math.addExact(purchase.coins(), unsavedCoinDelta);
+        hydrateBoost(purchase.eloBoost(), purchase.mapVotes(), purchase.mapBans());
+        return purchase;
+    }
+
+    public synchronized long getEloBoost() {
         return eloBoost;
     }
 
-    public void setEloBoost(long eloBoost) {
+    public synchronized void setEloBoost(long eloBoost) {
         this.eloBoost = eloBoost;
         db.updatePlayerBoost(this);
     }
 
-    public boolean hasBoostActive() {
+    // Loading stored values is not a wallet mutation and must never write them back.
+    synchronized void hydrateBoost(long eloBoost, int mapVotes, int mapBans) {
+        this.eloBoost = eloBoost;
+        this.additionalMapVotes = mapVotes;
+        this.mapBans = mapBans;
+    }
+
+    public synchronized boolean hasBoostActive() {
         return eloBoost >= System.currentTimeMillis();
     }
 
-    public int getAdditionalMapVotes() {
+    public synchronized int getAdditionalMapVotes() {
         return additionalMapVotes;
     }
 
-    public void setAdditionalMapVotes(int mapVotes) {
+    public synchronized void setAdditionalMapVotes(int mapVotes) {
         this.additionalMapVotes = mapVotes;
         db.updatePlayerBoost(this);
     }
 
-    public int getMapBans() {
+    public synchronized int getMapBans() {
         return mapBans;
     }
 
-    public void setMapBans(int mapBans) {
+    public synchronized void setMapBans(int mapBans) {
         this.mapBans = mapBans;
         db.updatePlayerBoost(this);
     }

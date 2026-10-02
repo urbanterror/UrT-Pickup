@@ -947,7 +947,7 @@ public class ServerMonitor implements Runnable {
                 return Integer.parseInt(split[3].replace("^7", ""));
             }
         } catch (NumberFormatException e) {
-            log.warn("Cannot parse int of response {}", response);
+            log.warn("Cannot parse int of response {}", response, e);
         }
         return 0;
     }

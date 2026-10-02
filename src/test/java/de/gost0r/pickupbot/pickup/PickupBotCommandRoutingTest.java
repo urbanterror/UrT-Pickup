@@ -1,16 +1,25 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.discord.jda.JdaDiscordInteraction;
+import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.events.interaction.component.GenericComponentInteractionCreateEvent;
+import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
 import org.junit.jupiter.api.*;
+import org.mockito.ArgumentCaptor;
 
 import java.io.File;
 import java.lang.reflect.Field;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -45,8 +54,7 @@ class PickupBotCommandRoutingTest {
         FtwglApi ftw = mock(FtwglApi.class);
         when(ftw.hasLauncherOn(any())).thenReturn(true);
         when(ftw.checkIfPingStored(any())).thenReturn(true);
-        when(ftw.getPlayerRatings(any(Player.class))).thenReturn(0f);
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         when(ftw.getTopPlayerRatings()).thenReturn(Collections.emptyMap());
         when(ftw.requestPingUrl(any())).thenReturn("https://test/ping");
 
@@ -72,7 +80,8 @@ class PickupBotCommandRoutingTest {
         }
 
         // -- Wire up bot + logic --
-        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache);
+        Executor directExecutor = Runnable::run; // Execute tasks synchronously for testing
+        bot = new PickupBot(envPrefix, ftw, discord, perms, roleCache, directExecutor, directExecutor, directExecutor, directExecutor);
         logic = new PickupLogic(bot, ftw, discord, perms, roleCache);
         logic.init();
 
@@ -106,6 +115,137 @@ class PickupBotCommandRoutingTest {
         logic.cmdUnlock();
         // Reset permission mocks to default (no rights)
         reset(perms);
+    }
+
+    // ========== Stats publishing ==========
+
+    @Test void allTimeStatsButtonShowsRequestedPlayerAndPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSTATS + "_bravo_0", users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), embed.capture(), components.capture());
+        assertEquals("All time stats", embed.getValue().getDescription());
+        assertTrue(embed.getValue().getTitle().contains("bravo"));
+        assertFalse(embed.getValue().getTitle().contains("alpha"));
+        assertEquals(users.get("bravo").getAvatarUrl(), embed.getValue().getThumbnail());
+        assertFalse(embed.getValue().getFields().isEmpty());
+        assertPublishButton(components.getValue());
+        verify(interaction).deferReply();
+        verify(interaction, never()).deferEdit();
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void seasonSelectionShowsSeasonalStatsPrivatelyWithPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSELECTED + "_bravo", users.get("alpha"));
+        when(interaction.getValues()).thenReturn(List.of("1"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), embed.capture(), components.capture());
+        assertTrue(embed.getValue().getDescription().startsWith("Season 1 "));
+        assertTrue(embed.getValue().getTitle().contains("bravo"));
+        assertPublishButton(components.getValue());
+        verify(interaction).deferReply();
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void allTimeStatsViaSeasonSelectionAlsoHasPublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSELECTED + "_alpha", users.get("alpha"));
+        when(interaction.getValues()).thenReturn(List.of("0"));
+
+        bot.recvInteraction(interaction);
+
+        ArgumentCaptor<ArrayList<DiscordComponent>> components = componentCaptor();
+        verify(interaction).respondEphemeral(isNull(), argThat(embed ->
+                "All time stats".equals(embed.getDescription())), components.capture());
+        assertPublishButton(components.getValue());
+    }
+
+    @Test void publishClickAcknowledgesOriginalMessageBeforePublishing() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_PUBLISHSTATS, users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        var order = inOrder(interaction);
+        order.verify(interaction).deferEdit();
+        order.verify(interaction).publishMessage();
+        verify(interaction, never()).deferReply();
+        verify(interaction, never()).respondEphemeral(anyString());
+    }
+
+    @Test void unregisteredUserCannotPublishStats() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_PUBLISHSTATS, mockUser("9999", "unknown"));
+
+        bot.recvInteraction(interaction);
+
+        verify(interaction).respondEphemeral(Config.user_not_registered);
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void missingTargetPlayerDoesNotCreatePublishButton() {
+        DiscordInteraction interaction = mockInteraction(Config.INT_SEASONSTATS + "_missingplayer_0", users.get("alpha"));
+
+        bot.recvInteraction(interaction);
+
+        verify(interaction, never()).respondEphemeral(any(), any(), any());
+        verify(interaction, never()).publishMessage();
+    }
+
+    @Test void publishClickThroughRealAdapterPostsSnapshotThenDeletesOriginal() {
+        GenericComponentInteractionCreateEvent event = mock(
+                GenericComponentInteractionCreateEvent.class, RETURNS_DEEP_STUBS);
+        when(event.getMember()).thenReturn(null);
+        when(event.getUser().getId()).thenReturn("1001");
+        when(event.getUser().getEffectiveName()).thenReturn("alpha");
+        when(event.getComponentId()).thenReturn(Config.INT_PUBLISHSTATS);
+        // The viewed player can differ from the user clicking Publish.
+        var snapshot = List.of(new EmbedBuilder().setTitle("bravo")
+                .setDescription("All time stats").addField("Wins", "42", true).build());
+        when(event.getMessage().getEmbeds()).thenReturn(snapshot);
+        var hook = event.getHook();
+        MessageCreateAction post = event.getMessageChannel().sendMessageEmbeds(snapshot);
+        clearInvocations(event, hook, post, event.getMessageChannel());
+
+        bot.recvInteraction(new JdaDiscordInteraction(event));
+
+        verify(event).deferEdit();
+        verify(event, never()).deferReply();
+        verify(event.getMessageChannel()).sendMessageEmbeds(same(snapshot));
+        verify(hook, never()).sendMessageEmbeds(anyList());
+        verify(hook, never()).deleteOriginal();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Consumer<Message>> success = ArgumentCaptor.forClass(Consumer.class);
+        verify(post).queue(success.capture(), any());
+        success.getValue().accept(mock(Message.class));
+        verify(hook).deleteOriginal();
+        verify(hook.deleteOriginal()).queue();
+    }
+
+    private static DiscordInteraction mockInteraction(String componentId, DiscordUser user) {
+        DiscordInteraction interaction = mock(DiscordInteraction.class);
+        DiscordMessage message = mockMessage("", discord.getMe(), pubChannel);
+        when(interaction.getComponentId()).thenReturn(componentId);
+        when(interaction.getUser()).thenReturn(user);
+        when(interaction.getMessage()).thenReturn(message);
+        return interaction;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ArgumentCaptor<ArrayList<DiscordComponent>> componentCaptor() {
+        return ArgumentCaptor.forClass(ArrayList.class);
+    }
+
+    private static void assertPublishButton(List<DiscordComponent> components) {
+        assertEquals(1, components.size());
+        DiscordButton button = assertInstanceOf(DiscordButton.class, components.get(0));
+        assertEquals("Publish", button.getLabel());
+        assertEquals(Config.INT_PUBLISHSTATS, button.getCustomId());
+        assertFalse(button.isDisabled());
     }
 
     // ========== !reset ==========
@@ -274,6 +414,34 @@ class PickupBotCommandRoutingTest {
         assertContains(logic.cmdStatus(), "echo");
     }
 
+    // ========== !topban ==========
+
+    @Test void topBan_routesFromPublicChannelAndHelpDescribesTheCounts() {
+        Database original = logic.db;
+        Database leaderboard = mock(Database.class);
+        when(leaderboard.getTopBans(10)).thenReturn(List.of(new Database.BanCount("alpha", 4, 1)));
+        logic.db = leaderboard;
+        try {
+            DiscordMessage msg = mockMessage("!topban", users.get("alpha"), pubChannel);
+            bot.recvMessage(msg);
+            ArgumentCaptor<DiscordEmbed> embed = ArgumentCaptor.forClass(DiscordEmbed.class);
+            verify(msg).reply(isNull(), embed.capture());
+            org.junit.jupiter.api.Assertions.assertEquals("alpha\n", embed.getValue().getFields().get(1).value());
+            org.junit.jupiter.api.Assertions.assertEquals("4 (1)\n", embed.getValue().getFields().get(2).value());
+
+            DiscordMessage invalid = mockMessage("!topban TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(invalid);
+            verify(invalid).reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+
+            DiscordMessage help = mockMessage("!help topban", users.get("alpha"), pubChannel);
+            bot.recvMessage(help);
+            verify(help).reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+            verify(leaderboard).getTopBans(10);
+        } finally {
+            logic.db = original;
+        }
+    }
+
     // ========== !remove ==========
 
     @Test void remove_fromPublicChannel_selfRemove() {
@@ -286,6 +454,59 @@ class PickupBotCommandRoutingTest {
         String status = logic.cmdStatus().getMessage();
         org.junit.jupiter.api.Assertions.assertFalse(
                 status.contains("alpha"), "Player should be removed from queue");
+    }
+
+    @Test void removeTsWhilePlayingAimLeavesOnlyTsAndDoesNotRejectTheCommand() throws Exception {
+        Player alpha = players.get("alpha");
+        logic.cmdAddPlayer(alpha, gt("TS"), false);
+        logic.cmdAddPlayer(alpha, gt("CTF"), false);
+        Match liveAim = startLiveAim(alpha);
+        try {
+            DiscordMessage removeAim = mockMessage("!remove AIM", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeAim);
+            verify(removeAim).reply(Config.player_already_match);
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("TS"), alpha));
+
+            DiscordMessage removeTs = mockMessage("!remove TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeTs);
+            verify(removeTs, never()).reply(anyString());
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(alpha));
+            org.junit.jupiter.api.Assertions.assertEquals(MatchState.Live, liveAim.getMatchState());
+
+            DiscordMessage removeTsAgain = mockMessage("!remove TS", users.get("alpha"), pubChannel);
+            bot.recvMessage(removeTsAgain);
+            verify(removeTsAgain).reply("You are not added to any of those queues.");
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(alpha));
+        } finally {
+            ongoingMatches().remove(liveAim);
+            currentMatches().remove(liveAim.getGametype());
+        }
+    }
+
+    @Test void removeAllWhilePlayingAimLeavesLiveMatchButClearsEverySignup() throws Exception {
+        Player bravo = players.get("bravo");
+        logic.cmdAddPlayer(bravo, gt("TS"), false);
+        logic.cmdAddPlayer(bravo, gt("CTF"), false);
+        Match liveAim = startLiveAim(bravo);
+        try {
+            DiscordMessage remove = mockMessage("!remove", users.get("bravo"), pubChannel);
+            bot.recvMessage(remove);
+            verify(remove, never()).reply(anyString());
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), bravo));
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("CTF"), bravo));
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(bravo));
+            org.junit.jupiter.api.Assertions.assertEquals(MatchState.Live, liveAim.getMatchState());
+
+            DiscordMessage removeAgain = mockMessage("!remove", users.get("bravo"), pubChannel);
+            bot.recvMessage(removeAgain);
+            verify(removeAgain).reply(Config.player_already_match);
+            org.junit.jupiter.api.Assertions.assertTrue(liveAim.isInMatch(bravo));
+        } finally {
+            ongoingMatches().remove(liveAim);
+            currentMatches().remove(liveAim.getGametype());
+        }
     }
 
     @Test void remove_fromPublicChannel_adminRemovesOther() {
@@ -378,7 +599,7 @@ class PickupBotCommandRoutingTest {
         DiscordMessage msg = mockMessage("!baninfo <@1003>", users.get("alpha"), admChannel);
         bot.recvMessage(msg);
 
-        verify(msg).reply(logic.printBanInfo(players.get("charlie")));
+        verify(msg).reply(logic.printBanInfo(players.get("charlie"), true));
     }
 
     @Test void baninfo_fromAdminChannel_lookupByUrtauth() {
@@ -386,7 +607,27 @@ class PickupBotCommandRoutingTest {
         DiscordMessage msg = mockMessage("!baninfo delta", users.get("alpha"), admChannel);
         bot.recvMessage(msg);
 
-        verify(msg).reply(logic.printBanInfo(players.get("delta")));
+        verify(msg).reply(logic.printBanInfo(players.get("delta"), true));
+    }
+
+    @Test void baninfo_adminChannelShowsOlderHistoryHiddenInPublicChannel() {
+        PlayerBan oldBan = new PlayerBan();
+        oldBan.player = players.get("juliet");
+        oldBan.startTime = System.currentTimeMillis() - PickupLogic.parseDurationFromString("3M");
+        oldBan.endTime = oldBan.startTime + PickupLogic.parseDurationFromString("1d");
+        oldBan.reason = PlayerBan.BanReason.NOSHOW;
+        players.get("juliet").addBan(oldBan);
+
+        when(perms.hasAdminRights(users.get("alpha"))).thenReturn(true);
+        DiscordMessage adminMsg = mockMessage("!baninfo juliet", users.get("alpha"), admChannel);
+        bot.recvMessage(adminMsg);
+        verify(adminMsg).reply(argThat(reply ->
+                reply.contains("Past 6 months") && reply.contains("NOSHOW")));
+
+        DiscordMessage publicMsg = mockMessage("!baninfo juliet", users.get("alpha"), pubChannel);
+        bot.recvMessage(publicMsg);
+        verify(publicMsg).reply(argThat(reply ->
+                reply.contains("**Total bans:** 1") && !reply.contains("NOSHOW")));
     }
 
     @Test void baninfo_fromSuperAdminDM_works() {
@@ -426,7 +667,148 @@ class PickupBotCommandRoutingTest {
         verify(msg).reply(Config.user_not_registered);
     }
 
+    @Test void privateJoinVotesForMapAfterAsyncValidation() throws Exception {
+        Player alpha = players.get("alpha");
+        PrivateGroup group = logic.createPrivateGroup(alpha, gt("TS"));
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+
+        try {
+            DiscordMessage msg = mockMessage("!private ut4_turnpike", users.get("alpha"), pubChannel);
+            asyncBot.recvMessage(msg);
+
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+            org.junit.jupiter.api.Assertions.assertNull(alpha.getVotedMap(group.gt));
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(group.gt, alpha));
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(group.gt, alpha));
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_turnpike", alpha.getVotedMap(group.gt).name);
+        } finally {
+            logic.dissolveGroup(group);
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void directMapVoteAfterAlreadyQueuedJoinWinsWithoutValidation() throws Exception {
+        Player alpha = players.get("alpha");
+        Gametype ts = gt("TS");
+        logic.cmdAddPlayer(alpha, ts, false);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(0, ioTasks.size());
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_turnpike", alpha.getVotedMap(ts).name);
+
+            asyncBot.recvMessage(mockMessage("!map TS ut4_casa", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void alreadyQueuedMapVotesApplyInCommandOrderWithoutValidation() throws Exception {
+        Player alpha = players.get("alpha");
+        Gametype ts = gt("TS");
+        logic.cmdAddPlayer(alpha, ts, false);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!ts ut4_turnpike", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!ts ut4_casa", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(0, ioTasks.size());
+
+            org.junit.jupiter.api.Assertions.assertEquals("ut4_casa", alpha.getVotedMap(ts).name);
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void removeTsDuringPendingMultiModeJoinStillJoinsCtf() throws Exception {
+        Player alpha = players.get("alpha");
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!add TS CTF", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!remove TS", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    @Test void resetTsDuringPendingMultiModeJoinStillJoinsCtf() throws Exception {
+        Player alpha = players.get("alpha");
+        when(perms.hasAdminRights(users.get("alpha"))).thenReturn(true);
+        PickupBot originalBot = logic.bot;
+        List<Runnable> ioTasks = new ArrayList<>();
+        PickupBot asyncBot = botWithDelayedIo(ioTasks);
+        try {
+            asyncBot.recvMessage(mockMessage("!add TS CTF", users.get("alpha"), pubChannel));
+            asyncBot.recvMessage(mockMessage("!reset TS", users.get("alpha"), pubChannel));
+            org.junit.jupiter.api.Assertions.assertEquals(1, ioTasks.size());
+
+            ioTasks.get(0).run();
+
+            org.junit.jupiter.api.Assertions.assertNull(logic.playerInMatch(gt("TS"), alpha));
+            org.junit.jupiter.api.Assertions.assertNotNull(logic.playerInMatch(gt("CTF"), alpha));
+        } finally {
+            logic.bot = originalBot;
+        }
+    }
+
+    private PickupBot botWithDelayedIo(List<Runnable> ioTasks) throws Exception {
+        Executor direct = Runnable::run;
+        PickupBot asyncBot = new PickupBot(bot.env, logic.ftwglApi, discord, perms,
+                new PickupRoleCache(), direct, direct, ioTasks::add, direct);
+        Field self = PickupBot.class.getDeclaredField("self");
+        self.setAccessible(true);
+        self.set(asyncBot, discord.getMe());
+        Field botLogic = PickupBot.class.getDeclaredField("logic");
+        botLogic.setAccessible(true);
+        botLogic.set(asyncBot, logic);
+        logic.bot = asyncBot;
+        return asyncBot;
+    }
+
     // ========== Helpers ==========
+
+    private static Match startLiveAim(Player player) throws Exception {
+        Match aim = new Match(logic, new Gametype("AIM", 2, true, false), List.of(), perms);
+        aim.addPlayer(player);
+        Field state = Match.class.getDeclaredField("state");
+        state.setAccessible(true);
+        state.set(aim, MatchState.Live);
+        currentMatches().put(aim.getGametype(), new Match(logic, aim.getGametype(), List.of(), perms));
+        ongoingMatches().add(aim);
+        return aim;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Gametype, Match> currentMatches() throws Exception {
+        Field field = PickupLogic.class.getDeclaredField("curMatch");
+        field.setAccessible(true);
+        return (Map<Gametype, Match>) field.get(logic);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Match> ongoingMatches() throws Exception {
+        Field field = PickupLogic.class.getDeclaredField("ongoingMatches");
+        field.setAccessible(true);
+        return (List<Match>) field.get(logic);
+    }
 
     static Gametype gt(String name) { return logic.getGametypeByString(name); }
 

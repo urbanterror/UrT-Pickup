@@ -62,6 +62,7 @@ public class Config {
     public static final String CMD_TOP_KDR = "!topkdr";
     public static final String CMD_TOP = "!top";
     public static final String CMD_TOP_RICH = "!toprich";
+    public static final String CMD_TOP_BAN = "!topban";
     public static final String CMD_SPREE = "!topspree";
     public static final String CMD_LOSS = "!toploss";
     public static final String CMD_TOP_RATING = "!toprating";
@@ -113,7 +114,7 @@ public class Config {
             + " " + CMD_MAPS + " " + CMD_MAP + " " + CMD_MATCH + " " + CMD_LAST + " " + CMD_LIVE + " " + CMD_STATUS + " " + CMD_HELP
             + " " + CMD_GETELO + " " + CMD_GETSTATS + " " + CMD_TOP_PLAYERS + " " + CMD_TOP_COUNTRIES + " " + CMD_TOP_KDR + " " + CMD_TOP_WDL
             + " " + CMD_SURRENDER + " " + CMD_BANINFO + " " + CMD_VOTES + " " + CMD_LAST + " " + CMD_TEAM + " " + CMD_LEAVETEAM + " " + CMD_SCRIM
-            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH
+            + " " + CMD_REMOVETEAM + " " + CMD_TEAMS + " " + CMD_WALLET + " " + CMD_DONATE + " " + CMD_BETHISTORY + " " + CMD_TOP_RICH + " " + CMD_TOP_BAN
             + " " + CMD_CREATE_PRIVATE + " " + CMD_PRIVATE + " " + CMD_ADD_PLAYER_PRIVATE + " " + CMD_REMOVE_PLAYER_PRIVATE + " " + CMD_LEAVE_PRIVATE
             + " " + CMD_SHOW_PRIVATE;
 
@@ -170,6 +171,7 @@ public class Config {
     public static final String USE_CMD_GETSTATS = "!stats </@User|urtauth/>";
     public static final String USE_CMD_TOP10 = "!top10 displays the top 10 players";
     public static final String USE_CMD_TOP_COUNTRIES = "!topcountries ordered by average ELO";
+    public static final String USE_CMD_TOP_BAN = "!topban displays the top 10 players by all-time ban count (including expired and forgiven bans)";
     public static final String USE_CMD_TOP_WDL = "!topwin <gametype>: players with the best win ratio for a specific gamemode";
     public static final String USE_CMD_TOP_KDR = "!topkdr <gametype>: players with the best KDR for a specific gamemode";
     public static final String USE_CMD_TOP_SPREE = "!topspree <gametype>: players with the best winning spree for a specific gamemode";
@@ -221,6 +223,7 @@ public class Config {
     public static final String INT_TEAMINVITE = "teaminvite";
     public static final String INT_TEAMREMOVE = "teamremove";
     public static final String INT_SEASONSTATS = "seasonstats";
+    public static final String INT_PUBLISHSTATS = "publishstats";
     public static final String INT_SEASONLIST = "seasonlist";
     public static final String INT_SEASONSELECTED = "seasonselected";
     public static final String INT_LASTMATCHPLAYER = "lastgameplayer";
@@ -295,6 +298,8 @@ public class Config {
     public static final String pkup_aftermath_rank = ".player. was ranked .updown. to **.rank.**";
     public static final String pkup_aftermath_abandon_1 = "Match was abandoned due to **.reason.**.";
     public static final String pkup_aftermath_abandon_2 = ".players. .be. punished accordingly.";
+    public static final String pkup_aftermath_abandon_noshow_unpunished = ".players. did not join the server. No automatic ban applies to this game mode.";
+    public static final String pkup_aftermath_abandon_leave_unpunished = ".players. left the match. No automatic ban applies to this game mode.";
 
     public static final String pkup_config_list = "Gameconfig for .gametype.\n.configlist.";
 
@@ -314,6 +319,8 @@ public class Config {
     public static final String is_notbanned_but_manual = ".urtauth. has no bot ban, but has an active manual ban. Use !unban instead.";
     public static final String not_banned = "No active bans found for .urtauth.";
     public static final String ban_history = "**__Ban history:__** (Past 2 months)";
+    public static final String ban_history_extended = "**__Ban history:__** (Past 6 months)";
+    public static final String ban_history_totals = "**Total bans:** .count. | **Total duration:** .duration.";
     public static final String ban_history_item = "<t:.date.:d> .duration. .reason.";
     public static final String map_not_found = "Map not found.";
     public static final String map_not_unique = "Mapstring not unique.";

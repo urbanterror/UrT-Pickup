@@ -5,6 +5,7 @@ import de.gost0r.pickupbot.pickup.Config;
 import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.Player;
 import de.gost0r.pickupbot.pickup.Region;
+import de.gost0r.pickupbot.pickup.Season;
 import de.gost0r.pickupbot.pickup.server.Server;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,12 +14,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
@@ -27,17 +31,31 @@ import java.util.*;
 public class FtwglApi {
 
     private final RestClient restClient;
+    private final RestClient rentalClient;
 
     public FtwglApi(
             @Value("${app.ftw.url}") String apiUrl,
-            @Value("${app.ftw.key}") String apiKey
+            @Value("${app.ftw.key}") String apiKey,
+            @Value("${app.ftw.connect-timeout:2s}") Duration connectTimeout,
+            @Value("${app.ftw.read-timeout:5s}") Duration readTimeout,
+            @Value("${app.ftw.rental-read-timeout:120s}") Duration rentalReadTimeout
     ) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(connectTimeout);
+        requestFactory.setReadTimeout(readTimeout);
+
         restClient = RestClient
                 .builder()
                 .baseUrl(apiUrl)
                 .defaultHeader("Authorization", apiKey)
                 .defaultHeader("User-Agent", "Bot")
+                .requestFactory(requestFactory)
                 .build();
+
+        SimpleClientHttpRequestFactory rentalRequestFactory = new SimpleClientHttpRequestFactory();
+        rentalRequestFactory.setConnectTimeout(connectTimeout);
+        rentalRequestFactory.setReadTimeout(rentalReadTimeout);
+        rentalClient = restClient.mutate().requestFactory(rentalRequestFactory).build();
     }
 
     public String launchAC(Player player, String ip, String password) {
@@ -103,7 +121,7 @@ public class FtwglApi {
                 .build();
 
         try {
-            RentPugResponse response = sendPostRequest("/rent/pug", request, RentPugResponse.class).getBody();
+            RentPugResponse response = sendPostRequest(rentalClient, "/rent/pug", request, RentPugResponse.class).getBody();
             assert response != null;
             if (response.getServer() == null || response.getServer().getConfig() == null) {
                 log.warn("CAN'T SPAWN: {}", response);
@@ -160,27 +178,24 @@ public class FtwglApi {
         }
     }
 
-    public float getPlayerRatings(Player player) {
-        return getPlayerRatings(List.of(player)).getOrDefault(player, 0f);
-    }
-
-    public Map<Player, Float> getPlayerRatings(List<Player> playerList) {
+    public Map<Player, PlayerRating> getPlayerRatings(List<Player> playerList, Season season) {
         PlayerRatingsRequest request = PlayerRatingsRequest.builder()
                 .discordIds(playerList.stream()
                         .map(player -> Long.parseLong(player.getDiscordUser().getId()))
                         .toList())
+                .secondarySince(Instant.ofEpochMilli(season.startdate).atZone(ZoneOffset.UTC).toLocalDate().toString())
                 .build();
         try {
             PlayerRatingsResponse response = sendPostRequest("/ratings", request, PlayerRatingsResponse.class).getBody();
             assert response != null;
 
-            Map<Player, Float> ratings = new HashMap<>();
+            Map<Player, PlayerRating> ratings = new HashMap<>();
             for (Player player : playerList) {
+                long discordId = Long.parseLong(player.getDiscordUser().getId());
                 ratings.put(
                         player,
-                        response.getRatings()
-                                .getOrDefault(Long.parseLong(player.getDiscordUser().getId()), 0d)
-                                .floatValue()
+                        new PlayerRating(response.getRatings().getOrDefault(discordId, 0d).floatValue(),
+                                response.getSecondaryRatings().getOrDefault(discordId, 0d).floatValue())
                 );
             }
             return ratings;
@@ -231,9 +246,13 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
+    private <T> ResponseEntity<T> sendPostRequest(String url, Object body, Class<T> responseType) {
+        return sendPostRequest(restClient, url, body, responseType);
+    }
+
+    private <T> ResponseEntity<T> sendPostRequest(RestClient client, String url, Object body, Class<T> responseType) {
         log.trace("Creating POST request to: {}", url);
-        ResponseEntity<T> response = restClient.post()
+        ResponseEntity<T> response = client.post()
                 .uri(url)
                 .header("charset", "utf-8")
                 .header("Content-Type", "application/json")
@@ -247,7 +266,7 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized <T> ResponseEntity<T> sendGetRequest(String url, Class<T> responseType) {
+    private <T> ResponseEntity<T> sendGetRequest(String url, Class<T> responseType) {
         log.trace("Creating GET request to: {}", url);
         ResponseEntity<T> response = restClient.get()
                 .uri(url)
@@ -260,7 +279,7 @@ public class FtwglApi {
     }
 
     @Retryable(retryFor = {RetryableHttpException.class})
-    private synchronized ResponseEntity<Void> sendHeadRequest(String url) {
+    private ResponseEntity<Void> sendHeadRequest(String url) {
         log.trace("Creating HEAD request to: {}", url);
         ResponseEntity<Void> response = restClient.head()
                 .uri(url)

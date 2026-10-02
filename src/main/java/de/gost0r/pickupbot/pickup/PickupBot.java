@@ -8,13 +8,22 @@ import de.gost0r.pickupbot.pickup.PlayerBan.BanReason;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,10 +35,15 @@ public class PickupBot {
     private final DiscordService discordService;
     private final PermissionService permissionService;
     private final PickupRoleCache pickupRoleCache;
+    private final Executor commandExecutor;
+    final Executor queueExecutor;
+    final Executor pickupIoExecutor;
+    final Executor pickIoExecutor;
+    private final ConcurrentHashMap<String, CompletableFuture<Void>> pendingQueueCommands = new ConcurrentHashMap<>();
     public final String env;
 
     @Getter // TODO we shouldn't retrieve it like this, but do it for cmds right now
-    private PickupLogic logic;
+    private volatile PickupLogic logic;
     private DiscordUser self;
 
     public PickupBot(
@@ -37,13 +51,30 @@ public class PickupBot {
             FtwglApi ftwglApi,
             DiscordService discordService,
             PermissionService permissionService,
-            PickupRoleCache pickupRoleCache
+            PickupRoleCache pickupRoleCache,
+            @Qualifier("commandExecutor") Executor commandExecutor,
+            @Qualifier("queueExecutor") Executor queueExecutor,
+            @Qualifier("pickupIoExecutor") Executor pickupIoExecutor,
+            @Qualifier("pickIoExecutor") Executor pickIoExecutor
     ) {
         this.env = env;
         this.ftwglApi = ftwglApi;
         this.discordService = discordService;
         this.permissionService = permissionService;
         this.pickupRoleCache = pickupRoleCache;
+        this.commandExecutor = commandExecutor;
+        this.queueExecutor = queueExecutor;
+        this.pickupIoExecutor = pickupIoExecutor;
+        this.pickIoExecutor = pickIoExecutor;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Shutting down bot...");
+        if (logic != null && logic.db != null) {
+            logic.db.disconnect();
+        }
+        log.info("Bot shutdown complete");
     }
 
     public void init() {
@@ -51,8 +82,9 @@ public class PickupBot {
         this.self = discordService.getMe();
         log.info("Bot user: {} (ID: {})", self.getUsername(), self.getId());
 
-        logic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
-        logic.init();
+        PickupLogic initializedLogic = new PickupLogic(this, ftwglApi, discordService, permissionService, pickupRoleCache);
+        initializedLogic.init();
+        logic = initializedLogic;
 
         var publicChannels = logic.getChannelByType(PickupChannelType.PUBLIC);
         log.info("Attempting to send startup message to {} PUBLIC channels", publicChannels.size());
@@ -62,17 +94,40 @@ public class PickupBot {
         try {
             sendMsg(publicChannels, Config.bot_online);
         } catch (Exception e) {
-            log.warn("Failed to send startup message to PUBLIC channel(s): {}", e.getMessage());
+            log.warn("Failed to send startup message to PUBLIC channel(s)", e);
         }
         log.info("Bot online");
     }
 
     public void tick() {
         if (logic != null) {
-            logic.afkCheck();
-            logic.checkPrivateGroups();
+            queueExecutor.execute(() -> {
+                logic.afkCheck();
+                logic.checkPrivateGroups();
+            });
+            pickupIoExecutor.execute(logic::retryPendingMatchSaves);
         }
     }
+
+    public void optimizeDatabase() {
+        if (logic != null && logic.db != null) {
+            pickupIoExecutor.execute(logic.db::optimize);
+        }
+    }
+
+    private static final Set<String> QUEUE_COMMANDS = Set.of(
+            Config.CMD_ADD, Config.CMD_TS, Config.CMD_CTF, Config.CMD_BM,
+            Config.CMD_1v1, Config.CMD_2v2, Config.CMD_DIV1, Config.CMD_PROCTF,
+            Config.CMD_SKEET, Config.CMD_AIM, Config.CMD_PROMOD,
+            Config.CMD_REGISTER, Config.CMD_UNREGISTER,
+            Config.CMD_REMOVE, Config.CMD_FORCEADD,
+            Config.CMD_MAP, Config.CMD_ADDVOTE, Config.CMD_BANMAP,
+            Config.CMD_SURRENDER, Config.CMD_RESET, Config.CMD_LOCK, Config.CMD_UNLOCK,
+            Config.CMD_TEAM, Config.CMD_LEAVETEAM, Config.CMD_SCRIM,
+            Config.CMD_REMOVETEAM, Config.CMD_PRIVATE,
+            Config.CMD_CREATE_PRIVATE, Config.CMD_ADD_PLAYER_PRIVATE,
+            Config.CMD_REMOVE_PLAYER_PRIVATE, Config.CMD_LEAVE_PRIVATE
+    );
 
     public void recvMessage(DiscordMessage msg) {
         log.info("RECV #{} {}: {}",
@@ -81,21 +136,42 @@ public class PickupBot {
                 msg.getContent()
         );
 
-        if (msg.getUser().getId().equals(self.getId()) || logic == null) {
+        if (self == null || msg.getUser().getId().equals(self.getId()) || logic == null) {
             return;
         }
 
         String[] data = msg.getContent().split(" ");
 
-        if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
-            Player p = Player.get(msg.getUser());
+        // Pick the right executor: queue-mutating commands go through the single-threaded
+        // queueExecutor so they are processed in order; read-only / other commands go
+        // through the multi-threaded commandExecutor so they never block.
+        Executor executor = QUEUE_COMMANDS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
 
-            if (p != null) {
-                p.afkCheck();
-            }
+        String command = data[0].startsWith("!") ? data[0] : "message";
+        if (executor == queueExecutor) {
+            executeQueuePlayerCommand(msg.getUser(), command, p -> handleMessage(msg, data, p, true));
+        } else {
+            executeCommand(executor, command, () -> handleMessage(msg, data, null, false));
+        }
+    }
 
-            // Execute code according to cmd
-            switch (data[0].toLowerCase()) {
+    private void handleMessage(DiscordMessage msg, String[] data, Player loadedPlayer, boolean playerLoaded) {
+            if (isChannel(PickupChannelType.PUBLIC, msg.getChannel())) {
+                // Plain chat, !help and !status need at most an AFK timestamp update;
+                // they must not start a full database/statistics hydration.
+                boolean needsPlayer = data[0].startsWith("!")
+                        && !data[0].equalsIgnoreCase(Config.CMD_STATUS)
+                        && !data[0].equalsIgnoreCase(Config.CMD_HELP);
+                Player p = playerLoaded ? loadedPlayer : needsPlayer
+                        ? getCommandPlayer(msg.getUser()) : Player.getCachedByDiscordId(msg.getUser().getId());
+
+                if (p != null) {
+                    p.afkCheck();
+                }
+
+                // Execute code according to cmd
+                switch (data[0].toLowerCase()) {
                 case Config.CMD_ADD:
                     if (data.length > 1) {
                         if (p != null) {
@@ -108,7 +184,7 @@ public class PickupBot {
                                 }
                             }
                             if (gametypes.size() > 0) {
-                                logic.cmdAddPlayer(p, gametypes, false).forEach(m -> m.replyTo(msg));
+                                queueAddPlayer(p, gametypes, msg, null);
                             } else {
                                 msg.reply(Config.no_gt_found);
                             }
@@ -120,11 +196,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("TS");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -135,11 +207,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("CTF");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -150,11 +218,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("BM");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -165,11 +229,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("1v1");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -180,11 +240,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("2v2");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -195,11 +251,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("div1");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -209,11 +261,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("proctf");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, gt, data[1], 1).replyTo(msg);
-                            }
+                            queueAddPlayer(p, List.of(gt), msg, data.length > 1 ? data[1] : null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -224,7 +272,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("SKEET");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -235,7 +283,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("aim");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -246,7 +294,7 @@ public class PickupBot {
                     if (p != null) {
                         Gametype gt = logic.getGametypeByString("PROMOD");
                         if (gt != null) {
-                            logic.cmdAddPlayer(p, gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(gt), msg, null);
                         } else {
                             msg.reply(Config.no_gt_found);
                         }
@@ -602,6 +650,13 @@ public class PickupBot {
                         logic.cmdTopRich(10).replyTo(msg);
                     } else msg.reply(Config.user_not_registered);
                     break;
+                case Config.CMD_TOP_BAN:
+                    if (p != null) {
+                        if (data.length == 1) {
+                            logic.cmdTopBan(10).replyTo(msg);
+                        } else msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+                    } else msg.reply(Config.user_not_registered);
+                    break;
                 case Config.CMD_TOP_RATING:
                     if (p != null) {
                         logic.cmdTopFTWGLRatings().replyTo(msg);
@@ -789,12 +844,8 @@ public class PickupBot {
                     if (p != null) {
                         if (logic.playerInPrivateGroup(p)) {
                             PrivateGroup pvGroup = logic.getPrivateGroupMember(p);
-                            logic.cmdAddPlayer(p, pvGroup.gt, false).replyTo(msg);
+                            queueAddPlayer(p, List.of(pvGroup.gt), msg, data.length > 1 ? data[1] : null);
                             pvGroup.updateTimestamp();
-
-                            if (data.length > 1) {
-                                logic.cmdMapVote(p, pvGroup.gt, data[1], 1);
-                            }
                         } else msg.reply(Config.player_no_group);
                     } else msg.reply(Config.user_not_registered);
                     break;
@@ -807,7 +858,7 @@ public class PickupBot {
         }
 
         if (msg.getChannel().isThreadChannel()) {
-            Player p = Player.get(msg.getUser());
+            Player p = playerLoaded ? loadedPlayer : getCommandPlayer(msg.getUser());
 
             // AFK CHECK CODE
             if (p != null) {
@@ -1209,6 +1260,9 @@ public class PickupBot {
                             case Config.CMD_TOP_COUNTRIES:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_COUNTRIES));
                                 break;
+                            case Config.CMD_TOP_BAN:
+                                msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_TOP_BAN));
+                                break;
                             case Config.CMD_MATCH:
                                 msg.reply(Config.help_prefix.replace(".cmd.", Config.USE_CMD_MATCH));
                                 break;
@@ -1465,25 +1519,151 @@ public class PickupBot {
         }
     }
 
+    private static final Set<String> QUEUE_INTERACTIONS = Set.of(
+            Config.INT_PICK, Config.INT_LAUNCHAC,
+            Config.INT_TEAMINVITE, Config.INT_TEAMREMOVE,
+            Config.INT_BET
+    );
+
+    // Cached players go straight to the queue. Cold loads use a command worker;
+    // each user's next command waits for the previous mutation to finish.
+    private void executeQueuePlayerCommand(DiscordUser user, String command, Consumer<Player> task) {
+        String userId = user.getId();
+        CompletableFuture<Void> next = pendingQueueCommands.compute(userId, (id, previous) -> {
+            CompletableFuture<Void> ready = previous == null
+                    ? CompletableFuture.completedFuture(null) : previous.handle((result, failure) -> null);
+            return ready.thenCompose(ignored -> {
+                CompletableFuture<Void> done = new CompletableFuture<>();
+                if (Player.getCachedByDiscordId(userId) == null) {
+                    loadQueuePlayerAsync(user, command, task, done);
+                } else {
+                    // An earlier admin command may evict the cached player before this
+                    // task runs. Recheck on the queue worker without doing I/O there.
+                    try {
+                        executeCommand(queueExecutor, command, () -> {
+                            Player current = Player.getCachedByDiscordId(userId);
+                            if (current == null) {
+                                loadQueuePlayerAsync(user, command, task, done);
+                            } else {
+                                try {
+                                    task.accept(current);
+                                } finally {
+                                    done.complete(null);
+                                }
+                            }
+                        });
+                    } catch (Throwable failure) {
+                        done.completeExceptionally(failure);
+                    }
+                }
+                return done;
+            });
+        });
+        next.whenComplete((ignored, failure) -> {
+            pendingQueueCommands.remove(userId, next);
+            if (failure != null) {
+                log.error("Unable to process queue command {} for user {}", command, userId, failure);
+            }
+        });
+    }
+
+    private void loadQueuePlayerAsync(DiscordUser user, String command, Consumer<Player> task,
+                                      CompletableFuture<Void> done) {
+        try {
+            commandExecutor.execute(() -> {
+                try {
+                    Player player = getCommandPlayer(user);
+                    executeCommand(queueExecutor, command, () -> {
+                        try {
+                            task.accept(player);
+                        } finally {
+                            done.complete(null);
+                        }
+                    });
+                } catch (Throwable failure) {
+                    done.completeExceptionally(failure);
+                }
+            });
+        } catch (Throwable failure) {
+            done.completeExceptionally(failure);
+        }
+    }
+
+    private void executeCommand(Executor executor, String command, Runnable task) {
+        long submitted = System.nanoTime();
+        executor.execute(() -> {
+            long started = System.nanoTime();
+            try {
+                task.run();
+            } finally {
+                long waitMs = TimeUnit.NANOSECONDS.toMillis(started - submitted);
+                long runMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                if (waitMs + runMs >= 1000) {
+                    log.warn("Slow command {}: executor={}, waitMs={}, runMs={}", command,
+                            executor == queueExecutor ? "queue" : "command", waitMs, runMs);
+                }
+            }
+        });
+    }
+
+    private Player getCommandPlayer(DiscordUser user) {
+        long started = System.nanoTime();
+        try {
+            return Player.get(user);
+        } finally {
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            if (elapsedMs >= 1000) {
+                log.warn("Slow command player lookup: userId={}, elapsedMs={}", user.getId(), elapsedMs);
+            }
+        }
+    }
+
+    private void queueAddPlayer(Player player, List<Gametype> modes, DiscordMessage message, String map) {
+        long voteVersion = map == null ? 0 : logic.mapVoteVersion(player, modes.get(0));
+        logic.queueAddPlayer(player, modes, false, result -> {
+            result.replyTo(message);
+            if (map != null && logic.mapVoteVersion(player, modes.get(0)) == voteVersion) {
+                logic.cmdMapVote(player, modes.get(0), map, 1).replyTo(message);
+            }
+        });
+    }
+
     public void recvInteraction(DiscordInteraction interaction) {
         log.info("RECV #{} {}: {}",
                 (interaction.getMessage().getChannel() == null || interaction.getMessage().getChannel().getName() == null) ? "null" : interaction.getMessage().getChannel().getName(),
                 interaction.getUser().getUsername(),
                 interaction.getComponentId()
         );
-        interaction.deferReply();
-
-        Player p = Player.get(interaction.getUser());
-        if (p == null) {
-            interaction.respondEphemeral(Config.user_not_registered);
-            return;
+        String[] data = interaction.getComponentId().split("_");
+        if (Config.INT_PUBLISHSTATS.equalsIgnoreCase(data[0])) {
+            interaction.deferEdit();
+        } else {
+            interaction.deferReply();
         }
 
-        String[] data = interaction.getComponentId().split("_");
+        Executor executor = QUEUE_INTERACTIONS.contains(data[0].toLowerCase())
+                ? queueExecutor : commandExecutor;
 
-        switch (data[0].toLowerCase()) {
+        if (executor == queueExecutor) {
+            executeQueuePlayerCommand(interaction.getUser(), data[0], p -> handleInteraction(interaction, data, p));
+        } else {
+            executeCommand(executor, data[0], () -> handleInteraction(interaction, data, getCommandPlayer(interaction.getUser())));
+        }
+    }
+
+    private void handleInteraction(DiscordInteraction interaction, String[] data, Player p) {
+            if (p == null) {
+                interaction.respondEphemeral(Config.user_not_registered);
+                return;
+            }
+
+            switch (data[0].toLowerCase()) {
             case Config.INT_PICK:
-                logic.cmdPick(interaction, p, Integer.parseInt(data[1]));
+                if (data.length != 4) {
+                    interaction.respondEphemeral("This pick is no longer available. Use the latest buttons.");
+                    break;
+                }
+                logic.cmdPick(interaction, p, data[1], Integer.parseInt(data[2]), Integer.parseInt(data[3]));
                 break;
 
             case Config.INT_LAUNCHAC:
@@ -1500,6 +1680,10 @@ public class PickupBot {
 
             case Config.INT_SEASONSTATS:
                 logic.showSeasonStats(interaction, Player.get(data[1]), Integer.parseInt(data[2]));
+                break;
+
+            case Config.INT_PUBLISHSTATS:
+                interaction.publishMessage();
                 break;
 
             case Config.INT_SEASONLIST:
@@ -1538,7 +1722,7 @@ public class PickupBot {
 //					break;
 //			}
 //			break;
-        }
+            }
     }
 
     private void handleForceAdd(String[] data, DiscordMessage msg) {
@@ -1570,7 +1754,7 @@ public class PickupBot {
                                 return;
                             }
                         }
-                        logic.cmdAddPlayer(playerToAdd, gametypes, true).forEach(m -> m.replyTo(msg));
+                        logic.queueAddPlayer(playerToAdd, gametypes, true, result -> result.replyTo(msg));
                     } else {
                         msg.reply(Config.no_gt_found);
                     }
@@ -1605,9 +1789,10 @@ public class PickupBot {
     }
 
     private void handleBanInfo(Player senderPlayer, String[] data, DiscordMessage msg) {
+        boolean extendedHistory = isChannel(PickupChannelType.ADMIN, msg.getChannel());
         if (data.length == 1) {
             if (senderPlayer != null) {
-                msg.reply(logic.printBanInfo(senderPlayer));
+                msg.reply(logic.printBanInfo(senderPlayer, extendedHistory));
             } else {
                 msg.reply(Config.user_not_registered);
             }
@@ -1625,7 +1810,7 @@ public class PickupBot {
             }
 
             if (pOther != null) {
-                msg.reply(logic.printBanInfo(pOther));
+                msg.reply(logic.printBanInfo(pOther, extendedHistory));
             } else msg.reply(Config.player_not_found);
         } else
             msg.reply(Config.wrong_argument_amount.replace(".cmd.", Config.USE_CMD_BANINFO));
@@ -1671,9 +1856,8 @@ public class PickupBot {
         List<Player> mentionedPlayers = new ArrayList<Player>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }
@@ -1700,9 +1884,8 @@ public class PickupBot {
         List<Player> mentionedPlayers = new ArrayList<Player>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }
@@ -1730,9 +1913,8 @@ public class PickupBot {
         List<DiscordMessage> sentMessages = new ArrayList<DiscordMessage>();
         Matcher m = Pattern.compile("<@(.*?)>").matcher(msg);
         while (m.find()) {
-            DiscordUser dsUser = discordService.getUserById(m.group(1));
-            Player playerMentioned = Player.get(dsUser);
-            if (dsUser != null) {
+            Player playerMentioned = Player.getCachedByDiscordId(m.group(1));
+            if (playerMentioned != null) {
                 mentionedPlayers.add(playerMentioned);
             }
         }

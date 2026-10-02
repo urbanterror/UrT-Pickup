@@ -107,7 +107,11 @@ public class Server {
             log.warn("Exception: ", e);
             return null;
         } finally {
-            try { this.socket.setSoTimeout(1000); } catch (SocketException ignored) {}
+            try {
+                this.socket.setSoTimeout(1000);
+            } catch (SocketException e) {
+                log.warn("Cannot restore RCON socket timeout for {}:{}", IP, port, e);
+            }
         }
     }
 
@@ -267,8 +271,10 @@ public class Server {
         try {
             InetAddress.getByName(IP).isReachable(1000);
         } catch (UnknownHostException e) {
+            log.warn("Cannot resolve server {}:{}", IP, port, e);
             return false;
         } catch (IOException e) {
+            log.warn("Cannot check server {}:{}", IP, port, e);
             return false;
         }
 
@@ -282,8 +288,10 @@ public class Server {
         try {
             InetAddress.getByName(IP).isReachable(1000);
         } catch (UnknownHostException e) {
+            log.warn("Cannot resolve server {}:{}", IP, port, e);
             return status;
         } catch (IOException e) {
+            log.warn("Cannot check server {}:{}", IP, port, e);
             return status;
         }
 

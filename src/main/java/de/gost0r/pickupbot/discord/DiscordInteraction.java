@@ -14,4 +14,8 @@ public interface DiscordInteraction extends InteractionRespond {
     DiscordMessage getMessage();
 
     List<String> getValues();
+
+    void deferEdit();
+
+    void publishMessage();
 }

@@ -13,4 +13,7 @@ public class PlayerRatingsRequest {
     @JsonProperty(value = "discord_ids")
     List<Long> discordIds;
 
+    @JsonProperty(value = "secondary_since")
+    String secondarySince;
+
 }
