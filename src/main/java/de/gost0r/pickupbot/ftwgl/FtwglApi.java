@@ -5,6 +5,7 @@ import de.gost0r.pickupbot.pickup.Config;
 import de.gost0r.pickupbot.pickup.Country;
 import de.gost0r.pickupbot.pickup.Player;
 import de.gost0r.pickupbot.pickup.Region;
+import de.gost0r.pickupbot.pickup.Season;
 import de.gost0r.pickupbot.pickup.server.Server;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,7 @@ import org.springframework.web.client.RestClient;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
@@ -176,27 +178,24 @@ public class FtwglApi {
         }
     }
 
-    public float getPlayerRatings(Player player) {
-        return getPlayerRatings(List.of(player)).getOrDefault(player, 0f);
-    }
-
-    public Map<Player, Float> getPlayerRatings(List<Player> playerList) {
+    public Map<Player, PlayerRating> getPlayerRatings(List<Player> playerList, Season season) {
         PlayerRatingsRequest request = PlayerRatingsRequest.builder()
                 .discordIds(playerList.stream()
                         .map(player -> Long.parseLong(player.getDiscordUser().getId()))
                         .toList())
+                .secondarySince(Instant.ofEpochMilli(season.startdate).atZone(ZoneOffset.UTC).toLocalDate().toString())
                 .build();
         try {
             PlayerRatingsResponse response = sendPostRequest("/ratings", request, PlayerRatingsResponse.class).getBody();
             assert response != null;
 
-            Map<Player, Float> ratings = new HashMap<>();
+            Map<Player, PlayerRating> ratings = new HashMap<>();
             for (Player player : playerList) {
+                long discordId = Long.parseLong(player.getDiscordUser().getId());
                 ratings.put(
                         player,
-                        response.getRatings()
-                                .getOrDefault(Long.parseLong(player.getDiscordUser().getId()), 0d)
-                                .floatValue()
+                        new PlayerRating(response.getRatings().getOrDefault(discordId, 0d).floatValue(),
+                                response.getSecondaryRatings().getOrDefault(discordId, 0d).floatValue())
                 );
             }
             return ratings;

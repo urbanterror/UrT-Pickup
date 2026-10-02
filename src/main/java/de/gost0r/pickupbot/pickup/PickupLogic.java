@@ -852,7 +852,7 @@ public class PickupLogic {
             msg = msg.replace(".kdr.", String.format("%.02f", stats.ctf_rating));
         } else {
             msg = msg.replace(".wdl.", String.format("%.02f", stats.ts_wdl.calcWinRatio() * 100d));
-            msg = msg.replace(".kdr.", String.format("%.02f", values.rating()));
+            msg = msg.replace(".kdr.", values.rating().display());
         }
 
         msg = msg.replace(".position.", String.valueOf(values.eloRank()));
@@ -964,7 +964,8 @@ public class PickupLogic {
 
         if (stats.ts_wdl.getTotal() < 5) {
             statsEmbed.addField("\u200b", "**TS**: ``" + stats.ts_wdl.getTotal() + "/5`` placement games", false);
-            statsEmbed.addField("Rating", String.format("%.02f", values.rating()), true);
+            statsEmbed.addField("Season rating", String.format("%.02f", values.rating().season()), true);
+            statsEmbed.addField("All-time rating", String.format("%.02f", values.rating().allTime()), true);
         } else {
             statsEmbed.addField("\u200b", "TS <:lr:401457276478554112>", false);
             statsEmbed.addField("Played", String.valueOf(stats.ts_wdl.getTotal()), true);
@@ -974,7 +975,8 @@ public class PickupLogic {
             // } else {
             // 	statsEmbed.addField("KDR", String.format("%.02f", stats.kdr) + " (#" + stats.kdrRank + ")", true);
             // }
-            statsEmbed.addField("Rating", String.format("%.02f", values.rating()), true);
+            statsEmbed.addField("Season rating", String.format("%.02f", values.rating().season()), true);
+            statsEmbed.addField("All-time rating", String.format("%.02f", values.rating().allTime()), true);
             if (stats.wdlRank == -1) {
                 statsEmbed.addField("Win %", Math.round(stats.ts_wdl.calcWinRatio() * 100d) + "%", true);
 

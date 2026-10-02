@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.MatchStats.Status;
 import de.gost0r.pickupbot.pickup.server.Server;
@@ -583,7 +584,7 @@ public class Match implements Runnable {
     private void startDraft(int generation, List<Player> players, List<DiscordChannel> destinations,
                             String threadTitle, List<DiscordChannel> threads, int attempt) {
         logic.bot.pickupIoExecutor.execute(() -> {
-            Map<Player, Float> ratings = Map.of();
+            Map<Player, PlayerRating> ratings = Map.of();
             String compareUrl = null;
             boolean success = false;
             try {
@@ -591,13 +592,13 @@ public class Match implements Runnable {
                 for (int i = threads.size(); i < destinations.size(); i++) {
                     threads.add(Objects.requireNonNull(destinations.get(i).createThread(threadTitle, true)));
                 }
-                ratings = logic.ftwglApi.getPlayerRatings(players);
+                ratings = logic.ftwglApi.getPlayerRatings(players, logic.currentSeason);
                 compareUrl = logic.ftwglApi.getComparePageUrl(players);
                 success = true;
             } catch (Exception e) {
                 log.warn("Unable to start match draft (attempt {}/{})", attempt, DRAFT_MAX_ATTEMPTS, e);
             }
-            Map<Player, Float> loadedRatings = ratings;
+            Map<Player, PlayerRating> loadedRatings = ratings;
             String loadedCompareUrl = compareUrl;
             boolean ready = success;
             logic.bot.queueExecutor.execute(() -> {
@@ -621,7 +622,7 @@ public class Match implements Runnable {
         });
     }
 
-    public void sortPlayers(Map<Player, Float> playerRatings, String compareUrl) {
+    public void sortPlayers(Map<Player, PlayerRating> lobbyRatings, String compareUrl) {
         // Sort players by elo
         List<Player> playerList = new ArrayList<Player>(playerStats.keySet());
 
@@ -639,9 +640,8 @@ public class Match implements Runnable {
             return;
         }
 
-        // Keep the original ratings for the lobby even when captain selection falls back to local scores.
-        Map<Player, Float> lobbyRatings = playerRatings;
-        playerRatings = new HashMap<>(playerRatings);
+        // Keep both ranges for display; captain selection uses the higher FTW rating.
+        Map<Player, Float> playerRatings = captainRatings(lobbyRatings);
         boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
         if (!useFtwOnly) playerRatings.clear();
 
@@ -1613,7 +1613,7 @@ public class Match implements Runnable {
         List<Player> allPlayers = new ArrayList<>();
         allPlayers.addAll(teamList.get("red"));
         allPlayers.addAll(teamList.get("blue"));
-        Map<Player, Float> playerRatings = logic.ftwglApi.getPlayerRatings(allPlayers);
+        Map<Player, Float> playerRatings = captainRatings(logic.ftwglApi.getPlayerRatings(allPlayers, logic.currentSeason));
         boolean useFtwOnly = playerRatings.values().stream().filter(r -> r != null && r > 0f).count() >= 2;
         if (!useFtwOnly) playerRatings.clear();
 
@@ -1659,7 +1659,13 @@ public class Match implements Runnable {
         }
     }
 
-    private DiscordEmbed getLobbyEmbed(List<Player> lobbyPlayers, Map<Player, Float> playerRatings, String compareUrl) {
+    private static Map<Player, Float> captainRatings(Map<Player, PlayerRating> ratings) {
+        Map<Player, Float> result = new HashMap<>();
+        ratings.forEach((player, rating) -> result.put(player, rating.captainRating()));
+        return result;
+    }
+
+    private DiscordEmbed getLobbyEmbed(List<Player> lobbyPlayers, Map<Player, PlayerRating> playerRatings, String compareUrl) {
         DiscordEmbed embed = new DiscordEmbed();
         embed.setTitle("Lobby");
         embed.setColor(7056881);
@@ -1687,7 +1693,8 @@ public class Match implements Runnable {
                 rating = String.format("%.02f", p.stats.ctf_rating);
             } else {
                 wdl = String.valueOf(Math.round(p.stats.ts_wdl.calcWinRatio() * 100d));
-                rating = String.format("%.02f", playerRatings.get(p));
+                PlayerRating ftwRating = playerRatings.getOrDefault(p, PlayerRating.ZERO);
+                rating = String.format("%.02f / %.02f", ftwRating.season(), ftwRating.allTime());
             }
 
             rating_wdl_string.append("``").append(rating).append("`` | ``").append(wdl).append("``\n");
@@ -1697,7 +1704,8 @@ public class Match implements Runnable {
         }
 
         embed.addField("Players", lobby_players_string.toString(), true);
-        embed.addField("Rating | Win%", rating_wdl_string.toString(), true);
+        embed.addField(gametype.getName().equals("CTF") ? "Rating | Win%" : "R: Season / All-time | Win%",
+                rating_wdl_string.toString(), true);
         embed.addField("Ping", ping_string.toString(), true);
 
         if (compareUrl != null) {

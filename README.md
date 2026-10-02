@@ -147,6 +147,20 @@ appear in one GlitchTip issue, separate from the warning.
 - !match <id>
 - !last </@DiscordUser|urtauth/>
 
+### FTW ratings
+
+For TS, `!stats`, `!elo`, and draft lobbies show current-season and all-time FTW
+ratings separately. The bot sends the current season's start date (UTC,
+`YYYY-MM-DD`) as `secondary_since` to `POST /api/v1/ratings`.
+The response's `ratings` map contains the all-time rating and
+`secondary_ratings` contains the season rating, both keyed by Discord ID.
+FTW's all-time range starts July 3, 2025; the season range runs from midnight
+on the requested date onward. Missing ratings display as `0.00`.
+
+Captain selection and betting odds use the higher of the two ratings per
+player, retaining the local-score fallback when fewer than two players have
+positive FTW ratings. CTF displays continue to use local CTF ratings.
+
 
 ### Admin Commands
 

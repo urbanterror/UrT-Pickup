@@ -2,6 +2,7 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.*;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.permission.PickupRoleCache;
 import de.gost0r.pickupbot.pickup.server.Server;
@@ -43,8 +44,7 @@ class PickupLogicTest {
         ftw = mock(FtwglApi.class);
         when(ftw.hasLauncherOn(any())).thenReturn(true);
         when(ftw.checkIfPingStored(any())).thenReturn(true);
-        when(ftw.getPlayerRatings(any(Player.class))).thenReturn(0f);
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         when(ftw.getTopPlayerRatings()).thenReturn(Collections.emptyMap());
         when(ftw.requestPingUrl(any())).thenReturn("https://test/ping");
 
@@ -558,24 +558,37 @@ class PickupLogicTest {
         var hotel = players.get("hotel");
         var charlie = players.get("charlie");
 
-        when(ftw.getPlayerRatings(anyList())).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(anyList(), any())).thenAnswer(invocation -> {
             List<Player> requestedPlayers = invocation.getArgument(0);
-            Map<Player, Float> ratings = new HashMap<>();
+            Map<Player, PlayerRating> ratings = new HashMap<>();
             for (Player player : requestedPlayers) {
                 if (player.equals(india)) {
-                    ratings.put(player, 2100f);
+                    ratings.put(player, new PlayerRating(1.1f, 2.1f));
                 } else if (player.equals(echo)) {
-                    ratings.put(player, 1900f);
+                    ratings.put(player, new PlayerRating(1.9f, 1.0f));
+                } else if (player.equals(charlie)) {
+                    ratings.put(player, new PlayerRating(1.7f, 1.7f));
                 }
             }
             return ratings;
         });
 
         Match match = buildTsCaptainMatch();
-        match.sortPlayers(ftw.getPlayerRatings(match.getPlayerList()), null);
+        var ratings = ftw.getPlayerRatings(match.getPlayerList(), logic.currentSeason);
+        match.sortPlayers(ratings, null);
+
+        var lobbyMethod = Match.class.getDeclaredMethod("getLobbyEmbed", List.class, Map.class, String.class);
+        lobbyMethod.setAccessible(true);
+        DiscordEmbed lobby = (DiscordEmbed) lobbyMethod.invoke(match, List.of(india, echo, hotel), ratings, null);
+        String lobbyRatings = lobby.getFields().stream()
+                .filter(field -> field.name().equals("R: Season / All-time | Win%"))
+                .findFirst().orElseThrow().value();
+        assertTrue(lobbyRatings.contains(String.format("%.02f / %.02f", 2.1f, 1.1f)));
+        assertTrue(lobbyRatings.contains(String.format("%.02f / %.02f", 1.0f, 1.9f)));
+        assertTrue(lobbyRatings.contains(String.format("%.02f / %.02f", 0f, 0f)));
 
         assertTrue(match.getPlayerList().contains(hotel), "Match should include unrated players");
-        assertTrue(match.getPlayerList().contains(charlie), "Match should include unrated players");
+        assertTrue(match.getPlayerList().contains(charlie), "Match should include the lower-rated player");
         assertEquals(india, match.getTeamRed().get(0), "Highest FTW-rated player should be red captain");
         assertEquals(echo, match.getTeamBlue().get(0), "Second-highest FTW-rated player should be blue captain");
         assertNotEquals(hotel, match.getTeamRed().get(0), "Unrated player should not become captain when rated players exist");
@@ -584,7 +597,7 @@ class PickupLogicTest {
         assertNotEquals(charlie, match.getTeamBlue().get(0), "Unrated player should not become captain when rated players exist");
         assertEquals(echo, match.getCaptainsTurn(), "Blue captain should pick first");
 
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
     }
 
     @Test void tsSortPlayers_fallsBackToCaptainScoreWhenTooFewFtwRatingsExist() throws Exception {
@@ -592,24 +605,24 @@ class PickupLogicTest {
         var hotel = players.get("hotel");
         var charlie = players.get("charlie");
 
-        when(ftw.getPlayerRatings(anyList())).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(anyList(), any())).thenAnswer(invocation -> {
             List<Player> requestedPlayers = invocation.getArgument(0);
-            Map<Player, Float> ratings = new HashMap<>();
+            Map<Player, PlayerRating> ratings = new HashMap<>();
             for (Player player : requestedPlayers) {
                 if (player.equals(india)) {
-                    ratings.put(player, 2500f);
+                    ratings.put(player, new PlayerRating(2.5f, 0f));
                 }
             }
             return ratings;
         });
 
         Match match = buildTsCaptainMatch();
-        match.sortPlayers(ftw.getPlayerRatings(match.getPlayerList()), null);
+        match.sortPlayers(ftw.getPlayerRatings(match.getPlayerList(), logic.currentSeason), null);
 
         assertEquals(hotel, match.getTeamRed().get(0), "Fallback captain selection should use local captain score");
         assertEquals(charlie, match.getTeamBlue().get(0), "Fallback captain selection should ignore a lone FTW rating");
 
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
     }
 
     // ========== Helpers ==========

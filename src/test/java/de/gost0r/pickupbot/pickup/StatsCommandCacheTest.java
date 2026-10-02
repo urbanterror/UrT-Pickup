@@ -2,6 +2,7 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -32,25 +33,25 @@ class StatsCommandCacheTest {
 
     private void results(Player target, int rank, float rating) {
         when(db.getRankForPlayer(target)).thenReturn(rank);
-        when(ftw.getPlayerRatings(List.of(target))).thenReturn(Map.of(target, rating));
+        when(ftw.getPlayerRatings(eq(List.of(target)), any(Season.class))).thenReturn(Map.of(target, rating(rating)));
     }
 
     @Test
     void reusesLookupsAcrossPlayerReloadsAndExpiresAfterSixtySeconds() {
         results(player, 3, 1.25f);
-        assertEquals(new StatsCommandCache.Values(3, 1.25f), get(player));
+        assertEquals(new StatsCommandCache.Values(3, rating(1.25f)), get(player));
         Player reloaded = player("1", "alpha");
         results(reloaded, 2, 1.5f);
         clock.set(Duration.ofSeconds(60).toNanos() - 1);
-        assertEquals(new StatsCommandCache.Values(3, 1.25f), get(reloaded));
+        assertEquals(new StatsCommandCache.Values(3, rating(1.25f)), get(reloaded));
         verify(db, never()).getRankForPlayer(reloaded);
-        verify(ftw, never()).getPlayerRatings(List.of(reloaded));
+        verify(ftw, never()).getPlayerRatings(List.of(reloaded), season);
 
         clock.incrementAndGet();
-        assertEquals(new StatsCommandCache.Values(2, 1.5f), get(reloaded));
+        assertEquals(new StatsCommandCache.Values(2, rating(1.5f)), get(reloaded));
         get(reloaded);
         verify(db).getRankForPlayer(reloaded);
-        verify(ftw).getPlayerRatings(List.of(reloaded));
+        verify(ftw).getPlayerRatings(List.of(reloaded), season);
     }
 
     @Test
@@ -63,7 +64,7 @@ class StatsCommandCacheTest {
         cache.get(player, new Season(11, 1, 1000), true, db, ftw);
         cache.get(player, new Season(12, 1, 1000), true, db, ftw);
         verify(db, times(4)).getRankForPlayer(player);
-        verify(ftw, times(4)).getPlayerRatings(List.of(player));
+        verify(ftw, times(4)).getPlayerRatings(eq(List.of(player)), any(Season.class));
 
         Player renamed = player("1", "bravo");
         Player other = player("2", "alpha");
@@ -76,11 +77,11 @@ class StatsCommandCacheTest {
     @Test
     void retriesFailuresButCachesSuccessfulZeroRatings() {
         when(db.getRankForPlayer(player)).thenReturn(3);
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(), Map.of(player, 0f));
-        assertEquals(0f, get(player).rating());
-        assertEquals(0f, get(player).rating());
+        when(ftw.getPlayerRatings(List.of(player), season)).thenReturn(Map.of(), Map.of(player, PlayerRating.ZERO));
+        assertEquals(PlayerRating.ZERO, get(player).rating());
+        assertEquals(PlayerRating.ZERO, get(player).rating());
         get(player);
-        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), season);
 
         Player.invalidateSeasonStats();
         when(db.getRankForPlayer(player)).thenReturn(-1, 2);
@@ -97,7 +98,7 @@ class StatsCommandCacheTest {
         cache.get(player, season, false, db, ftw);
         verify(db).getRankForPlayer(player);
         verifyNoInteractions(ftw);
-        assertEquals(1.25f, get(player).rating());
+        assertEquals(rating(1.25f), get(player).rating());
     }
 
     @Test
@@ -107,20 +108,20 @@ class StatsCommandCacheTest {
         results(other, 4, 2f);
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(List.of(player), season)).thenAnswer(invocation -> {
             entered.countDown();
             assertTrue(release.await(5, TimeUnit.SECONDS));
-            return Map.of(player, 1.25f);
+            return Map.of(player, rating(1.25f));
         });
         try (var executor = Executors.newFixedThreadPool(3)) {
             try {
                 var first = executor.submit(() -> get(player));
                 assertTrue(entered.await(5, TimeUnit.SECONDS));
                 var second = executor.submit(() -> get(player));
-                assertEquals(2f, executor.submit(() -> get(other)).get(5, TimeUnit.SECONDS).rating());
+                assertEquals(rating(2f), executor.submit(() -> get(other)).get(5, TimeUnit.SECONDS).rating());
                 release.countDown();
                 assertEquals(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS));
-                verify(ftw).getPlayerRatings(List.of(player));
+                verify(ftw).getPlayerRatings(List.of(player), season);
                 verify(db).getRankForPlayer(player);
             } finally {
                 release.countDown();
@@ -131,13 +132,13 @@ class StatsCommandCacheTest {
     @Test
     void revisionChangedDuringLookupIsNotReused() {
         results(player, 3, 1.25f);
-        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(List.of(player), season)).thenAnswer(invocation -> {
             Player.invalidateSeasonStats();
-            return Map.of(player, 1.25f);
+            return Map.of(player, rating(1.25f));
         });
         get(player);
         get(player);
-        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), season);
     }
 
     @Test
@@ -150,42 +151,42 @@ class StatsCommandCacheTest {
         ranks.put(player, 2);
         ranks.put(other, 3);
         ranks.put(placement, 4);
-        when(ftw.getPlayerRatings(List.of(player, other))).thenReturn(Map.of(player, 1.5f, other, 2f));
+        when(ftw.getPlayerRatings(List.of(player, other), season)).thenReturn(Map.of(player, rating(1.5f), other, rating(2f)));
 
         cache.warm(ranks, season, Player.currentSeasonStatsRevision(), ftw);
 
-        assertEquals(new StatsCommandCache.Values(2, 1.5f), get(player));
-        assertEquals(new StatsCommandCache.Values(3, 2f), get(other));
+        assertEquals(new StatsCommandCache.Values(2, rating(1.5f)), get(player));
+        assertEquals(new StatsCommandCache.Values(3, rating(2f)), get(other));
         assertEquals(4, cache.get(placement, season, false, db, ftw).eloRank());
         verifyNoInteractions(db);
-        verify(ftw).getPlayerRatings(List.of(player, other));
+        verify(ftw).getPlayerRatings(List.of(player, other), season);
         verifyNoMoreInteractions(ftw);
     }
 
     @Test
     void failedPostMatchFetchIsRetriedOnDemand() {
         player.stats.ts_wdl.win = 5;
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(), Map.of(player, 1.5f));
+        when(ftw.getPlayerRatings(List.of(player), season)).thenReturn(Map.of(), Map.of(player, rating(1.5f)));
         when(db.getRankForPlayer(player)).thenReturn(2);
 
         cache.warm(Map.of(player, 2), season, Player.currentSeasonStatsRevision(), ftw);
 
-        assertEquals(1.5f, get(player).rating());
-        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        assertEquals(rating(1.5f), get(player).rating());
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), season);
     }
 
     @Test
     void postMatchBatchCannotPopulateCacheForANewerRevision() {
         player.stats.ts_wdl.win = 5;
-        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(List.of(player), season)).thenAnswer(invocation -> {
             Player.invalidateSeasonStats();
-            return Map.of(player, 1.25f);
+            return Map.of(player, rating(1.25f));
         });
         cache.warm(Map.of(player, 3), season, Player.currentSeasonStatsRevision(), ftw);
         results(player, 2, 1.5f);
 
-        assertEquals(new StatsCommandCache.Values(2, 1.5f), get(player));
-        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        assertEquals(new StatsCommandCache.Values(2, rating(1.5f)), get(player));
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), season);
         verify(db).getRankForPlayer(player);
     }
 
@@ -195,24 +196,24 @@ class StatsCommandCacheTest {
         when(db.getRankForPlayer(player)).thenReturn(2);
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(ftw.getPlayerRatings(List.of(player))).thenAnswer(invocation -> {
+        when(ftw.getPlayerRatings(List.of(player), season)).thenAnswer(invocation -> {
             entered.countDown();
             assertTrue(release.await(5, TimeUnit.SECONDS));
-            return Map.of(player, 1.25f);
-        }).thenReturn(Map.of(player, 1.5f));
+            return Map.of(player, rating(1.25f));
+        }).thenReturn(Map.of(player, rating(1.5f)));
         long revision = Player.currentSeasonStatsRevision();
 
         try (var executor = Executors.newFixedThreadPool(2)) {
             try {
                 var batch = executor.submit(() -> cache.warm(Map.of(player, 3), season, revision, ftw));
                 assertTrue(entered.await(5, TimeUnit.SECONDS));
-                var expected = new StatsCommandCache.Values(2, 1.5f);
+                var expected = new StatsCommandCache.Values(2, rating(1.5f));
                 assertEquals(expected, executor.submit(() -> get(player)).get(5, TimeUnit.SECONDS));
                 release.countDown();
                 batch.get(5, TimeUnit.SECONDS);
                 assertEquals(expected, get(player));
                 verify(db).getRankForPlayer(player);
-                verify(ftw, times(2)).getPlayerRatings(List.of(player));
+                verify(ftw, times(2)).getPlayerRatings(List.of(player), season);
             } finally {
                 release.countDown();
             }
@@ -227,14 +228,14 @@ class StatsCommandCacheTest {
         doReturn(null).when(logic).getGametypeByString(anyString());
         player.stats.ts_wdl.win = 5;
         player.setCurrentSeasonStats(player.stats, season, Player.currentSeasonStatsRevision());
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.5f));
+        when(ftw.getPlayerRatings(List.of(player), season)).thenReturn(Map.of(player, rating(1.5f)));
 
         logic.warmStatsCommandCache(Map.of(player, 2), season, Player.currentSeasonStatsRevision());
 
         assertTrue(logic.cmdGetStats(player).getEmbed().getDescription().contains("#2"));
         logic.cmdGetElo(player, new Gametype("TS", 5, true, false));
         verifyNoInteractions(db);
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), season);
         verifyNoMoreInteractions(ftw);
     }
 
@@ -266,7 +267,7 @@ class StatsCommandCacheTest {
         verify(db).getRankForPlayer(player);
         verify(db, never()).getPlayerStats(any(), any());
         verify(db, never()).tryGetPlayerStats(any(), any());
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), season);
     }
 
     @ParameterizedTest
@@ -285,8 +286,8 @@ class StatsCommandCacheTest {
         player.setCurrentSeasonStats(stats, season, Player.currentSeasonStatsRevision());
 
         var embed = logic.cmdGetStats(player).getEmbed();
-        assertEquals(List.of(String.format("%.02f", 1.25f), String.format("%.02f", 2.5f)),
-                embed.getFields().stream().filter(field -> field.name().equals("Rating"))
+        assertEquals(List.of(String.format("%.02f", 1.25f), String.format("%.02f", 1.75f), String.format("%.02f", 2.5f)),
+                embed.getFields().stream().filter(field -> field.name().toLowerCase().endsWith("rating"))
                         .map(field -> field.value()).toList());
         if (games < 5) {
             assertTrue(embed.getFields().stream().anyMatch(field ->
@@ -297,12 +298,16 @@ class StatsCommandCacheTest {
             assertFalse(embed.getFields().stream().anyMatch(field -> field.value().contains("placement games")));
         }
         assertTrue(logic.cmdGetElo(player, new Gametype("TS", 5, true, false))
-                .endsWith(String.format("%.02f", 1.25f)));
+                .endsWith(rating(1.25f).display()));
         assertTrue(logic.cmdGetElo(player, new Gametype("CTF", 5, true, false))
                 .endsWith(String.format("%.02f", 2.5f)));
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), season);
         verify(db, never()).getPlayerStats(any(), any());
         verify(db, never()).tryGetPlayerStats(any(), any());
+    }
+
+    private static PlayerRating rating(float seasonRating) {
+        return new PlayerRating(seasonRating + 0.5f, seasonRating);
     }
 
     private static Player player(String id, String auth) {

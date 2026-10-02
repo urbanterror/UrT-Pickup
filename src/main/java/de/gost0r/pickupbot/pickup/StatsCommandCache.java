@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -13,7 +14,7 @@ final class StatsCommandCache {
     private static final long TTL_NANOS = Duration.ofSeconds(60).toNanos();
     private static final int MAX_ENTRIES = 1024;
 
-    record Values(int eloRank, float rating) { }
+    record Values(int eloRank, PlayerRating rating) { }
 
     private record Key(String userId, String auth, int season, long start, long end,
                        long revision, boolean includeRating) { }
@@ -45,11 +46,11 @@ final class StatsCommandCache {
                 .filter(player -> ranks.get(player) > 0 && player.stats.ts_wdl.getTotal() >= 5)
                 .toList();
         // Match participants share one FTW request; ranks were already read during stats refresh.
-        Map<Player, Float> ratings = ratedPlayers.isEmpty() ? Map.of() : ftw.getPlayerRatings(ratedPlayers);
+        Map<Player, PlayerRating> ratings = ratedPlayers.isEmpty() ? Map.of() : ftw.getPlayerRatings(ratedPlayers, season);
         if (Player.currentSeasonStatsRevision() != revision) return;
         ranks.forEach((player, rank) -> {
             if (rank <= 0) return;
-            store(player, season, revision, false, new Values(rank, 0f));
+            store(player, season, revision, false, new Values(rank, PlayerRating.ZERO));
             if (ratings.containsKey(player)) {
                 store(player, season, revision, true, new Values(rank, ratings.get(player)));
             }
@@ -87,8 +88,8 @@ final class StatsCommandCache {
                 return entry.values;
             }
             int rank = db.getRankForPlayer(player);
-            Map<Player, Float> ratings = includeRating ? ftw.getPlayerRatings(List.of(player)) : Map.of();
-            Values values = new Values(rank, ratings.getOrDefault(player, 0f));
+            Map<Player, PlayerRating> ratings = includeRating ? ftw.getPlayerRatings(List.of(player), season) : Map.of();
+            Values values = new Values(rank, ratings.getOrDefault(player, PlayerRating.ZERO));
             // The API's empty map and database's -1 are failure fallbacks, not reusable results.
             if (rank > 0 && (!includeRating || ratings.containsKey(player))
                     && Player.currentSeasonStatsRevision() == key.revision()) {

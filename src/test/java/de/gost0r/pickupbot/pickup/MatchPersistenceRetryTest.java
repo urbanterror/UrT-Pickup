@@ -3,6 +3,7 @@ package de.gost0r.pickupbot.pickup;
 import de.gost0r.pickupbot.discord.DiscordEmbed;
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import de.gost0r.pickupbot.permission.PermissionService;
 import de.gost0r.pickupbot.pickup.server.Server;
 import org.junit.jupiter.api.Test;
@@ -50,14 +51,14 @@ class MatchPersistenceRetryTest {
         before.ts_wdl.win = 5;
         player.setCurrentSeasonStats(before, logic.currentSeason, Player.currentSeasonStatsRevision());
         when(logic.db.getRankForPlayer(player)).thenReturn(3);
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.25f));
+        when(ftw.getPlayerRatings(List.of(player), logic.currentSeason)).thenReturn(Map.of(player, new PlayerRating(1.75f, 1.25f)));
         assertTrue(logic.cmdGetStats(player).getEmbed().getDescription().contains("#3"));
 
         PlayerStats after = new PlayerStats();
         after.ts_wdl.win = 6;
         when(logic.db.tryGetPlayerStats(player, logic.currentSeason)).thenReturn(after);
         when(logic.db.getRankForPlayer(player)).thenReturn(2);
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.5f));
+        when(ftw.getPlayerRatings(List.of(player), logic.currentSeason)).thenReturn(Map.of(player, new PlayerRating(2f, 1.5f)));
         clearInvocations(logic.db, ftw);
         Match match = spy(new Match(logic, new Gametype("TS", 0, true, false),
                 List.of(), mock(PermissionService.class)));
@@ -75,17 +76,18 @@ class MatchPersistenceRetryTest {
             assertNotNull(refresh.get());
             refresh.get().run();
             verify(logic.db).tryGetPlayerStats(player, logic.currentSeason);
-            verify(ftw).getPlayerRatings(List.of(player));
+            verify(ftw).getPlayerRatings(List.of(player), logic.currentSeason);
         }
 
         DiscordEmbed response = logic.cmdGetStats(player).getEmbed();
         assertTrue(response.getDescription().contains("#2"));
         assertTrue(response.getFields().contains(new DiscordEmbed.Field("Played", "6", true)));
-        assertTrue(response.getFields().contains(new DiscordEmbed.Field("Rating", String.format("%.02f", 1.5f), true)));
+        assertTrue(response.getFields().contains(new DiscordEmbed.Field("Season rating", String.format("%.02f", 1.5f), true)));
+        assertTrue(response.getFields().contains(new DiscordEmbed.Field("All-time rating", String.format("%.02f", 2f), true)));
         logic.cmdGetStats(player);
         verify(logic.db).tryGetPlayerStats(player, logic.currentSeason);
         verify(logic.db).getRankForPlayer(player);
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), logic.currentSeason);
     }
 
     @ParameterizedTest
@@ -178,7 +180,7 @@ class MatchPersistenceRetryTest {
         before.ts_wdl.win = 5;
         player.setCurrentSeasonStats(before, logic.currentSeason, revision);
         when(logic.db.getRankForPlayer(player)).thenReturn(3);
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.25f));
+        when(ftw.getPlayerRatings(List.of(player), logic.currentSeason)).thenReturn(Map.of(player, new PlayerRating(1.75f, 1.25f)));
         assertTrue(logic.cmdGetStats(player).getEmbed().getDescription().contains("#3"));
 
         Match match = spy(new Match(logic, new Gametype("TS", 0, true, false),
@@ -214,7 +216,7 @@ class MatchPersistenceRetryTest {
         after.ts_wdl.win = 6;
         when(logic.db.tryGetPlayerStats(player, logic.currentSeason)).thenReturn(after);
         when(logic.db.getRankForPlayer(player)).thenReturn(2);
-        when(ftw.getPlayerRatings(List.of(player))).thenReturn(Map.of(player, 1.5f));
+        when(ftw.getPlayerRatings(List.of(player), logic.currentSeason)).thenReturn(Map.of(player, new PlayerRating(2f, 1.5f)));
         clearInvocations(logic.db, ftw);
 
         assertSame(failure, assertThrows(IllegalStateException.class, match::retryPendingSave));
@@ -245,9 +247,10 @@ class MatchPersistenceRetryTest {
         DiscordEmbed response = logic.cmdGetStats(player).getEmbed();
         assertTrue(response.getDescription().contains("#2"));
         assertTrue(response.getFields().contains(new DiscordEmbed.Field("Played", "6", true)));
-        assertTrue(response.getFields().contains(new DiscordEmbed.Field("Rating", String.format("%.02f", 1.5f), true)));
+        assertTrue(response.getFields().contains(new DiscordEmbed.Field("Season rating", String.format("%.02f", 1.5f), true)));
+        assertTrue(response.getFields().contains(new DiscordEmbed.Field("All-time rating", String.format("%.02f", 2f), true)));
         verify(logic.db).tryGetPlayerStats(player, logic.currentSeason);
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), logic.currentSeason);
 
         match.retryPendingSave();
         assertEquals(revision + 1, Player.currentSeasonStatsRevision());

@@ -54,8 +54,7 @@ class PickupBotCommandRoutingTest {
         FtwglApi ftw = mock(FtwglApi.class);
         when(ftw.hasLauncherOn(any())).thenReturn(true);
         when(ftw.checkIfPingStored(any())).thenReturn(true);
-        when(ftw.getPlayerRatings(any(Player.class))).thenReturn(0f);
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         when(ftw.getTopPlayerRatings()).thenReturn(Collections.emptyMap());
         when(ftw.requestPingUrl(any())).thenReturn("https://test/ping");
 

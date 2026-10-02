@@ -823,7 +823,7 @@ class AsyncQueueLifecycleTest {
         DiscordChannel thread = mock(DiscordChannel.class);
         when(channel.createThread(any(), eq(true))).thenReturn(thread);
         set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
-        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"))
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"))
                 .thenReturn(Map.of());
         Match draft = spy(pendingDraft());
         doReturn(List.of(player)).when(draft).getPlayerList();
@@ -842,7 +842,7 @@ class AsyncQueueLifecycleTest {
 
         verify(channel).createThread(any(), eq(true));
         verify(thread, never()).delete();
-        verify(ftw, times(2)).getPlayerRatings(List.of(player));
+        verify(ftw, times(2)).getPlayerRatings(List.of(player), logic.currentSeason);
         verify(draft).sortPlayers(anyMap(), any());
         assertEquals(List.of(thread), draft.threadChannels);
     }
@@ -853,7 +853,7 @@ class AsyncQueueLifecycleTest {
         DiscordChannel thread = mock(DiscordChannel.class);
         when(channel.createThread(any(), eq(true))).thenReturn(thread);
         set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
-        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"));
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"));
         Match draft = pendingDraft();
         @SuppressWarnings("unchecked")
         List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
@@ -866,7 +866,7 @@ class AsyncQueueLifecycleTest {
 
         verify(channel).createThread(any(), eq(true));
         verify(thread).delete();
-        verify(ftw, times(3)).getPlayerRatings(anyList());
+        verify(ftw, times(3)).getPlayerRatings(anyList(), any());
         assertEquals(MatchState.Signup, draft.getMatchState());
         assertFalse(logic.isOngoingMatch(draft));
         assertEquals(0, io.size());
@@ -882,7 +882,7 @@ class AsyncQueueLifecycleTest {
         when(second.createThread(any(), eq(true))).thenThrow(new IllegalStateException("Discord unavailable"))
                 .thenReturn(secondThread);
         set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(first, second)));
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         Match draft = spy(pendingDraft());
         doReturn(List.of(player)).when(draft).getPlayerList();
         doNothing().when(draft).sortPlayers(anyMap(), any());
@@ -908,7 +908,7 @@ class AsyncQueueLifecycleTest {
         DiscordChannel thread = mock(DiscordChannel.class);
         when(channel.createThread(any(), eq(true))).thenReturn(thread);
         set(logic, "channels", Map.of(PickupChannelType.PUBLIC, List.of(channel)));
-        when(ftw.getPlayerRatings(anyList())).thenThrow(new IllegalStateException("FTW unavailable"));
+        when(ftw.getPlayerRatings(anyList(), any())).thenThrow(new IllegalStateException("FTW unavailable"));
         Match draft = pendingDraft();
         draft.launch(mock(Server.class));
         io.runNext();
@@ -916,7 +916,7 @@ class AsyncQueueLifecycleTest {
         queue.runNext();
 
         verify(thread).delete();
-        verify(ftw).getPlayerRatings(anyList());
+        verify(ftw).getPlayerRatings(anyList(), any());
         assertEquals(0, io.size());
         assertEquals(MatchState.Signup, draft.getMatchState());
     }
@@ -933,7 +933,7 @@ class AsyncQueueLifecycleTest {
         when(draftLogic.getChannelByType(PickupChannelType.PUBLIC)).thenReturn(List.of(channel));
         when(draftLogic.getDynamicServers()).thenReturn(true);
         when(draftLogic.isOngoingMatch(any())).thenReturn(true);
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         Match draft = spy(new Match(draftLogic, gametype, List.of(), mock(PermissionService.class)));
         set(draft, "state", MatchState.AwaitingServer);
         doReturn(List.of(player)).when(draft).getPlayerList();
@@ -942,12 +942,12 @@ class AsyncQueueLifecycleTest {
 
         draft.launch(server);
         verifyNoInteractions(channel);
-        verify(ftw, never()).getPlayerRatings(anyList());
+        verify(ftw, never()).getPlayerRatings(anyList(), any());
         assertEquals(1, io.size());
 
         io.runNext();
         verify(channel).createThread(any(), eq(true));
-        verify(ftw).getPlayerRatings(List.of(player));
+        verify(ftw).getPlayerRatings(List.of(player), draftLogic.currentSeason);
         verify(draft, never()).sortPlayers(anyMap(), any());
         queue.runNext();
         verify(draft).sortPlayers(anyMap(), any());
@@ -964,7 +964,7 @@ class AsyncQueueLifecycleTest {
         draftLogic.db = mock(Database.class);
         when(draftLogic.getChannelByType(PickupChannelType.PUBLIC)).thenReturn(List.of(channel));
         when(draftLogic.isOngoingMatch(any())).thenReturn(false);
-        when(ftw.getPlayerRatings(anyList())).thenReturn(Map.of());
+        when(ftw.getPlayerRatings(anyList(), any())).thenReturn(Map.of());
         Match draft = spy(new Match(draftLogic, gametype, List.of(), mock(PermissionService.class)));
         set(draft, "state", MatchState.AwaitingServer);
         doReturn(List.of(player)).when(draft).getPlayerList();
