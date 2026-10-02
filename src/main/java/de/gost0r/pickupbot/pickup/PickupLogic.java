@@ -1739,11 +1739,11 @@ public class PickupLogic {
             regionFlag = server.getRegionFlag(getDynamicServers() || (gametype != null && gametype.getTeamSize() == 0), true);
         }
         embed.setTitle(regionFlag + " Match #" + summary.id
-                + (summary.seasonGameNumber == null ? "" : " · " + summary.seasonGameNumber.label(summary.gametype)));
+                + (summary.seasonGameNumber == null ? "" : " · " + summary.seasonGameNumber.label()));
         embed.setColor(7056881);
 
         if (map != null && gametype != null) {
-            String mapName = "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")";
+            String mapName = map.name + " (" + map.getDiscordDownloadLink() + ")";
             if (gametype.getPrivate()) {
                 embed.setDescription(":lock: " + mapName);
             } else {

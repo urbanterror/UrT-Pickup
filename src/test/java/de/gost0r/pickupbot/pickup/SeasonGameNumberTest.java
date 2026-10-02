@@ -60,14 +60,16 @@ class SeasonGameNumberTest {
             when(logic.getMapByName("ut4_casa")).thenReturn(new GameMap("ut4_casa"));
             Match restored = database.loadMatch(50);
             assertEquals(new SeasonGameNumber(11, 2), restored.getSeasonGameNumber());
-            assertTrue(restored.getMatchInfo().contains("Season 11: TS GAME #2"));
+            assertTrue(restored.getMatchInfo().contains("Season 11: Game #2"));
             assertTrue(restored.getMatchInfo().contains("#50"));
-            assertTrue(restored.getMatchEmbed(false).getTitle().contains("Match #50 · Season 11: TS GAME #2"));
+            assertTrue(restored.getMatchEmbed(false).getTitle().contains("Match #50 · Season 11: Game #2"));
+            String mapDescription = "ut4_casa (" + new GameMap("ut4_casa").getDiscordDownloadLink() + ")";
+            assertEquals(mapDescription, restored.getMatchEmbed(false).getDescription());
             restored.getServer().region = Region.EU;
-            assertEquals("**TS: Match #50 · Season 11: TS GAME #2** :flag_eu: (avg ELO: 0)",
+            assertEquals("**TS: Match #50 · Season 11: Game #2** :flag_eu: (avg ELO: 0)",
                     restored.buildStartAnnouncementHead());
             assertTrue(restored.insertMatchNumber(Config.pkup_go_player)
-                    .startsWith("**Match #50 · Season 11: TS GAME #2**"));
+                    .startsWith("**Match #50 · Season 11: Game #2**"));
 
             PickupBot originalBot = logic.bot;
             PickupBot bot = mock(PickupBot.class);
@@ -77,16 +79,22 @@ class SeasonGameNumberTest {
             sendAftermath.invoke(restored);
             var resultText = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(bot).sendMsg(anyList(), resultText.capture(), any());
-            assertTrue(resultText.getValue().startsWith("**TS**: Aftermath #50 · Season 11: TS GAME #2 (ut4_casa):"));
+            assertTrue(resultText.getValue().startsWith("**TS**: Aftermath #50 · Season 11: Game #2 (ut4_casa):"));
             logic.bot = originalBot;
 
             PickupLogic displayLogic = displayLogic(logic.bot, database, ts);
             setField(displayLogic, "ongoingMatches", List.of(restored));
             PickupReply liveReply = displayLogic.cmdLive(mock(DiscordChannel.class)).getFirst();
-            assertTrue(liveReply.getMessage().contains("Season 11: TS GAME #2"));
+            assertTrue(liveReply.getMessage().contains("Season 11: Game #2"));
             setField(displayLogic, "ongoingMatches", List.of());
             PickupReply historicalReply = displayLogic.cmdDisplayMatch("50");
-            assertTrue(historicalReply.getEmbed().getTitle().contains("Match #50 · Season 11: TS GAME #2"));
+            assertTrue(historicalReply.getEmbed().getTitle().contains("Match #50 · Season 11: Game #2"));
+            assertEquals(mapDescription, historicalReply.getEmbed().getDescription());
+
+            ts.setPrivate(true);
+            assertEquals(":lock: " + mapDescription, restored.getMatchEmbed(false).getDescription());
+            assertEquals(":lock: " + mapDescription,
+                    displayLogic.cmdDisplayMatch("50").getEmbed().getDescription());
         } finally {
             database.disconnect();
         }

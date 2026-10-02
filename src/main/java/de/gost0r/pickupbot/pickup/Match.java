@@ -1202,7 +1202,7 @@ public class Match implements Runnable {
     }
 
     private String getSeasonGameSuffix() {
-        return seasonGameNumber == null ? "" : " · " + seasonGameNumber.label(gametype.getName());
+        return seasonGameNumber == null ? "" : " · " + seasonGameNumber.label();
     }
 
     String insertMatchNumber(String template) {
@@ -1375,7 +1375,7 @@ public class Match implements Runnable {
 
         embed.setColor(7056881);
 
-        String mapName = map != null ? "**" + gametype.getName() + "** - " + map.name + " (" + map.getDiscordDownloadLink() + ")" : null;
+        String mapName = map != null ? map.name + " (" + map.getDiscordDownloadLink() + ")" : null;
         if (gametype.getPrivate()) {
             embed.setDescription(":lock: " + mapName);
         } else {
