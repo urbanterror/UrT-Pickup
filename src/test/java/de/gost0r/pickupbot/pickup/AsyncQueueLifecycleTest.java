@@ -1,6 +1,7 @@
 package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordInteraction;
+import de.gost0r.pickupbot.discord.DiscordEmbed;
 import de.gost0r.pickupbot.discord.DiscordChannel;
 import de.gost0r.pickupbot.discord.DiscordMessage;
 import de.gost0r.pickupbot.discord.DiscordService;
@@ -22,6 +23,8 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -172,6 +175,207 @@ class AsyncQueueLifecycleTest {
         verify(match, never()).addPlayer(any());
         assertTrue(nextSignup.isInMatch(player));
         assertEquals(1, replies.size());
+    }
+
+    @Test
+    void queueFillingDuringValidationCarriesReleasedPlayerIntoNextGame() throws Exception {
+        joinWhileAnotherPlayerTakesSlot(true);
+    }
+
+    @Test
+    void joinDuringValidationSucceedsWhenAnotherPlayerLeavesOneSlotAvailable() throws Exception {
+        joinWhileAnotherPlayerTakesSlot(false);
+    }
+
+    private void joinWhileAnotherPlayerTakesSlot(boolean fillsQueue) throws Exception {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        doNothing().when(queueLogic).warmStatsCommandCache(anyMap(), any(), anyLong());
+        when(player.getDiscordUser().getId()).thenReturn("762295010233155604");
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@762295010233155604>");
+        when(player.getUrtauth()).thenReturn("saphira666");
+        player.spree = new HashMap<>();
+        Player other = mock(Player.class);
+        DiscordUser otherUser = mock(DiscordUser.class);
+        when(otherUser.getId()).thenReturn("326886294313631745");
+        when(otherUser.getMentionString()).thenReturn("<@326886294313631745>");
+        when(other.getDiscordUser()).thenReturn(otherUser);
+        when(other.getUrtauth()).thenReturn("morphuscol");
+        when(ftw.checkIfPingStored(other)).thenReturn(true);
+        other.spree = new HashMap<>();
+
+        // She participated in the previous game, which completes through the real end path.
+        Match previous = spy(new Match(queueLogic, gametype, List.of(), mock(PermissionService.class)));
+        previous.addPlayer(player);
+        previous.addPlayer(other);
+        set(previous, "state", MatchState.Live);
+        set(previous, "server", mock(Server.class, RETURNS_DEEP_STUBS));
+        set(previous, "map", new GameMap("ut4_hostel_b4"));
+        set(previous, "score", new int[]{17, 18});
+        set(previous, "teamList", Map.of("red", List.of(player), "blue", List.of(other)));
+        doReturn(new DiscordEmbed()).when(previous).getMatchEmbed(false);
+        @SuppressWarnings("unchecked")
+        List<Match> ongoing = (List<Match>) get(logic, "ongoingMatches");
+        ongoing.add(previous);
+        assertSame(previous, queueLogic.playerInActiveMatch(player));
+        assertSame(previous, queueLogic.playerInActiveMatch(other));
+
+        previous.end();
+
+        assertEquals(MatchState.Done, previous.getMatchState());
+        verify(queueLogic.db).saveMatch(previous);
+        verify(queueLogic.db).settleMatch(previous.getID());
+        assertFalse(queueLogic.isOngoingMatch(previous));
+        assertNull(queueLogic.playerInActiveMatch(player));
+        assertNull(queueLogic.playerInActiveMatch(other));
+        io.runNext(); // Finish the previous game's background stats refresh.
+
+        Match signup = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, signup);
+        for (int i = 0; i < (fillsQueue ? 9 : 8); i++) {
+            signup.addPlayer(mock(Player.class));
+        }
+        assertNull(queueLogic.playerInActiveMatch(player));
+        assertFalse(signup.isInMatch(player));
+        List<PickupReply> replies = new ArrayList<>();
+
+        queueLogic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        assertTrue(replies.isEmpty());
+        verifyNoInteractions(ftw);
+
+        // Another former participant's later request validates before Saphi's.
+        List<PickupReply> otherReplies = new ArrayList<>();
+        queueLogic.queueAddPlayer(other, List.of(gametype), false, otherReplies::add);
+        io.runLast();
+        queue.runNext();
+        assertTrue(signup.isInMatch(other));
+        assertEquals(List.of(PickupReply.NONE), otherReplies);
+        assertEquals(fillsQueue ? MatchState.AwaitingServer : MatchState.Signup, signup.getMatchState());
+        assertFalse(signup.isInMatch(player));
+
+        io.runNext();
+        queue.runNext();
+
+        verify(ftw).checkIfPingStored(player);
+        verify(ftw).hasLauncherOn(player);
+        assertNull(queueLogic.playerInActiveMatch(player), "No old match is blocking this join");
+        assertEquals(10, signup.getPlayerCount());
+        if (fillsQueue) {
+            assertFalse(signup.isInMatch(player));
+            assertTrue(replies.isEmpty(), "The validated join waits for the next signup queue");
+            queueLogic.matchStarted(signup);
+            Match nextSignup = current.get(gametype);
+            assertTrue(nextSignup.isInMatch(player));
+            assertEquals(1, nextSignup.getPlayerCount());
+            assertNull(queueLogic.playerInActiveMatch(player));
+        } else {
+            assertTrue(signup.isInMatch(player));
+        }
+        assertEquals(List.of(PickupReply.NONE), replies);
+    }
+
+    @Test
+    void eleventhValidatedPlayerQueuesForNextGameWhenFullMatchLaunches() {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        Match fullMatch = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, fullMatch);
+        List<Player> players = new ArrayList<>();
+        List<List<PickupReply>> replies = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            Player participant = mock(Player.class);
+            DiscordUser user = mock(DiscordUser.class);
+            when(user.getId()).thenReturn("player-" + i);
+            when(user.getMentionString()).thenReturn("<@player-" + i + ">");
+            when(participant.getDiscordUser()).thenReturn(user);
+            when(participant.getUrtauth()).thenReturn("auth-" + i);
+            when(ftw.checkIfPingStored(participant)).thenReturn(true);
+            players.add(participant);
+            replies.add(new ArrayList<>());
+            queueLogic.queueAddPlayer(participant, List.of(gametype), false, replies.get(i)::add);
+        }
+        for (int i = 0; i < 11; i++) {
+            io.runNext();
+            queue.runNext();
+        }
+        assertEquals(10, fullMatch.getPlayerCount());
+        assertEquals(MatchState.AwaitingServer, fullMatch.getMatchState());
+        assertFalse(fullMatch.isInMatch(players.get(10)));
+        assertTrue(replies.get(10).isEmpty());
+
+        fullMatch.launch(mock(Server.class));
+
+        Match nextSignup = current.get(gametype);
+        assertEquals(MatchState.Signup, nextSignup.getMatchState());
+        assertEquals(1, nextSignup.getPlayerCount());
+        assertTrue(nextSignup.isInMatch(players.get(10)));
+        assertNull(queueLogic.playerInActiveMatch(players.get(10)));
+        for (int i = 0; i < 10; i++) {
+            assertSame(fullMatch, queueLogic.playerInActiveMatch(players.get(i)));
+            assertFalse(nextSignup.isInMatch(players.get(i)));
+        }
+        replies.forEach(reply -> assertEquals(List.of(PickupReply.NONE), reply));
+    }
+
+    @Test
+    void removingDeferredJoinPreventsJoiningAfterRollover() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+        Match fullMatch = current.get(gametype);
+
+        queueLogic.cmdRemovePlayer(player, List.of(gametype));
+        fullMatch.launch(mock(Server.class));
+
+        assertFalse(current.get(gametype).isInMatch(player));
+        assertTrue(replies.isEmpty());
+    }
+
+    @Test
+    void resettingModeCancelsDeferredJoin() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+
+        queueLogic.cmdReset("cur", "TS");
+
+        assertEquals(MatchState.Signup, current.get(gametype).getMatchState());
+        assertFalse(current.get(gametype).isInMatch(player));
+        assertFalse(queue.hasTasks());
+        assertTrue(replies.isEmpty());
+    }
+
+    @Test
+    void deferredJoinTakesReopenedSlotWhenFullQueueLosesPlayer() {
+        List<PickupReply> replies = new ArrayList<>();
+        PickupLogic queueLogic = fullQueueWithDeferredJoin(replies);
+        Match fullMatch = current.get(gametype);
+        Player leaving = fullMatch.getPlayerList().get(0);
+
+        fullMatch.removePlayer(leaving, false);
+        assertEquals(MatchState.Signup, fullMatch.getMatchState());
+        queue.runNext();
+
+        assertTrue(fullMatch.isInMatch(player));
+        assertFalse(fullMatch.isInMatch(leaving));
+        assertEquals(10, fullMatch.getPlayerCount());
+        assertEquals(List.of(PickupReply.NONE), replies);
+    }
+
+    private PickupLogic fullQueueWithDeferredJoin(List<PickupReply> replies) {
+        PickupLogic queueLogic = spy(logic);
+        doReturn("").when(queueLogic).cmdStatus(any(Match.class), any(Player.class), anyBoolean());
+        doNothing().when(queueLogic).requestServer(any(Match.class));
+        Match fullMatch = new Match(queueLogic, gametype, List.of(), mock(PermissionService.class));
+        current.put(gametype, fullMatch);
+        for (int i = 0; i < 10; i++) fullMatch.addPlayer(mock(Player.class));
+        when(player.getDiscordUser().getMentionString()).thenReturn("<@123>");
+        queueLogic.queueAddPlayer(player, List.of(gametype), false, replies::add);
+        io.runNext();
+        queue.runNext();
+        assertTrue(replies.isEmpty());
+        assertFalse(fullMatch.isInMatch(player));
+        return queueLogic;
     }
 
     @Test

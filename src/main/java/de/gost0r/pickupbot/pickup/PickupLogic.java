@@ -57,6 +57,7 @@ public class PickupLogic {
     private Map<Gametype, Match> curMatch;
     private Map<Team, Gametype> teamsQueued;
     private final Map<String, Long> pendingJoins = new HashMap<>();
+    private final Map<Gametype, List<Runnable>> rolloverJoins = new IdentityHashMap<>();
     private final Map<Gametype, Long> resetVersions = new IdentityHashMap<>();
     private final Map<String, Long> mapVoteVersions = new HashMap<>();
 
@@ -200,15 +201,34 @@ public class PickupLogic {
             PickupReply validation = error;
             bot.queueExecutor.execute(() -> {
                 for (Gametype gt : toJoin) {
-                    if (pendingJoins.getOrDefault(joinKey(player, gt), 0L) != versions.get(gt)
-                            || resetVersions.getOrDefault(gt, 0L) != resetAtJoin.get(gt)
-                            || curMatch.get(gt) == null) {
-                        continue;
-                    }
-                    reply.accept(validation == PickupReply.NONE ? addValidatedPlayer(player, gt, forced) : validation);
+                    completeQueueJoin(player, gt, forced, reply, validation, versions.get(gt), resetAtJoin.get(gt));
                 }
             });
         });
+    }
+
+    private void completeQueueJoin(Player player, Gametype gt, boolean forced, Consumer<PickupReply> reply,
+                                   PickupReply validation, long version, long resetVersion) {
+        Match match = curMatch.get(gt);
+        if (pendingJoins.getOrDefault(joinKey(player, gt), 0L) != version
+                || resetVersions.getOrDefault(gt, 0L) != resetVersion || match == null) {
+            return;
+        }
+        // A validated free player must not lose their join while the full queue
+        // waits for its server. Apply it to the signup queue created at launch.
+        if (validation == PickupReply.NONE && match.getMatchState() == MatchState.AwaitingServer
+                && !match.isInMatch(player) && playerInActiveMatch(player) == null
+                && (forced || (!locked && !player.isBanned()))) {
+            rolloverJoins.computeIfAbsent(gt, ignored -> new ArrayList<>()).add(
+                    () -> completeQueueJoin(player, gt, forced, reply, validation, version, resetVersion));
+            return;
+        }
+        reply.accept(validation == PickupReply.NONE ? addValidatedPlayer(player, gt, forced) : validation);
+    }
+
+    private void completeRolloverJoins(Gametype gt) {
+        List<Runnable> joins = rolloverJoins.remove(gt);
+        if (joins != null) joins.forEach(Runnable::run);
     }
 
     private String joinKey(Player player, Gametype gt) {
@@ -225,6 +245,7 @@ public class PickupLogic {
 
     private void invalidateMode(Gametype gt) {
         resetVersions.merge(gt, 1L, Long::sum);
+        rolloverJoins.remove(gt);
     }
 
     private void cancelPendingJoins(Player player, List<Gametype> modes) {
@@ -278,21 +299,17 @@ public class PickupLogic {
             player.setLastMessage(System.currentTimeMillis());
         }
 
-        String defmsg = "You are already queued for:";
-        StringBuilder msg = new StringBuilder(defmsg);
+        PickupReply reply = PickupReply.NONE;
 
         if (curMatch.containsKey(gt)) {
             Match m = curMatch.get(gt);
-            if (m.getMatchState() != MatchState.Signup || m.isInMatch(player) || playerInActiveMatch(player) != null) {
-                msg.append(" ").append(gt.getName());
+            if (m.isInMatch(player) || playerInActiveMatch(player) != null) {
+                reply = new PickupReply("You are already queued for: " + gt.getName());
+            } else if (m.getMatchState() != MatchState.Signup) {
+                reply = new PickupReply("The " + gt.getName() + " queue just filled. Please try again.");
             } else {
                 m.addPlayer(player);
             }
-        }
-
-        PickupReply reply = PickupReply.NONE;
-        if (!msg.toString().equals(defmsg)) {
-            reply = new PickupReply(msg.toString());
         }
 
         checkTeams();
@@ -1816,11 +1833,16 @@ public class PickupLogic {
         if (match.getServer() != null && match.getServer().isTaken()) {
             match.getServer().free();
         }
+        if (rolloverJoins.containsKey(match.getGametype())) {
+            // Reset/removal restores Signup after this method returns.
+            bot.queueExecutor.execute(() -> completeRolloverJoins(match.getGametype()));
+        }
     }
 
     public void matchStarted(Match match) {
         createMatch(match.getGametype());
         ongoingMatches.add(match);
+        completeRolloverJoins(match.getGametype());
     }
 
     public void matchEnded() {
