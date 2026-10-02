@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -905,9 +907,20 @@ public class PickupLogic {
             return;
         }
         ArrayList<DiscordSelectOption> options = new ArrayList<DiscordSelectOption>();
-        for (int i = 1; i <= currentSeason.number; i++) {
-            DiscordSelectOption option = new DiscordSelectOption("Season " + i, String.valueOf(i));
+        DateTimeFormatter monthFormat = DateTimeFormatter.ofPattern("yyyy-MM").withZone(ZoneOffset.UTC);
+        for (int i = currentSeason.number - 1; i >= 1; i--) {
+            Season season = db.getSeason(i);
+            if (season == null) {
+                continue;
+            }
+            String label = "Season " + i + " (" + monthFormat.format(Instant.ofEpochMilli(season.startdate))
+                    + " to " + monthFormat.format(Instant.ofEpochMilli(season.enddate)) + ")";
+            DiscordSelectOption option = new DiscordSelectOption(label, String.valueOf(i));
             options.add(option);
+        }
+        if (options.isEmpty()) {
+            interaction.respondEphemeral("No previous seasons available.", null, null);
+            return;
         }
 
         ArrayList<DiscordComponent> components = new ArrayList<DiscordComponent>();
