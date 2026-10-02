@@ -2,6 +2,7 @@ package de.gost0r.pickupbot.pickup;
 
 import de.gost0r.pickupbot.discord.DiscordUser;
 import de.gost0r.pickupbot.ftwgl.FtwglApi;
+import de.gost0r.pickupbot.ftwgl.models.PlayerRating;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -30,7 +33,8 @@ class EloResetCacheInvalidationTest {
     void setUp() throws Exception {
         String environment = directory.resolve("elo-reset").toString();
         PickupBot bot = new PickupBot(environment, null, null, null, null, null, null, null, null);
-        logic = spy(new PickupLogic(bot, mock(FtwglApi.class), null, null, null));
+        FtwglApi ftw = mock(FtwglApi.class);
+        logic = spy(new PickupLogic(bot, ftw, null, null, null));
         doReturn(null).when(logic).getGametypeByString(anyString());
         database = spy(new Database(logic, null, null));
         logic.db = database;
@@ -42,6 +46,12 @@ class EloResetCacheInvalidationTest {
         closeSeasonResult();
         lower = player("lower", 1000);
         higher = player("higher", 1100);
+        // Stats now request ratings before placements too. Successful zero ratings
+        // allow these tests to exercise cache invalidation rather than failed-API retries.
+        when(ftw.getPlayerRatings(eq(List.of(lower)), any(Season.class)))
+                .thenReturn(Map.of(lower, PlayerRating.ZERO));
+        when(ftw.getPlayerRatings(eq(List.of(higher)), any(Season.class)))
+                .thenReturn(Map.of(higher, PlayerRating.ZERO));
 
         // Freeze the command-cache clock so these regressions cannot pass by TTL expiry.
         var cacheField = PickupLogic.class.getDeclaredField("statsCommandCache");
